@@ -111,8 +111,8 @@ dependencies {
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.0.0")
 
-    // Barcode Scanner (ML Kit)
-    implementation("com.google.mlkit:barcode-scanning:17.2.0")
+    // Barcode Scanner (ZXing, Google-free)
+    implementation("com.google.zxing:core:3.5.3")
 
     // CameraX
     implementation("androidx.camera:camera-core:1.3.2")
