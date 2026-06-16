@@ -19,7 +19,7 @@ const columns = [
     title: '状态',
     key: 'status',
     width: 100,
-    render: (_, record: any) => {
+    render: (_: any, record: any) => {
       const colors: Record<string, string> = {
         on_shelf: 'green',
         in_use: 'blue',

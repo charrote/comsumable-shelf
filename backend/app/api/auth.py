@@ -1,6 +1,6 @@
 """Authentication API routes."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -58,7 +58,7 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     token = create_access_token({"sub": user.username, "role": user.role})
 
     # Update last login
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.utcnow()
     await db.commit()
 
     return TokenResponse(

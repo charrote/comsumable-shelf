@@ -13,7 +13,7 @@ const columns = [
     title: '状态',
     key: 'status',
     width: 100,
-    render: (_, record: any) => {
+    render: (_: any, record: any) => {
       const colors: Record<string, string> = {
         pending: 'default',
         calculating: 'processing',

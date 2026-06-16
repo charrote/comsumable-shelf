@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # LED command workers
     LED_WORKER_COUNT: int = 4
 
+    SECRET_KEY: str = "changeme-secret-key"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+
     LOG_LEVEL: str = "info"
 
 

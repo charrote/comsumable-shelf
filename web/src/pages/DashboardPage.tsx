@@ -2,8 +2,8 @@ import { Card, Col, Row, Statistic, Table, Tag } from 'antd'
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
-  WarehouseOutlined,
-  InventoryOutlined,
+  ShopOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons'
 
 const { Meta } = Card
@@ -32,7 +32,7 @@ export function DashboardPage() {
             <Statistic
               title="物料总数"
               value={dashboardData.totalMaterials}
-              prefix={<InventoryOutlined />}
+              prefix={<DatabaseOutlined />}
               valueStyle={{ color: '#3f8600' }}
             />
           </Card>
@@ -42,7 +42,7 @@ export function DashboardPage() {
             <Statistic
               title="料架总数"
               value={dashboardData.totalShelves}
-              prefix={<WarehouseOutlined />}
+              prefix={<ShopOutlined />}
               valueStyle={{ color: '#1890ff' }}
             />
           </Card>
