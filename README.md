@@ -11,6 +11,7 @@
 - **LED 亮灯指引**：绿色亮灯指引拣料，红色亮灯提示异常
 - **XR 点料机集成**：支持多型号 XR 点料机数据上报
 - **智能条码识别**：多格式模糊匹配，替代硬编码解析
+- **OCR 文字识别**：PaddleOCR 开源引擎，物料标签文字识别、物料编码自动提取
 - **BOM 管理**：Excel BOM 导入，自动生成发料单
 - **库存跟踪**：实时监控物料在货架上的状态变化
 
@@ -213,7 +214,8 @@ ComsumableManager/
 │   │   │   ├── led_service.py
 │   │   │   └── xr_service.py
 │   │   └── utils/             # 工具函数
-│   │       └── barcode.py     # 智能条码识别
+│   │       ├── barcode.py     # 智能条码识别
+│   │       └── ocr.py         # PaddleOCR 文字识别（懒加载）
 │   ├── alembic/               # 数据库迁移
 │   ├── Dockerfile
 │   └── requirements.txt
