@@ -7,7 +7,7 @@ Uses pattern matching, fuzzy matching, and material master lookup.
 import re
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
-from fuzzywuzzy import fuzz, process as fuzzy_process
+from rapidfuzz import fuzz, process as fuzzy_process
 
 
 @dataclass

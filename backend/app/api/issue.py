@@ -12,7 +12,6 @@ from app.schemas import (
 from app.utils.database import get_db
 from app.models import IssueOrder, IssueDetail, InventoryPallet, LedCommand
 from app.services.fifo_service import calculate_fifo_pallets, get_available_qty
-from app.services.led_service import generate_led_commands
 from app.utils.barcode import parse_barcode
 import json
 

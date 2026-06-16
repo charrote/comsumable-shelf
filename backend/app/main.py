@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 import structlog
+import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -21,7 +22,7 @@ structlog.configure(
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.dev.ConsoleRenderer(),
     ],
-    wrapper_class=structlog.make_filtering_bound_logger(structlog.stdlib.INFO),
+    wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     context_class=dict,
     logger_factory=structlog.stdlib.LoggerFactory(),
     cache_logger_on_first_use=False,

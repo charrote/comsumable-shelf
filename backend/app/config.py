@@ -34,4 +34,6 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "info"
 
-    model_config = {"env_file": ".env"}
+
+# Create a global settings instance
+settings = Settings()

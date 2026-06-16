@@ -21,7 +21,7 @@ engine = create_async_engine(
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def get_db() -> AsyncGenerator[AsyncSession]:
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Yield a database session."""
     async with async_session() as session:
         try:
@@ -35,5 +35,11 @@ async def get_db() -> AsyncGenerator[AsyncSession]:
 async def init_db():
     """Initialize database tables."""
     from app.models import Base  # noqa: F401
+
+    # Use checkfirst=True to avoid creating tables that already exist
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(
+            lambda sync_session: Base.metadata.create_all(
+                sync_session, checkfirst=True
+            )
+        )
