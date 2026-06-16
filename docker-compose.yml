@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: consumable-shelf-web
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - smes
+
   backend:
     build:
       context: ./backend
