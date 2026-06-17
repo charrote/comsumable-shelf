@@ -6,7 +6,7 @@ Handles XR point machine data upload and pallet matching.
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -113,28 +113,24 @@ async def auto_match_xr(
 
     # Find tracking pallets for this material
     result = await db.execute(
-        select(InventoryPallet, Transaction.last_out_time)
-        .join(
-            Transaction,
-            Transaction.inventory_pallet_id == InventoryPallet.id,
-        )
+        select(InventoryPallet)
         .where(
             InventoryPallet.material_id == material_id,
             InventoryPallet.customer_id == customer_id,
             InventoryPallet.status == "tracking",
             InventoryPallet.quantity > 0,
-            Transaction.source_type == "issue",
         )
-        .order_by(Transaction.last_out_time.desc())
+        .order_by(InventoryPallet.last_out_time.desc())
     )
-    rows = result.all()
+    rows = result.scalars().all()
 
     # Find the closest match within time window
     now = datetime.now()
     best_match = None
     best_delta = float("inf")
 
-    for pallet, last_out_time in rows:
+    for pallet in rows:
+        last_out_time = pallet.last_out_time
         if last_out_time is None:
             continue
         delta = abs((now - last_out_time).total_seconds())

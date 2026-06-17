@@ -129,36 +129,6 @@ cd pda
 adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## 开发计划
-
-### Phase 1: 基础架构 (已完成 ✅)
-- [x] Monorepo 项目结构搭建
-- [x] FastAPI 后端框架
-- [x] PostgreSQL 数据库设计
-- [x] 硬件抽象层 (Modbus TCP + RTU)
-- [x] 智能条码识别引擎
-- [x] PC Web 前端 (React 18 + Ant Design 5)
-- [x] PDA 端 (Kotlin + Jetpack Compose)
-
-### Phase 2: 核心业务逻辑 (进行中 🚧)
-- [ ] FIFO 尾数优先算法完善
-- [ ] LED 亮灯控制协议实现
-- [ ] XR 点料机数据对接
-- [ ] 出入库业务流程联调
-- [ ] 防呆校验机制
-
-### Phase 3: 前端完善 (计划中 📋)
-- [ ] PC Web 全部页面开发
-- [ ] PDA 扫码入库/出库功能
-- [ ] 报表统计页面
-- [ ] 用户管理权限
-
-### Phase 4: 部署上线 (计划中 📋)
-- [ ] 硬件联调测试
-- [ ] 性能优化
-- [ ] 生产环境部署
-- [ ] 用户培训
-
 ## 硬件集成
 
 ### AMKN8702G 主控板

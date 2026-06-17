@@ -103,7 +103,7 @@ def _calculate_confidence(barcode: str, material_code: str) -> float:
     return ratio
 
 
-async def parse_barcode(barcode: str, material_db) -> BarcodeParseResult:
+async def parse_barcode(barcode: str, material_db=None) -> BarcodeParseResult:
     """Parse a raw barcode string and find the best matching material.
 
     Args:

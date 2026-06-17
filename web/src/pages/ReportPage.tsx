@@ -1,24 +1,43 @@
 import { useState } from 'react'
-import { Card, DatePicker, Button, Table, Space, Input, Statistic } from 'antd'
+import { Card, DatePicker, Button, Table, Space, Statistic, Spin, message } from 'antd'
 import { SearchOutlined } from '@ant-design/icons'
+import { getDailyReportApi } from '../api'
+import dayjs from 'dayjs'
 
 const { RangePicker } = DatePicker
 
-const columns = [
-  { title: '物料', dataIndex: 'material_code', key: 'material_code' },
-  { title: '库存', dataIndex: 'stock_balance', key: 'stock_balance', width: 100 },
-  { title: '入库', dataIndex: 'in_qty', key: 'in_qty', width: 100 },
-  { title: '出库', dataIndex: 'out_qty', key: 'out_qty', width: 100 },
-  { title: '尾数盘', dataIndex: 'tail_pallets', key: 'tail_pallets', width: 100 },
-]
-
-const mockData = [
-  { key: '1', material_code: '4500067189', stock_balance: 45000, in_qty: 50, out_qty: 3, tail_pallets: 8 },
-  { key: '2', material_code: '2623381607', stock_balance: 32000, in_qty: 50, out_qty: 5, tail_pallets: 5 },
-]
-
 export function ReportPage() {
   const [range, setRange] = useState<[any, any] | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [summary, setSummary] = useState<any>(null)
+  const [details, setDetails] = useState<any[]>([])
+
+  const handleQuery = async () => {
+    if (!range || !range[0] || !range[1]) {
+      message.warning('请选择日期范围')
+      return
+    }
+    setLoading(true)
+    try {
+      const date = dayjs(range[0]).format('YYYY-MM-DD')
+      const res = await getDailyReportApi(date)
+      const data = res.data
+      setSummary(data.summary)
+      setDetails(data.details || [])
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '查询失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const columns = [
+    { title: '物料编码', dataIndex: 'material_code', key: 'material_code' },
+    { title: '期初库存', dataIndex: 'opening_balance', key: 'opening_balance', width: 120 },
+    { title: '入库数量', dataIndex: 'in_qty', key: 'in_qty', width: 120 },
+    { title: '出库数量', dataIndex: 'out_qty', key: 'out_qty', width: 120 },
+    { title: '期末库存', dataIndex: 'closing_balance', key: 'closing_balance', width: 120 },
+  ]
 
   return (
     <div>
@@ -26,29 +45,35 @@ export function ReportPage() {
       <Card style={{ marginBottom: 16 }}>
         <Space>
           <RangePicker onChange={setRange} />
-          <Button icon={<SearchOutlined />}>查询</Button>
+          <Button icon={<SearchOutlined />} type="primary" onClick={handleQuery} loading={loading}>
+            查询
+          </Button>
         </Space>
       </Card>
-      <Space style={{ marginBottom: 16 }} wrap>
-        <Card>
-          <Statistic title="物料总数" value={128} />
-        </Card>
-        <Card>
-          <Statistic title="今日入库" value={3} />
-        </Card>
-        <Card>
-          <Statistic title="今日出库" value={2} />
-        </Card>
-        <Card>
-          <Statistic title="尾数盘" value={13} />
-        </Card>
-      </Space>
-      <Table
-        columns={columns}
-        dataSource={mockData}
-        pagination={false}
-        rowKey="key"
-      />
+      <Spin spinning={loading}>
+        {summary && (
+          <Space style={{ marginBottom: 16 }} wrap>
+            <Card>
+              <Statistic title="物料总数" value={summary.total_materials} />
+            </Card>
+            <Card>
+              <Statistic title="入库总量" value={summary.total_in} />
+            </Card>
+            <Card>
+              <Statistic title="出库总量" value={summary.total_out} />
+            </Card>
+            <Card>
+              <Statistic title="期末库存" value={summary.total_balance} />
+            </Card>
+          </Space>
+        )}
+        <Table
+          columns={columns}
+          dataSource={details}
+          pagination={false}
+          rowKey="material_code"
+        />
+      </Spin>
     </div>
   )
 }

@@ -16,7 +16,7 @@ import {
   LogoutOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
-import { useNavigate, useLocation, Outlet } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 
 const { Header, Sider, Content } = Layout

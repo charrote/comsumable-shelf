@@ -92,7 +92,7 @@ class LedService:
         await self._command_queue.put(cmd)
 
     async def light_slot_by_shelf(self, shelf_slot_id: int,
-                                   color: LedColor = LedColor.GREEN):
+                                    color: LedColor = LedColor.GREEN):
         """Light a slot by ShelfSlot ID from database."""
         async with AsyncSession() as session:
             result = await session.execute(
@@ -102,11 +102,9 @@ class LedService:
             if not slot:
                 return False
 
-            # Resolve face and position
-            shelf = slot.shelf
-            face = 'A' if slot.position < shelf.panel_count else 'B'
-            board_addr = (slot.position // self.master.slots_per_board) + 1
-            slot_num = (slot.position % self.master.slots_per_board) + 1
+            face = slot.side
+            board_addr = slot.board_address
+            slot_num = slot.slot_on_board
 
             await self.master.set_led(face, board_addr, slot_num, color)
             return True

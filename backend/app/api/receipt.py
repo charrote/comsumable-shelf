@@ -10,7 +10,7 @@ from app.schemas import (
     ReceiptAssignSlotRequest, ReceiptDetailResponse
 )
 from app.utils.database import get_db
-from app.models import Receipt, ReceiptPallet, InventoryPallet, MaterialMaster
+from app.models import Receipt, ReceiptPallet, InventoryPallet, MaterialMaster, Shelf, ShelfSlot
 from app.utils.barcode import parse_barcode
 
 router = APIRouter(prefix="/receipts", tags=["Receipt/Inbound"])
@@ -65,15 +65,15 @@ async def scan_receipt(
 ):
     """Scan barcode for inbound."""
     barcode = data.barcode
-    parsed = parse_barcode(barcode)
-    if not parsed:
+    parsed = await parse_barcode(barcode, db)
+    if not parsed or not parsed.material_code:
         return ReceiptScanResponse(
             status="error",
             action="error",
             message="无效的条码格式",
         )
-    material_code = parsed["material_code"]
-    qty = parsed.get("quantity", 0) or 50.0  # default
+    material_code = parsed.material_code
+    qty = 50.0  # default quantity
 
     # Find material
     result = await db.execute(
@@ -88,10 +88,11 @@ async def scan_receipt(
         )
 
     # Check for duplicate
+    batch_val = parsed.extra.get("batch", "") if parsed.extra else ""
     existing = await db.execute(
         select(InventoryPallet).where(
             InventoryPallet.material_id == material.id,
-            InventoryPallet.customer_code == parsed.get("batch", ""),
+            InventoryPallet.customer_code == batch_val,
             InventoryPallet.status.in_(["on_shelf", "tracking"]),
         )
     )
@@ -113,7 +114,7 @@ async def scan_receipt(
         quantity=qty,
         original_quantity=qty,
         pallet_barcode=barcode,
-        customer_code=parsed.get("batch", ""),
+        customer_code=batch_val,
         first_in_time=now,
         last_in_time=now,
         inbound_type="new",
@@ -171,6 +172,3 @@ async def scan_receipt(
         duplicate_flag=False,
         message=f"入库成功, 数量 {qty} 盘",
     )
-
-
-from app.models import Shelf, ShelfSlot  # noqa: E402

@@ -70,17 +70,22 @@ export const confirmPickApi = (orderId: number, data: { barcode: string; pallet_
 // XR
 export const getXRListApi = (params: any) =>
   apiClient.get('/xr', { params })
+export const uploadXrApi = (data: { reel_id: string; qty: number }) =>
+  apiClient.post('/xr/upload', data)
 export const matchXRApi = (batchId: number, data: { pallet_id: number }) =>
   apiClient.post(`/xr/${batchId}/match`, data)
 export const confirmXRRestockApi = (batchId: number, data: { shelf_slot_id: number }) =>
   apiClient.post(`/xr/${batchId}/confirm-restock`, data)
 
 // BOM
-export const uploadBomApi = (file: File) => {
+export const uploadBomApi = (file: File, customerId?: number) => {
   const formData = new FormData()
   formData.append('file', file)
+  const params: any = {}
+  if (customerId) params.customer_id = customerId
   return apiClient.post('/bom/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    params,
   })
 }
 export const getBomApi = (bomId: number) =>

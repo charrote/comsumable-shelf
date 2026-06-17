@@ -1,109 +1,240 @@
-import { Card, Col, Row, Statistic, Table, Tag } from 'antd'
+import { useState, useEffect } from 'react'
+import { Card, Col, Row, Statistic, Table, Tag, Spin } from 'antd'
 import {
   ArrowUpOutlined,
   ArrowDownOutlined,
   ShopOutlined,
   DatabaseOutlined,
 } from '@ant-design/icons'
+import { getMaterialsApi, getShelvesApi, getInventoryApi, getDailyReportApi } from '../api'
 
-const { Meta } = Card
-
-const dashboardData = {
-  totalMaterials: 128,
-  totalShelves: 12,
-  onShelfPallets: 456,
-  trackingPallets: 23,
-  pendingReceipts: 5,
-  pendingIssues: 3,
+interface DashboardData {
+  totalMaterials: number
+  totalShelves: number
+  onShelfPallets: number
+  trackingPallets: number
+  pendingReceipts: number
+  pendingIssues: number
 }
 
-const recentTransactions = [
-  { key: '1', time: '2024-01-15 09:30', type: '入库', material: '4500067189', quantity: 50, status: '成功' },
-  { key: '2', time: '2024-01-15 09:25', type: '发料', material: '4500067189', quantity: 3, status: '成功' },
-  { key: '3', time: '2024-01-15 09:20', type: '入库', material: '2623381607', quantity: 50, status: '成功' },
-]
+interface Transaction {
+  key: string
+  time: string
+  type: string
+  material: string
+  quantity: number
+  status: string
+}
 
 export function DashboardPage() {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [slow, setSlow] = useState(false)
+  const [data, setData] = useState<DashboardData>({
+    totalMaterials: 0,
+    totalShelves: 0,
+    onShelfPallets: 0,
+    trackingPallets: 0,
+    pendingReceipts: 0,
+    pendingIssues: 0,
+  })
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  useEffect(() => {
+    const slowTimer = setTimeout(() => setSlow(true), 5000)
+    const today = new Date().toISOString().slice(0, 10)
+
+    const fetchData = async () => {
+      setLoading(true)
+      setError(null)
+
+      const results = await Promise.allSettled([
+        getMaterialsApi({}),
+        getShelvesApi(),
+        getInventoryApi({}),
+        getDailyReportApi(today),
+      ])
+
+      clearTimeout(slowTimer)
+
+      const errors: string[] = []
+      let materials: any[] = []
+      let shelves: any[] = []
+      let pallets: any[] = []
+      let reportDetails: any[] = []
+
+      if (results[0].status === 'fulfilled') {
+        const d = results[0].value.data
+        materials = Array.isArray(d) ? d : d?.items ?? []
+      } else {
+        errors.push('物料')
+      }
+
+      if (results[1].status === 'fulfilled') {
+        const d = results[1].value.data
+        shelves = Array.isArray(d) ? d : d?.items ?? []
+      } else {
+        errors.push('料架')
+      }
+
+      if (results[2].status === 'fulfilled') {
+        const d = results[2].value.data
+        pallets = d?.pallets ?? (Array.isArray(d) ? d : [])
+      } else {
+        errors.push('库存')
+      }
+
+      if (results[3].status === 'fulfilled') {
+        const d = results[3].value.data
+        reportDetails = d?.details ?? []
+      }
+
+      const onShelfPallets = pallets.filter(
+        (item: any) => item.status === 'on_shelf',
+      ).length
+      const trackingPallets = pallets.filter(
+        (item: any) => item.status === 'tracking',
+      ).length
+
+      setData({
+        totalMaterials: materials.length,
+        totalShelves: shelves.length,
+        onShelfPallets,
+        trackingPallets,
+        pendingReceipts: 0,
+        pendingIssues: 0,
+      })
+
+      setTransactions(
+        reportDetails.map((op: any, i: number) => ({
+          key: String(i),
+          time: today,
+          type: Number(op.in_qty || 0) > 0 ? '入库' : '出库',
+          material: op.material_code ?? '',
+          quantity: Number(op.in_qty || 0) + Number(op.out_qty || 0),
+          status: '成功',
+        })),
+      )
+
+      if (errors.length > 0) {
+        setError(`部分数据加载失败: ${errors.join('、')}`)
+      }
+
+      setLoading(false)
+    }
+
+    fetchData()
+
+    return () => clearTimeout(slowTimer)
+  }, [])
+
   return (
     <div>
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="物料总数"
-              value={dashboardData.totalMaterials}
-              prefix={<DatabaseOutlined />}
-              valueStyle={{ color: '#3f8600' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="料架总数"
-              value={dashboardData.totalShelves}
-              prefix={<ShopOutlined />}
-              valueStyle={{ color: '#1890ff' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="在架库存盘"
-              value={dashboardData.onShelfPallets}
-              suffix="盘"
-              prefix={<ArrowUpOutlined />}
-              valueStyle={{ color: '#3f8600' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="跟踪中"
-              value={dashboardData.trackingPallets}
-              suffix="盘"
-              prefix={<ArrowDownOutlined />}
-              valueStyle={{ color: '#cf1322' }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      {loading && (
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '40vh' }}>
+          <div style={{ textAlign: 'center' }}>
+            <Spin size="large" />
+            {slow && (
+              <p style={{ marginTop: 24, color: '#999' }}>
+                后端服务未启动或连接超时，请确保后端运行在 8080 端口
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+      {error && (
+        <div style={{
+          textAlign: 'center', margin: '40px 0', padding: 24,
+          background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8,
+        }}>
+          <p style={{ fontSize: 16, marginBottom: 8, color: '#ad6800' }}>⚠️ 部分数据加载异常</p>
+          <p style={{ color: '#d46b08' }}>{error}</p>
+          <p style={{ marginTop: 12, fontSize: 13, color: '#999' }}>
+            部分面板仍显示已有数据
+          </p>
+        </div>
+      )}
+      {!loading && !error && (
+        <>
+          <Row gutter={16} style={{ marginBottom: 24 }}>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="物料总数"
+                  value={data.totalMaterials}
+                  prefix={<DatabaseOutlined />}
+                  valueStyle={{ color: '#3f8600' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="料架总数"
+                  value={data.totalShelves}
+                  prefix={<ShopOutlined />}
+                  valueStyle={{ color: '#1890ff' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="在架库存盘"
+                  value={data.onShelfPallets}
+                  suffix="盘"
+                  prefix={<ArrowUpOutlined />}
+                  valueStyle={{ color: '#3f8600' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="跟踪中"
+                  value={data.trackingPallets}
+                  suffix="盘"
+                  prefix={<ArrowDownOutlined />}
+                  valueStyle={{ color: '#cf1322' }}
+                />
+              </Card>
+            </Col>
+          </Row>
 
-      <Row gutter={16}>
-        <Col span={12}>
-          <Card title="最近操作记录">
-            <Table
-              dataSource={recentTransactions}
-              columns={[
-                { title: '时间', dataIndex: 'time', key: 'time' },
-                { title: '类型', dataIndex: 'type', key: 'type' },
-                { title: '物料', dataIndex: 'material', key: 'material' },
-                { title: '数量', dataIndex: 'quantity', key: 'quantity' },
-                {
-                  title: '状态',
-                  dataIndex: 'status',
-                  key: 'status',
-                  render: (text: string) => (
-                    <Tag color={text === '成功' ? 'green' : 'red'}>{text}</Tag>
-                  ),
-                },
-              ]}
-              pagination={false}
-              size="small"
-            />
-          </Card>
-        </Col>
-        <Col span={12}>
-          <Card title="待处理事项">
-            <div>
-              <p>📋 待确认入库: {dashboardData.pendingReceipts} 单</p>
-              <p>📦 待执行发料: {dashboardData.pendingIssues} 单</p>
-            </div>
-          </Card>
-        </Col>
-      </Row>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Card title="最近操作记录">
+                <Table
+                  dataSource={transactions}
+                  columns={[
+                    { title: '时间', dataIndex: 'time', key: 'time' },
+                    { title: '类型', dataIndex: 'type', key: 'type' },
+                    { title: '物料', dataIndex: 'material', key: 'material' },
+                    { title: '数量', dataIndex: 'quantity', key: 'quantity' },
+                    {
+                      title: '状态',
+                      dataIndex: 'status',
+                      key: 'status',
+                      render: (text: string) => (
+                        <Tag color={text === '成功' ? 'green' : 'red'}>{text}</Tag>
+                      ),
+                    },
+                  ]}
+                  pagination={false}
+                  size="small"
+                />
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card title="待处理事项">
+                <div>
+                  <p>📋 待确认入库: {data.pendingReceipts} 单</p>
+                  <p>📦 待执行发料: {data.pendingIssues} 单</p>
+                </div>
+              </Card>
+            </Col>
+          </Row>
+        </>
+      )}
     </div>
   )
 }

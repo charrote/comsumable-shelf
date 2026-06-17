@@ -10,7 +10,7 @@ from app.schemas import (
     BomGenerateIssueRequest,
 )
 from app.utils.database import get_db
-from app.models import BomHeader, BomDetail, IssueOrder, IssueDetail
+from app.models import BomHeader, BomDetail, IssueOrder, IssueDetail, MaterialMaster
 from app.config import settings
 import openpyxl
 import os
@@ -116,14 +116,24 @@ async def get_bom(
 
     bom_details = []
     for d in details:
+        mat_result = await db.execute(
+            select(MaterialMaster.name).where(MaterialMaster.code == d.material_code)
+        )
+        mat_name = mat_result.scalar_one_or_none() or d.material_code
+        alt_name = d.alternate_code
+        if d.alternate_code:
+            alt_result = await db.execute(
+                select(MaterialMaster.name).where(MaterialMaster.code == d.alternate_code)
+            )
+            alt_name = alt_result.scalar_one_or_none() or d.alternate_code
         bom_details.append(BomDetailResponse(
             id=d.id,
             material_code=d.material_code,
-            material_name=d.material_code,  # Will be looked up in full implementation
+            material_name=mat_name,
             quantity=d.quantity,
             unit=d.unit,
             alternate_code=d.alternate_code,
-            alternate_name=d.alternate_code,
+            alternate_name=alt_name,
         ))
 
     return {
@@ -177,9 +187,15 @@ async def generate_issue(
     details = details_result.scalars().all()
 
     for d in details:
+        mat_result = await db.execute(
+            select(MaterialMaster.id).where(MaterialMaster.code == d.material_code)
+        )
+        mat_id = mat_result.scalar_one_or_none()
+        if mat_id is None:
+            continue
         issue_detail = IssueDetail(
             issue_order_id=order.id,
-            material_id=1,  # Will be resolved from material_code
+            material_id=mat_id,
             required_qty=d.quantity,
             status="pending",
         )

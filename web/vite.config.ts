@@ -3,7 +3,17 @@ import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'no-module-script',
+      transformIndexHtml(html) {
+        return html
+          .replace(/\s+type="module"/g, '')
+          .replace(/\s+crossorigin/g, '')
+      },
+    },
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),
@@ -15,18 +25,21 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        timeout: 5000,
+        proxyTimeout: 5000,
       },
     },
   },
   build: {
     outDir: 'dist',
     sourcemap: false,
+    cssCodeSplit: false,
     rollupOptions: {
       output: {
-        manualChunks: {
-          antd: ['antd', '@ant-design/icons'],
-          vendor: ['react', 'react-dom', 'react-router-dom'],
-        },
+        format: 'iife',
+        inlineDynamicImports: true,
+        entryFileNames: 'assets/index.js',
+        assetFileNames: 'assets/[name][extname]',
       },
     },
   },

@@ -1,6 +1,7 @@
 """XR point counter API routes."""
 
-from typing import Optional
+from typing import Optional, List
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException
 from app.schemas import (
@@ -9,8 +10,34 @@ from app.schemas import (
 )
 from app.utils.database import get_db
 from app.services.xr_service import handle_xr_upload, confirm_restock
+from app.models import XrBatch
 
 router = APIRouter(prefix="/xr", tags=["XR Point Counter"])
+
+
+@router.get("")
+async def list_xr_batches(
+    db: AsyncSession = Depends(get_db),
+):
+    """List all XR batches."""
+    result = await db.execute(
+        select(XrBatch).order_by(XrBatch.scanned_at.desc())
+    )
+    batches = result.scalars().all()
+    return [
+        {
+            "id": b.id,
+            "device_id": b.device_id,
+            "material_code": b.material_code,
+            "counted_qty": b.counted_qty,
+            "scanned_at": b.scanned_at.isoformat() if b.scanned_at else None,
+            "operator": b.operator,
+            "matched_pallet_id": b.matched_pallet_id,
+            "status": b.status,
+            "match_key": b.match_key,
+        }
+        for b in batches
+    ]
 
 
 @router.post("/upload", response_model=XrUploadResponse)

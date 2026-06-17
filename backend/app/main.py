@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.utils.database import init_db
+from app.utils.database import init_db, seed_db
 from app.api.auth import router as auth_router
 from app.api.receipt import router as receipt_router
 from app.api.issue import router as issue_router
@@ -14,6 +14,10 @@ from app.api.inventory import router as inventory_router
 from app.api.xr import router as xr_router
 from app.api.bom import router as bom_router
 from app.api import report
+from app.api.shelves import router as shelves_router
+from app.api.materials import router as materials_router
+from app.api.users import router as users_router
+from app.api.settings import router as settings_router
 
 structlog.configure(
     processors=[
@@ -34,13 +38,14 @@ async def lifespan(app: FastAPI):
     """Application startup/shutdown."""
     logger.info("Starting up ConsumableShelf backend")
     await init_db()
+    await seed_db()
     logger.info("Database initialized")
     yield
     logger.info("Shutting down ConsumableShelf backend")
 
 
 app = FastAPI(
-    title=settings.APP_NAME,
+    title="智能物料架管理系统",
     version=settings.APP_VERSION,
     lifespan=lifespan,
 )
@@ -62,6 +67,10 @@ app.include_router(inventory_router, prefix=settings.API_PREFIX)
 app.include_router(xr_router, prefix=settings.API_PREFIX)
 app.include_router(bom_router, prefix=settings.API_PREFIX)
 app.include_router(report.router, prefix=settings.API_PREFIX)
+app.include_router(shelves_router, prefix=settings.API_PREFIX)
+app.include_router(materials_router, prefix=settings.API_PREFIX)
+app.include_router(users_router, prefix=settings.API_PREFIX)
+app.include_router(settings_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/health")

@@ -36,10 +36,30 @@ async def init_db():
     """Initialize database tables."""
     from app.models import Base  # noqa: F401
 
-    # Use checkfirst=True to avoid creating tables that already exist
     async with engine.begin() as conn:
         await conn.run_sync(
             lambda sync_session: Base.metadata.create_all(
                 sync_session, checkfirst=True
             )
         )
+
+
+async def seed_db():
+    """Seed default data (admin user, etc.)."""
+    from app.models import User
+    from app.services.auth_service import get_password_hash
+    from sqlalchemy import select
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.username == "admin")
+        )
+        if result.scalar_one_or_none() is None:
+            admin = User(
+                username="admin",
+                password_hash=get_password_hash("admin123"),
+                role="admin",
+                active=1,
+            )
+            session.add(admin)
+            await session.commit()

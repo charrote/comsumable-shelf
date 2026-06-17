@@ -5,7 +5,6 @@ const api = axios.create({
   timeout: 30000,
 })
 
-// Request interceptor: attach token
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token')
   if (token) {
@@ -14,13 +13,11 @@ api.interceptors.request.use((config) => {
   return config
 })
 
-// Response interceptor: handle errors
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('token')
-      window.location.href = '/login'
     }
     return Promise.reject(error)
   }

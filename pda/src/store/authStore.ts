@@ -1,11 +1,16 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { loginApi, getMeApi } from '../api'
+import type { UserResponse } from '../types/api'
 
 interface AuthState {
   token: string | null
-  user: any
-  setAuth: (token: string, user: any) => void
+  user: UserResponse | null
+  isLoading: boolean
+  error: string | null
+  login: (username: string, password: string) => Promise<void>
   logout: () => void
+  clearError: () => void
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -13,20 +18,35 @@ export const useAuthStore = create<AuthState>()(
     (set) => ({
       token: null,
       user: null,
-      setAuth: (token, user) => set({ token, user }),
-      logout: () => set({ token: null, user: null }),
-    }),
-    { name: 'pda-auth-storage' },
-  ),
-)
+      isLoading: false,
+      error: null,
 
-export async function login(username: string, password: string) {
-  const response = await fetch('http://localhost:8080/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  })
-  const data = await response.json()
-  useAuthStore.getState().setAuth(data.access_token, data)
-  return data
-}
+      login: async (username: string, password: string) => {
+        set({ isLoading: true, error: null })
+        try {
+          const tokenRes = await loginApi({ username, password })
+          localStorage.setItem('token', tokenRes.access_token)
+          const user = await getMeApi()
+          set({
+            token: tokenRes.access_token,
+            user,
+            isLoading: false,
+            error: null,
+          })
+        } catch (e: any) {
+          const msg = e?.response?.data?.detail || e?.message || '登录失败'
+          set({ isLoading: false, error: msg })
+          throw new Error(msg)
+        }
+      },
+
+      logout: () => {
+        localStorage.removeItem('token')
+        set({ token: null, user: null, error: null })
+      },
+
+      clearError: () => set({ error: null }),
+    }),
+    { name: 'pda-auth-storage', partialize: (state) => ({ token: state.token, user: state.user }) }
+  )
+)

@@ -1,21 +1,123 @@
 """Issue (outbound) API routes."""
 
 from datetime import datetime
-from sqlalchemy import select, update
+from typing import Optional, List
+from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from app.schemas import (
     IssueCalculateRequest, IssueCalculateResponse,
     IssueAssignResponse, IssueConfirmPickRequest, IssueConfirmPickResponse,
     MaterialCalcResult, PalletSelection,
 )
 from app.utils.database import get_db
-from app.models import IssueOrder, IssueDetail, InventoryPallet, LedCommand
+from app.models import IssueOrder, IssueDetail, InventoryPallet, LedCommand, ShelfSlot, Shelf, BomHeader
 from app.services.fifo_service import calculate_fifo_pallets, get_available_qty
 from app.utils.barcode import parse_barcode
 import json
 
 router = APIRouter(prefix="/issues", tags=["Issue/Outbound"])
+
+
+@router.get("")
+async def list_issues(
+    customer_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """List issue orders."""
+    query = select(
+        IssueOrder.id,
+        IssueOrder.order_no,
+        IssueOrder.bom_header_id,
+        IssueOrder.customer_id,
+        IssueOrder.required_date,
+        IssueOrder.status,
+        IssueOrder.created_at,
+        IssueOrder.assigned_at,
+        IssueOrder.completed_at,
+        BomHeader.bom_name,
+    ).outerjoin(
+        BomHeader, IssueOrder.bom_header_id == BomHeader.id
+    ).order_by(IssueOrder.created_at.desc())
+
+    if customer_id:
+        query = query.where(IssueOrder.customer_id == customer_id)
+    if status:
+        query = query.where(IssueOrder.status == status)
+
+    result = await db.execute(query)
+    rows = result.all()
+    issues = []
+    for row in rows:
+        detail_count = await db.execute(
+            select(func.count()).select_from(IssueDetail)
+            .where(IssueDetail.issue_order_id == row.id)
+        )
+        total_materials = detail_count.scalar_one()
+        issues.append({
+            "id": row.id,
+            "order_no": row.order_no,
+            "bom_header_id": row.bom_header_id,
+            "bom_name": row.bom_name or "",
+            "customer_id": row.customer_id,
+            "required_date": row.required_date.isoformat() if row.required_date else None,
+            "status": row.status,
+            "total_materials": total_materials,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        })
+    return {"data": issues}
+
+
+@router.get("/{order_id}")
+async def get_issue(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get issue order detail."""
+    result = await db.execute(
+        select(
+            IssueOrder.id,
+            IssueOrder.order_no,
+            IssueOrder.bom_header_id,
+            IssueOrder.customer_id,
+            IssueOrder.required_date,
+            IssueOrder.status,
+            IssueOrder.created_at,
+            IssueOrder.assigned_at,
+            IssueOrder.completed_at,
+        ).where(IssueOrder.id == order_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="发料单不存在")
+
+    details_result = await db.execute(
+        select(IssueDetail).where(IssueDetail.issue_order_id == order_id)
+    )
+    details = details_result.scalars().all()
+
+    return {
+        "id": row.id,
+        "order_no": row.order_no,
+        "bom_header_id": row.bom_header_id,
+        "customer_id": row.customer_id,
+        "required_date": row.required_date.isoformat() if row.required_date else None,
+        "status": row.status,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "details": [
+            {
+                "id": d.id,
+                "material_id": d.material_id,
+                "required_qty": d.required_qty,
+                "picked_qty": d.picked_qty,
+                "pallet_ids": d.pallet_ids,
+                "pick_strategy": d.pick_strategy,
+                "status": d.status,
+            }
+            for d in details
+        ],
+    }
 
 
 @router.post("/{order_id}/calculate", response_model=IssueCalculateResponse)
@@ -120,17 +222,20 @@ async def assign_led(
             if not pallet or not pallet.shelf_slot_id:
                 continue
 
-            slot_result = await db.execute(
-                select(InventoryPallet.__table__.c.shelf_slot_id).where(
-                    InventoryPallet.id == pid
-                )
+            slot_id = pallet.shelf_slot_id
+
+            shelf_result = await db.execute(
+                select(ShelfSlot.shelf_id).where(ShelfSlot.id == slot_id)
             )
-            slot_id = slot_result.scalar_one()
+            shelf_row = shelf_result.scalar_one_or_none()
+            if not shelf_row:
+                continue
+            current_shelf_id = shelf_row
 
             cmd = LedCommand(
                 issue_order_id=order_id,
                 material_id=pallet.material_id,
-                shelf_id=pallet.shelf_slot_id,
+                shelf_id=current_shelf_id,
                 slot_id=slot_id,
                 color="green",
                 duration=0,
@@ -145,12 +250,10 @@ async def assign_led(
             })
 
         if not shelf_id and pallet and pallet.shelf_slot_id:
-            shelf_result = await db.execute(
-                select(InventoryPallet.__table__.c.shelf_id)
-                .join(InventoryPallet.__table__.c.shelf_slot_id,
-                      InventoryPallet.__table__.c.shelf_slot_id == 1)
+            slot_row = await db.execute(
+                select(ShelfSlot.shelf_id).where(ShelfSlot.id == pallet.shelf_slot_id)
             )
-            shelf_id = shelf_result.scalar_one()
+            shelf_id = slot_row.scalar_one()
 
     if all_commands:
         await db.execute(
@@ -184,8 +287,8 @@ async def confirm_pick(
     if not order:
         raise HTTPException(status_code=404, detail="发料单不存在")
 
-    parsed = parse_barcode(data.barcode)
-    if not parsed:
+    parsed = await parse_barcode(data.barcode, db)
+    if not parsed or not parsed.material_code:
         return IssueConfirmPickResponse(
             status="error",
             picked_qty=0,

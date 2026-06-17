@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # LED command workers
     LED_WORKER_COUNT: int = 4
 
+    # FIFO strategy (tail_first | time_fifo | mixed)
+    FIFO_STRATEGY: str = "tail_first"
+
     SECRET_KEY: str = "changeme-secret-key"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
