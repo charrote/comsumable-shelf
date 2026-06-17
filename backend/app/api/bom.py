@@ -12,6 +12,7 @@ from app.schemas import (
 from app.utils.database import get_db
 from app.models import BomHeader, BomDetail, IssueOrder, IssueDetail, MaterialMaster
 from app.config import settings
+from app.services.bom_service import ensure_materials_exist
 import openpyxl
 import os
 
@@ -186,6 +187,13 @@ async def upload_bom(
 
     await db.commit()
 
+    # ── Auto-create non-existing materials ──
+    auto_created = 0
+    if settings.BOM_AUTO_CREATE_MATERIAL and customer_id:
+        auto_created = await ensure_materials_exist(
+            db, unique_materials, customer_id
+        )
+
     return BomUploadResponse(
         bom_header_id=bom_header.id,
         bom_name=bom_header.bom_name,
@@ -193,6 +201,7 @@ async def upload_bom(
         total_items=total_items,
         unique_materials=len(unique_materials),
         alternates_found=alternates_found,
+        auto_created_count=auto_created,
     )
 
 

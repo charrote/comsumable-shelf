@@ -214,6 +214,87 @@ def parse_barcode_sync(barcode: str, material_codes: List[str] = None) -> Barcod
     )
 
 
+async def find_material_candidates(
+    db,
+    barcode: str,
+    top_n: int = 5,
+    threshold: float = 0.3,
+) -> List[dict]:
+    """Find top N candidate materials matching a barcode.
+
+    Args:
+        db: Async database session
+        barcode: Raw barcode string
+        top_n: Maximum number of candidates to return
+        threshold: Minimum confidence score (0.0 ~ 1.0)
+
+    Returns:
+        List of dicts, each with:
+          - material_id: int
+          - code: str
+          - name: str
+          - confidence: float
+          - extracted_code: str (the code extracted from barcode)
+        Sorted by confidence descending. Empty list if no match found.
+    """
+    raw = barcode.strip()
+    if not raw:
+        return []
+
+    extracted = _extract_material_code(raw)
+    known_prefix = _find_known_prefix(raw)
+
+    from app.models import MaterialMaster
+    from sqlalchemy import select
+
+    try:
+        # 1) Exact match — return immediately if found
+        exact_result = await db.execute(
+            select(MaterialMaster).where(
+                MaterialMaster.code == extracted,
+                MaterialMaster.active == 1,
+            )
+        )
+        exact = exact_result.scalar_one_or_none()
+        if exact:
+            return [{
+                "material_id": exact.id,
+                "code": exact.code,
+                "name": exact.name,
+                "confidence": 1.0,
+                "extracted_code": extracted,
+            }]
+
+        # 2) Fuzzy match against all active materials
+        result = await db.execute(
+            select(MaterialMaster).where(MaterialMaster.active == 1)
+        )
+        all_materials = result.scalars().all()
+
+        scored = []
+        for mat in all_materials:
+            score = _calculate_confidence(raw, mat.code)
+            if known_prefix:
+                score = min(1.0, score + 0.1)
+            if score >= threshold:
+                scored.append({
+                    "material_id": mat.id,
+                    "code": mat.code,
+                    "name": mat.name,
+                    "confidence": round(score, 4),
+                    "extracted_code": extracted,
+                })
+
+        # Sort by confidence descending, take top N
+        scored.sort(key=lambda x: x["confidence"], reverse=True)
+        return scored[:top_n]
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("find_material_candidates error: %s", e)
+        return []
+
+
 def add_material_pattern(material_code: str, category: str = None):
     """Register a material code pattern for future recognition."""
     KNOWN_PREFIXES.append(material_code.split('-')[0] if '-' in material_code else material_code)

@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import XrBatch, InventoryPallet, Transaction, MaterialMaster
+from app.models import XrBatch, InventoryReel, Transaction, MaterialMaster
 from app.hal.printer import print_label
 
 
@@ -68,7 +68,7 @@ async def handle_xr_upload(
     )
 
     if match_result.get("matched"):
-        xr_batch.matched_pallet_id = match_result["pallet_id"]
+        xr_batch.matched_reel_id = match_result["reel_id"]
         xr_batch.status = "matched"
         await db.commit()
 
@@ -87,7 +87,7 @@ async def handle_xr_upload(
             "code": 0,
             "message": "配对成功",
             "action": "confirm_restock",
-            "pallet_id": match_result["pallet_id"],
+            "reel_id": match_result["reel_id"],
         }
     else:
         xr_batch.status = "pending_match"
@@ -117,14 +117,14 @@ async def auto_match_xr(
 
     # Find tracking pallets for this material
     result = await db.execute(
-        select(InventoryPallet)
+        select(InventoryReel)
         .where(
-            InventoryPallet.material_id == material_id,
-            InventoryPallet.customer_id == customer_id,
-            InventoryPallet.status == "tracking",
-            InventoryPallet.quantity > 0,
+            InventoryReel.material_id == material_id,
+            InventoryReel.customer_id == customer_id,
+            InventoryReel.status == "tracking",
+            InventoryReel.quantity > 0,
         )
-        .order_by(InventoryPallet.last_out_time.desc())
+        .order_by(InventoryReel.last_out_time.desc())
     )
     rows = result.scalars().all()
 
@@ -145,15 +145,15 @@ async def auto_match_xr(
     if best_match:
         # Update pallet status
         await db.execute(
-            update(InventoryPallet)
-            .where(InventoryPallet.id == best_match.id)
+            update(InventoryReel)
+            .where(InventoryReel.id == best_match.id)
             .values(status="ready_restock")
         )
         await db.commit()
 
         return {
             "matched": True,
-            "pallet_id": best_match.id,
+            "reel_id": best_match.id,
             "time_delta": best_delta,
         }
     else:
@@ -162,7 +162,7 @@ async def auto_match_xr(
 
 async def confirm_restock(
     db: AsyncSession,
-    pallet_id: int,
+    reel_id: int,
     shelf_slot_id: int,
     counted_qty: float,
 ):
@@ -172,8 +172,8 @@ async def confirm_restock(
     """
     # Update pallet
     await db.execute(
-        update(InventoryPallet)
-        .where(InventoryPallet.id == pallet_id)
+        update(InventoryReel)
+        .where(InventoryReel.id == pallet_id)
         .values(
             quantity=counted_qty,
             original_quantity=counted_qty,
@@ -187,7 +187,7 @@ async def confirm_restock(
     # Create restock transaction
     pallet = (
         await db.execute(
-            select(InventoryPallet).where(InventoryPallet.id == pallet_id)
+            select(InventoryReel).where(InventoryReel.id == pallet_id)
         )
     ).scalar_one()
 
@@ -198,7 +198,7 @@ async def confirm_restock(
         type="restock",
         quantity=counted_qty,
         balance_after=counted_qty,
-        inventory_pallet_id=pallet_id,
+        reel_id=pallet_id,
         source_type="xr_transfer",
     )
     db.add(txn)

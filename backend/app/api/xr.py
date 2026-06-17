@@ -32,7 +32,7 @@ async def list_xr_batches(
             "counted_qty": b.counted_qty,
             "scanned_at": b.scanned_at.isoformat() if b.scanned_at else None,
             "operator": b.operator,
-            "matched_pallet_id": b.matched_pallet_id,
+            "matched_reel_id": b.matched_reel_id,
             "status": b.status,
             "match_key": b.match_key,
         }
@@ -76,7 +76,7 @@ async def xr_manual_match(
         XrBatch.__table__.update()
         .where(XrBatch.id == batch_id)
         .values(
-            matched_pallet_id=data.inventory_pallet_id,
+            matched_reel_id=data.reel_id,
             status="matched",
         )
     )
@@ -96,18 +96,18 @@ async def xr_confirm_restock(
         select(XrBatch).where(XrBatch.id == batch_id)
     )
     batch = batch_result.scalar_one_or_none()
-    if not batch or batch.matched_pallet_id is None:
+    if not batch or batch.matched_reel_id is None:
         raise HTTPException(status_code=400, detail="XR批次未配对")
 
     await confirm_restock(
         db,
-        pallet_id=batch.matched_pallet_id,
+        reel_id=batch.matched_reel_id,
         shelf_slot_id=data.shelf_slot_id,
         counted_qty=batch.counted_qty,
     )
 
     return {
         "status": "ok",
-        "inventory_pallet_id": batch.matched_pallet_id,
+        "reel_id": batch.matched_reel_id,
         "message": "退库完成, 物料盘已上架至储位 " + str(data.shelf_slot_id),
     }

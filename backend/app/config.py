@@ -32,8 +32,19 @@ class Settings(BaseSettings):
     # LED command workers
     LED_WORKER_COUNT: int = 4
 
+    # Slot auto-assign polling
+    SLOT_POLL_INTERVAL: int = 3  # seconds between sensor polls
+    AUTO_ASSIGN_ENABLED: bool = True
+
+    # Hardware — Label Printer (ZPL over TCP)
+    LABEL_PRINTER_IP: str = ""
+    LABEL_PRINTER_PORT: int = 9100
+
     # FIFO strategy (tail_first | time_fifo | mixed)
     FIFO_STRATEGY: str = "tail_first"
+
+    # BOM auto-create materials
+    BOM_AUTO_CREATE_MATERIAL: bool = True
 
     SECRET_KEY: str = "changeme-secret-key"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480

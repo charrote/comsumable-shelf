@@ -7,12 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.schemas import (
     InventoryResponse,
-    TrackingPalletResponse,
+    TrackingReelResponse,
     InventoryUpdateRequest,
     InventoryUpdateResponse,
+    DirectOutRequest,
+    DirectOutResponse,
 )
 from app.utils.database import get_db
-from app.models import InventoryPallet, MaterialMaster, Shelf, ShelfSlot, Transaction
+from app.models import InventoryReel, MaterialMaster, Shelf, ShelfSlot, Transaction
+from app.services.inventory_service import direct_out
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 
@@ -25,21 +28,21 @@ async def get_inventory(
 ):
     """Query inventory pallets."""
     query = select(
-        InventoryPallet,
+        InventoryReel,
         MaterialMaster.code.label("material_code"),
         Shelf.code.label("shelf_code"),
     ).join(
-        MaterialMaster, InventoryPallet.material_id == MaterialMaster.id
+        MaterialMaster, InventoryReel.material_id == MaterialMaster.id
     ).outerjoin(
-        ShelfSlot, InventoryPallet.shelf_slot_id == ShelfSlot.id
+        ShelfSlot, InventoryReel.shelf_slot_id == ShelfSlot.id
     ).outerjoin(
         Shelf, ShelfSlot.shelf_id == Shelf.id
     )
 
     if customer_id:
-        query = query.where(InventoryPallet.customer_id == customer_id)
+        query = query.where(InventoryReel.customer_id == customer_id)
     if material_id:
-        query = query.where(InventoryPallet.material_id == material_id)
+        query = query.where(InventoryReel.material_id == material_id)
 
     result = await db.execute(query)
     rows = result.all()
@@ -54,7 +57,7 @@ async def get_inventory(
         if pallet.status == "exhausted":
             exhausted += 1
         pallets.append({
-            "pallet_id": pallet.id,
+            "reel_id": pallet.id,
             "material_code": row[1],
             "quantity": pallet.quantity,
             "original_quantity": pallet.original_quantity,
@@ -81,16 +84,16 @@ async def get_tracking_inventory(
 ):
     """Get tracking inventory (returned items waiting for restock)."""
     result = await db.execute(
-        select(InventoryPallet, MaterialMaster.code.label("material_code"))
-        .join(MaterialMaster, InventoryPallet.material_id == MaterialMaster.id)
-        .where(InventoryPallet.status == "tracking")
+        select(InventoryReel, MaterialMaster.code.label("material_code"))
+        .join(MaterialMaster, InventoryReel.material_id == MaterialMaster.id)
+        .where(InventoryReel.status == "tracking")
     )
     rows = result.all()
 
     pallets = []
     for pallet, code in rows:
-        pallets.append(TrackingPalletResponse(
-            pallet_id=pallet.id,
+        pallets.append(TrackingReelResponse(
+            reel_id=pallet.id,
             material_code=code,
             quantity=pallet.quantity,
             last_out_time=pallet.last_out_time,
@@ -100,9 +103,9 @@ async def get_tracking_inventory(
     return {"pallets": pallets}
 
 
-@router.put("/{pallet_id}", response_model=InventoryUpdateResponse)
+@router.put("/{reel_id}", response_model=InventoryUpdateResponse)
 async def update_inventory_pallet(
-    pallet_id: int,
+    reel_id: int,
     data: InventoryUpdateRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -113,7 +116,7 @@ async def update_inventory_pallet(
     """
     # 1. Verify pallet exists
     result = await db.execute(
-        select(InventoryPallet).where(InventoryPallet.id == pallet_id)
+        select(InventoryReel).where(InventoryReel.id == reel_id)
     )
     pallet = result.scalar_one_or_none()
     if not pallet:
@@ -150,10 +153,10 @@ async def update_inventory_pallet(
 
         # Check slot is not already occupied by a DIFFERENT pallet
         occupied = await db.execute(
-            select(InventoryPallet).where(
-                InventoryPallet.shelf_slot_id == data.shelf_slot_id,
-                InventoryPallet.id != pallet_id,
-                InventoryPallet.status == "on_shelf",
+            select(InventoryReel).where(
+                InventoryReel.shelf_slot_id == data.shelf_slot_id,
+                InventoryReel.id != pallet_id,
+                InventoryReel.status == "on_shelf",
             )
         )
         if occupied.scalar_one_or_none():
@@ -176,7 +179,7 @@ async def update_inventory_pallet(
             type="reverse" if qty_diff > 0 else "out" if qty_diff < 0 else "reverse",
             quantity=abs(qty_diff) if qty_diff != 0 else 0,
             balance_after=data.quantity if data.quantity is not None else old_quantity,
-            inventory_pallet_id=pallet.id,
+            reel_id=pallet.id,
             source_type="manual_adjust",
             note=data.note or f"手动调整: {', '.join(updated_fields)}",
             created_at=now,
@@ -188,7 +191,42 @@ async def update_inventory_pallet(
 
     return InventoryUpdateResponse(
         status="ok",
-        pallet_id=pallet_id,
+        reel_id=pallet_id,
         updated_fields=updated_fields,
-        message=f"库存托盘 #{pallet_id} 已更新: {', '.join(updated_fields) if updated_fields else '无变更'}",
+        message=f"库存托盘 #{reel_id} 已更新: {', '.join(updated_fields) if updated_fields else '无变更'}",
+    )
+
+
+@router.post("/reels/{reel_id}/direct-out", response_model=DirectOutResponse)
+async def direct_outbound(
+    reel_id: int,
+    data: DirectOutRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Direct outbound — scan & release reel without BOM / IssueOrder.
+
+    This is a simplified outbound flow for urgent picks or waste disposal.
+    It reduces the reel's quantity, creates a Transaction record,
+    and optionally releases the shelf slot when fully consumed.
+    """
+    result = await direct_out(
+        db=db,
+        reel_id=reel_id,
+        quantity=data.quantity,
+        operator=data.operator,
+        note=data.note,
+        release_slot=data.release_slot,
+    )
+
+    if result["status"] == "error":
+        raise HTTPException(status_code=400, detail=result["message"])
+
+    return DirectOutResponse(
+        status=result["status"],
+        reel_id=result["reel_id"],
+        quantity_before=result["quantity_before"],
+        quantity_after=max(0, result["quantity_after"]),
+        reel_status=result["reel_status"],
+        slot_released=result["slot_released"],
+        message=result["message"],
     )

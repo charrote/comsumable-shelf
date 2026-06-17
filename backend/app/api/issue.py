@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from app.schemas import (
     IssueCalculateRequest, IssueCalculateResponse,
     IssueAssignResponse, IssueConfirmPickRequest, IssueConfirmPickResponse,
-    MaterialCalcResult, PalletSelection,
+    MaterialCalcResult, ReelSelection,
 )
 from app.utils.database import get_db
-from app.models import IssueOrder, IssueDetail, InventoryPallet, LedCommand, ShelfSlot, Shelf, BomHeader, MaterialMaster, Transaction
+from app.models import IssueOrder, IssueDetail, InventoryReel, LedCommand, ShelfSlot, Shelf, BomHeader, MaterialMaster, Transaction
 from app.services.fifo_service import calculate_fifo_pallets, get_available_qty
 from app.utils.barcode import parse_barcode
 import json
@@ -111,7 +111,7 @@ async def get_issue(
                 "material_id": d.material_id,
                 "required_qty": d.required_qty,
                 "picked_qty": d.picked_qty,
-                "pallet_ids": d.pallet_ids,
+                "reel_ids": d.reel_ids,
                 "pick_strategy": d.pick_strategy,
                 "status": d.status,
             }
@@ -164,9 +164,9 @@ async def calculate_issue(
         material_code = mat.code if mat else ""
         material_name = mat.name if mat else ""
 
-        pallets_selected = []
-        for p in calc["pallets"]:
-            pallets_selected.append(PalletSelection(**p))
+        reels_selected = []
+        for p in calc["reels"]:
+            reels_selected.append(ReelSelection(**p))
 
         materials.append(MaterialCalcResult(
             material_id=detail.material_id,
@@ -175,7 +175,7 @@ async def calculate_issue(
             required_qty=detail.required_qty,
             available_qty=available,
             strategy=calc["strategy_used"],
-            pallets_selected=pallets_selected,
+            reels_selected=reels_selected,
             total_selected=calc["total_selected"],
             shortage=calc["shortage"],
         ))
@@ -215,15 +215,15 @@ async def assign_led(
     shelf_id = None
 
     for detail in details:
-        if not detail.pallet_ids:
+        if not detail.reel_ids:
             continue
-        pallet_ids = json.loads(detail.pallet_ids)
-        if not pallet_ids:
+        reel_ids = json.loads(detail.reel_ids)
+        if not reel_ids:
             continue
 
-        for pid in pallet_ids:
+        for pid in reel_ids:
             pallet_result = await db.execute(
-                select(InventoryPallet).where(InventoryPallet.id == pid)
+                select(InventoryReel).where(InventoryReel.id == pid)
             )
             pallet = pallet_result.scalar_one_or_none()
             if not pallet or not pallet.shelf_slot_id:
@@ -331,7 +331,7 @@ async def confirm_pick(
 
     # Look up pallet
     pallet_result = await db.execute(
-        select(InventoryPallet).where(InventoryPallet.id == data.pallet_id)
+        select(InventoryReel).where(InventoryReel.id == data.reel_id)
     )
     pallet = pallet_result.scalar_one_or_none()
 
@@ -355,8 +355,8 @@ async def confirm_pick(
     if pick_qty < available:
         # Reduce existing pallet
         await db.execute(
-            update(InventoryPallet)
-            .where(InventoryPallet.id == data.pallet_id)
+            update(InventoryReel)
+            .where(InventoryReel.id == data.reel_id)
             .values(
                 quantity=available - pick_qty,
                 last_out_time=now,
@@ -366,8 +366,8 @@ async def confirm_pick(
     else:
         # Exhaust the pallet
         await db.execute(
-            update(InventoryPallet)
-            .where(InventoryPallet.id == data.pallet_id)
+            update(InventoryReel)
+            .where(InventoryReel.id == data.reel_id)
             .values(
                 status="exhausted",
                 quantity=0,
@@ -392,7 +392,7 @@ async def confirm_pick(
         type="out",
         quantity=pick_qty,
         balance_after=available - pick_qty,
-        inventory_pallet_id=pallet.id if pallet else None,
+        reel_id=pallet.id if pallet else None,
         source_type="issue",
         source_id=order_id,
         operator=data.operator,

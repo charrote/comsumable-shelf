@@ -18,6 +18,17 @@ export const updateMaterialApi = (id: number, data: any) =>
   apiClient.put(`/materials/${id}`, data)
 export const deleteMaterialApi = (id: number) =>
   apiClient.delete(`/materials/${id}`)
+export const getMappingsApi = (params?: { customer_id?: number }) =>
+  apiClient.get('/materials/mappings', { params })
+export const createMappingApi = (data: {
+  customer_id: number
+  customer_material_code: string
+  internal_material_id: number
+}) => apiClient.post('/materials/mappings', data)
+export const updateMappingApi = (id: number, data: any) =>
+  apiClient.put(`/materials/mappings/${id}`, data)
+export const deleteMappingApi = (id: number) =>
+  apiClient.delete(`/materials/mappings/${id}`)
 
 // Shelf
 export const getShelvesApi = (params?: any) =>
@@ -40,12 +51,30 @@ export const getInventoryApi = (params: any) =>
   apiClient.get('/inventory', { params })
 export const getTrackingApi = () =>
   apiClient.get('/inventory/tracking')
+export const directOutboundApi = (reelId: number, data: {
+  quantity: number
+  operator: string
+  note?: string
+  release_slot?: boolean
+}) => apiClient.post(`/inventory/reels/${reelId}/direct-out`, data)
 
 // Receipt
 export const createReceiptApi = (data: { type: string; operator: string }) =>
   apiClient.post('/receipts', data)
-export const scanReceiptApi = (receiptId: number, data: { barcode: string; operator: string }) =>
-  apiClient.post(`/receipts/${receiptId}/scan`, data)
+export const scanReceiptApi = (
+  receiptId: number,
+  data: {
+    barcode: string
+    operator: string
+    qty?: number
+    manual_material_id?: number
+    is_new_material?: boolean
+    new_material_code?: string
+    new_material_name?: string
+    printer_ip?: string
+    printer_port?: number
+  }
+) => apiClient.post(`/receipts/${receiptId}/scan`, data)
 export const getReceiptListApi = (params: any) =>
   apiClient.get('/receipts', { params })
 export const getReceiptDetailApi = (id: number) =>
@@ -54,6 +83,10 @@ export const assignSlotApi = (receiptId: number, data: { detail_id: number; shel
   apiClient.post(`/receipts/${receiptId}/assign-slot`, data)
 export const confirmReceiptApi = (id: number) =>
   apiClient.put(`/receipts/${id}/confirm`)
+export const reprintLabelApi = (
+  receiptId: number,
+  data: { receipt_reel_id: number; printer_ip?: string; printer_port?: number }
+) => apiClient.post(`/receipts/${receiptId}/reprint`, data)
 
 // Issue
 export const getIssueListApi = (params: any) =>
@@ -64,7 +97,7 @@ export const calculateIssueApi = (orderId: number, data: { strategy: string }) =
   apiClient.post(`/issues/${orderId}/calculate`, data)
 export const assignLedApi = (orderId: number) =>
   apiClient.post(`/issues/${orderId}/assign`)
-export const confirmPickApi = (orderId: number, data: { barcode: string; pallet_id: number }) =>
+export const confirmPickApi = (orderId: number, data: { barcode: string; reel_id: number }) =>
   apiClient.post(`/issues/${orderId}/confirm-pick`, data)
 
 // XR
@@ -72,7 +105,7 @@ export const getXRListApi = (params: any) =>
   apiClient.get('/xr', { params })
 export const uploadXrApi = (data: { reel_id: string; qty: number }) =>
   apiClient.post('/xr/upload', data)
-export const matchXRApi = (batchId: number, data: { pallet_id: number }) =>
+export const matchXRApi = (batchId: number, data: { reel_id: number }) =>
   apiClient.post(`/xr/${batchId}/match`, data)
 export const confirmXRRestockApi = (batchId: number, data: { shelf_slot_id: number }) =>
   apiClient.post(`/xr/${batchId}/confirm-restock`, data)

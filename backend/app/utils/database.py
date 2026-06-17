@@ -46,8 +46,8 @@ async def init_db():
 
 
 async def seed_db():
-    """Seed default data (admin user, system settings, etc.)."""
-    from app.models import User, SystemSetting
+    """Seed default data (admin user, default customer, sample mapping, system settings)."""
+    from app.models import User, SystemSetting, Customer, MaterialMaster, CustomerMaterialMapping
     from app.services.auth_service import get_password_hash
     from sqlalchemy import select
 
@@ -65,12 +65,56 @@ async def seed_db():
             )
             session.add(admin)
 
+        # --- Default customer ---
+        result = await session.execute(
+            select(Customer).where(Customer.code == "DEFAULT")
+        )
+        if result.scalar_one_or_none() is None:
+            customer = Customer(
+                name="默认客户",
+                code="DEFAULT",
+                contact_name="管理员",
+                active=1,
+            )
+            session.add(customer)
+            await session.flush()  # get customer.id
+
+            # Default material (so mapping seed has a target)
+            mat = MaterialMaster(
+                customer_id=customer.id,
+                code="RES-0001",
+                name="电阻 0805 10KΩ",
+                unit="盘",
+                active=1,
+            )
+            session.add(mat)
+            await session.flush()
+
+            # Sample mapping
+            mapping = CustomerMaterialMapping(
+                customer_id=customer.id,
+                customer_material_code="CUST-RES-0001",
+                internal_material_id=mat.id,
+                active=1,
+            )
+            session.add(mapping)
+
         # --- Default system settings ---
         default_settings = [
             {
                 "key": "fifo_strategy",
                 "value": settings.FIFO_STRATEGY,
                 "description": "FIFO 出库策略 (tail_first | time_fifo | mixed)",
+            },
+            {
+                "key": "duplicate_scan_behavior",
+                "value": "block",
+                "description": "重复扫码行为 (block=拦截 | warn=警告并放行 | force=不检查)",
+            },
+            {
+                "key": "default_slot_capacity",
+                "value": "",
+                "description": "全局默认储位容量（空=不限制；各储位可单独覆盖）",
             },
         ]
         for s in default_settings:

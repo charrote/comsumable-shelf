@@ -53,24 +53,50 @@ data class ReceiptItemDto(
     @SerialName("material_id") val materialId: Int? = null,
     val quantity: Double? = null,
     val barcode: String? = null,
-    @SerialName("inventory_pallet_id") val inventoryPalletId: Int? = null
+    @SerialName("reel_id") val inventoryPalletId: Int? = null,
+    @SerialName("customer_material_code") val customerMaterialCode: String? = null,
+    @SerialName("internal_label_printed") val internalLabelPrinted: Boolean? = null,
+    @SerialName("label_printed_at") val labelPrintedAt: String? = null
+)
+
+@Serializable
+data class MaterialCandidateDto(
+    @SerialName("material_id") val materialId: Int,
+    val code: String,
+    val name: String,
+    val confidence: Double,
+    @SerialName("extracted_code") val extractedCode: String = ""
 )
 
 @Serializable
 data class ScanRequest(
     val barcode: String,
     val operator: String,
-    val qty: Double? = null
+    val qty: Double? = null,
+    @SerialName("manual_material_id") val manualMaterialId: Int? = null,
+    @SerialName("is_new_material") val isNewMaterial: Boolean? = null,
+    @SerialName("new_material_code") val newMaterialCode: String? = null,
+    @SerialName("new_material_name") val newMaterialName: String? = null,
+    @SerialName("printer_ip") val printerIp: String? = null,
+    @SerialName("printer_port") val printerPort: Int? = null
 )
 
 @Serializable
 data class ReceiptScanResponse(
     val status: String,
     val action: String? = null,
-    @SerialName("inventory_pallet_id") val inventoryPalletId: Int? = null,
+    @SerialName("reel_id") val inventoryPalletId: Int? = null,
     @SerialName("assigned_slot") val assignedSlot: Int? = null,
+    val quantity: Double = 0.0,
     @SerialName("duplicate_flag") val duplicateFlag: Boolean = false,
     val warning: String? = null,
+    val candidates: List<MaterialCandidateDto>? = null,
+    @SerialName("customer_material_code") val customerMaterialCode: String? = null,
+    @SerialName("material_id") val materialId: Int? = null,
+    @SerialName("material_code") val materialCode: String? = null,
+    @SerialName("material_name") val materialName: String? = null,
+    val confidence: Double? = null,
+    @SerialName("label_printed") val labelPrinted: Boolean? = null,
     val message: String? = null
 )
 
@@ -112,7 +138,7 @@ data class IssueDetailItem(
     @SerialName("material_id") val materialId: Int? = null,
     @SerialName("required_qty") val requiredQty: Double? = null,
     @SerialName("picked_qty") val pickedQty: Double? = null,
-    @SerialName("pallet_ids") val palletIds: String? = null,
+    @SerialName("reel_ids") val reelIds: String? = null,
     @SerialName("pick_strategy") val pickStrategy: String? = null,
     val status: String? = null
 )
@@ -123,8 +149,8 @@ data class CalculateRequest(
 )
 
 @Serializable
-data class PalletSelection(
-    @SerialName("pallet_id") val palletId: Int,
+data class ReelSelection(
+    @SerialName("reel_id") val reelId: Int,
     val quantity: Double,
     @SerialName("last_in_time") val lastInTime: String? = null,
     @SerialName("shelf_slot_id") val shelfSlotId: Int? = null
@@ -138,7 +164,7 @@ data class MaterialCalcResult(
     @SerialName("required_qty") val requiredQty: Double,
     @SerialName("available_qty") val availableQty: Double = 0.0,
     val strategy: String = "",
-    @SerialName("pallets_selected") val palletsSelected: List<PalletSelection> = emptyList(),
+    @SerialName("reels_selected") val palletsSelected: List<ReelSelection> = emptyList(),
     @SerialName("total_selected") val totalSelected: Double = 0.0,
     val shortage: Double = 0.0
 )
@@ -171,7 +197,7 @@ data class LedCommandDto(
 @Serializable
 data class ConfirmPickRequest(
     val barcode: String,
-    @SerialName("pallet_id") val palletId: Int,
+    @SerialName("reel_id") val reelId: Int,
     val operator: String
 )
 
@@ -189,7 +215,7 @@ data class ConfirmPickResponse(
 
 @Serializable
 data class InventoryItem(
-    @SerialName("pallet_id") val palletId: Int,
+    @SerialName("reel_id") val reelId: Int,
     @SerialName("material_code") val materialCode: String? = null,
     val quantity: Double? = null,
     @SerialName("original_quantity") val originalQuantity: Double? = null,
@@ -216,8 +242,8 @@ data class InventoryResponse(
 )
 
 @Serializable
-data class TrackingPalletItem(
-    @SerialName("pallet_id") val palletId: Int,
+data class TrackingReelItem(
+    @SerialName("reel_id") val reelId: Int,
     @SerialName("material_code") val materialCode: String? = null,
     val quantity: Double? = null,
     @SerialName("last_out_time") val lastOutTime: String? = null,
@@ -227,7 +253,28 @@ data class TrackingPalletItem(
 
 @Serializable
 data class TrackingListWrapper(
-    val pallets: List<TrackingPalletItem> = emptyList()
+    val pallets: List<TrackingReelItem> = emptyList()
+)
+
+// ======================== Direct Outbound ========================
+
+@Serializable
+data class DirectOutRequest(
+    val quantity: Double,
+    val operator: String,
+    val note: String? = null,
+    @SerialName("release_slot") val releaseSlot: Boolean = true
+)
+
+@Serializable
+data class DirectOutResponse(
+    val status: String,
+    @SerialName("reel_id") val inventoryPalletId: Int,
+    @SerialName("quantity_before") val quantityBefore: Double,
+    @SerialName("quantity_after") val quantityAfter: Double,
+    @SerialName("reel_status") val reelStatus: String,
+    @SerialName("slot_released") val slotReleased: Boolean = false,
+    val message: String
 )
 
 // ======================== Dashboard (Home) ========================

@@ -19,6 +19,7 @@ from app.api.materials import router as materials_router
 from app.api.users import router as users_router
 from app.api.settings import router as settings_router
 from app.services.led_service import LedService
+from app.services.shelf_service import SlotPollingService
 
 structlog.configure(
     processors=[
@@ -42,6 +43,7 @@ async def lifespan(app: FastAPI):
     await seed_db()
     logger.info("Database initialized")
 
+    # ── LED service ──
     led_service = LedService()
     try:
         await led_service.init(
@@ -54,6 +56,11 @@ async def lifespan(app: FastAPI):
         logger.warning(f"LED service init failed (hardware may be offline): {e}")
         app.state.led_service = led_service
 
+    # ── Slot polling service (hardware sensor auto-assign) ──
+    slot_service = SlotPollingService()
+    app.state.slot_service = slot_service
+    logger.info("Slot polling service initialized (idle, start via API)")
+
     yield
     logger.info("Shutting down ConsumableShelf backend")
     try:
@@ -61,6 +68,11 @@ async def lifespan(app: FastAPI):
         logger.info("LED service stopped")
     except Exception as e:
         logger.warning(f"LED service shutdown error: {e}")
+    try:
+        await slot_service.stop()
+        logger.info("Slot polling service stopped")
+    except Exception as e:
+        logger.warning(f"Slot polling service shutdown error: {e}")
 
 
 app = FastAPI(

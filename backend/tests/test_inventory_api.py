@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas import InventoryUpdateRequest
 from app.models import (
-    InventoryPallet,
+    InventoryReel,
     Shelf,
     ShelfSlot,
     Transaction,
@@ -111,10 +111,10 @@ class TestPickQuantityValidation:
     ):
         """Pick < full pallet: pallet quantity reduced, status stays on_shelf."""
         now = datetime.utcnow()
-        pallet = InventoryPallet(
+        pallet = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=10.0, original_quantity=10.0,
-            pallet_barcode="PARTIAL-TEST",
+            reel_barcode="PARTIAL-TEST",
             first_in_time=now, last_in_time=now,
             status="on_shelf",
         )
@@ -125,8 +125,8 @@ class TestPickQuantityValidation:
         pick_qty = 4.0
         remaining = pallet.quantity - pick_qty
         await db_session.execute(
-            update(InventoryPallet)
-            .where(InventoryPallet.id == pallet.id)
+            update(InventoryReel)
+            .where(InventoryReel.id == pallet.id)
             .values(quantity=remaining)
         )
         await db_session.commit()
@@ -140,10 +140,10 @@ class TestPickQuantityValidation:
     ):
         """Pick == full pallet: pallet exhausted."""
         now = datetime.utcnow()
-        pallet = InventoryPallet(
+        pallet = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=5.0, original_quantity=5.0,
-            pallet_barcode="FULL-TEST",
+            reel_barcode="FULL-TEST",
             first_in_time=now, last_in_time=now,
             status="on_shelf",
         )
@@ -151,8 +151,8 @@ class TestPickQuantityValidation:
         await db_session.commit()
 
         await db_session.execute(
-            update(InventoryPallet)
-            .where(InventoryPallet.id == pallet.id)
+            update(InventoryReel)
+            .where(InventoryReel.id == pallet.id)
             .values(quantity=0, status="exhausted")
         )
         await db_session.commit()
@@ -166,10 +166,10 @@ class TestPickQuantityValidation:
     ):
         """Transaction row created on pick."""
         now = datetime.utcnow()
-        pallet = InventoryPallet(
+        pallet = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=8.0, original_quantity=8.0,
-            pallet_barcode="TXN-TEST",
+            reel_barcode="TXN-TEST",
             first_in_time=now, last_in_time=now,
             status="on_shelf",
         )
@@ -183,7 +183,7 @@ class TestPickQuantityValidation:
             type="out",
             quantity=3.0,
             balance_after=5.0,
-            inventory_pallet_id=pallet.id,
+            reel_id=pallet.id,
             source_type="issue",
             source_id=1,
             operator="tester",
@@ -194,7 +194,7 @@ class TestPickQuantityValidation:
         await db_session.commit()
 
         result = await db_session.execute(
-            select(Transaction).where(Transaction.inventory_pallet_id == pallet.id)
+            select(Transaction).where(Transaction.reel_id == pallet.id)
         )
         saved = result.scalar_one_or_none()
         assert saved is not None

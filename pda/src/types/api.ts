@@ -31,18 +31,48 @@ export interface MaterialResponse {
 }
 
 // Receipts (Inbound)
+export interface MaterialCandidate {
+  material_id: number
+  code: string
+  name: string
+  confidence: number
+  extracted_code: string
+}
+
 export interface ReceiptScanRequest {
   barcode: string
   operator: string
+  qty?: number
+  manual_material_id?: number
+  is_new_material?: boolean
+  new_material_code?: string
+  new_material_name?: string
+  printer_ip?: string
+  printer_port?: number
 }
 
 export interface ReceiptScanResponse {
-  status: string
-  action: string
-  inventory_pallet_id?: number
+  status: string              // ok | duplicate | pending_review | error
+  action: string              // first_in | duplicate | pending_review | new_material
+  reel_id?: number
   assigned_slot?: number
+  quantity: number
   duplicate_flag: boolean
   warning?: string
+
+  // Pending review
+  candidates?: MaterialCandidate[]
+  customer_material_code?: string
+
+  // Matched / newly created material info
+  material_id?: number
+  material_code?: string
+  material_name?: string
+  confidence?: number
+
+  // Label printing
+  label_printed?: boolean
+
   message: string
 }
 
@@ -62,9 +92,14 @@ export interface ReceiptDetailResponse {
 }
 
 export interface ReceiptItem {
+  id: number
   material_id: number
   quantity: number
   barcode?: string
+  customer_material_code?: string
+  reel_id?: number
+  internal_label_printed?: boolean
+  label_printed_at?: string
 }
 
 // Issues (Outbound)
@@ -72,8 +107,8 @@ export interface IssueCalculateRequest {
   strategy?: string
 }
 
-export interface PalletSelection {
-  pallet_id: number
+export interface ReelSelection {
+  reel_id: number
   quantity: number
   last_in_time: string
   shelf_slot_id: number
@@ -86,7 +121,7 @@ export interface MaterialCalcResult {
   required_qty: number
   available_qty: number
   strategy: string
-  pallets_selected: PalletSelection[]
+  reels_selected: ReelSelection[]
   total_selected: number
   shortage: number
 }
@@ -100,7 +135,7 @@ export interface IssueCalculateResponse {
 
 export interface IssueConfirmPickRequest {
   barcode: string
-  pallet_id: number
+  reel_id: number
   operator: string
 }
 
@@ -141,8 +176,8 @@ export interface IssueDetailResponse {
 }
 
 // Inventory
-export interface PalletInfo {
-  pallet_id: number
+export interface ReelInfo {
+  reel_id: number
   material_code: string
   material_name?: string
   quantity: number
@@ -155,22 +190,53 @@ export interface PalletInfo {
 }
 
 export interface InventoryResponse {
-  pallets: PalletInfo[]
+  reels: ReelInfo[]
   summary?: {
-    total_pallets?: number
+    total_reels?: number
     total_quantity?: number
-    exhausted_pallets?: number
+    exhausted_reels?: number
   }
 }
 
-export interface TrackingPalletResponse {
-  pallet_id: number
+export interface TrackingReelResponse {
+  reel_id: number
   material_code: string
   material_name?: string
   quantity: number
   last_out_time?: string
   status: string
   xr_matched: boolean
+}
+
+// Direct Outbound
+export interface DirectOutRequest {
+  quantity: number
+  operator: string
+  note?: string
+  release_slot?: boolean
+}
+
+export interface DirectOutResponse {
+  status: string           // ok | exhausted | error
+  reel_id: number
+  quantity_before: number
+  quantity_after: number
+  reel_status: string
+  slot_released: boolean
+  message: string
+}
+
+// Customer Material Mapping
+export interface CustomerMaterialMappingResponse {
+  id: number
+  customer_id: number
+  customer_material_code: string
+  internal_material_id: number
+  internal_material_code: string
+  internal_material_name: string
+  customer_name: string
+  active: number
+  created_at?: string
 }
 
 // Shelves

@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity } from 'react-native'
 import { getTrackingInventoryApi, getInventoryApi } from '../api'
-import type { TrackingPalletResponse, PalletInfo } from '../types/api'
+import type { TrackingReelResponse, ReelInfo } from '../types/api'
 
 type Tab = 'tracking' | 'onshelf'
 
 export default function TrackingScreen() {
   const [tab, setTab] = useState<Tab>('tracking')
-  const [trackingList, setTrackingList] = useState<TrackingPalletResponse[]>([])
-  const [onShelfList, setOnShelfList] = useState<PalletInfo[]>([])
+  const [trackingList, setTrackingList] = useState<TrackingReelResponse[]>([])
+  const [onShelfList, setOnShelfList] = useState<ReelInfo[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
   const loadTracking = useCallback(async () => {
@@ -72,7 +72,7 @@ export default function TrackingScreen() {
       ) : (
         <FlatList
           data={data}
-          keyExtractor={(item) => String((item as any).pallet_id)}
+          keyExtractor={(item) => String((item as any).reel_id)}
           renderItem={({ item }) => (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>料号: {(item as any).material_code}</Text>

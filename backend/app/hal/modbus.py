@@ -5,7 +5,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -377,19 +377,52 @@ class Amkn8702g:
         return True
 
 
-class SlotPoller:
-    """Background slot state polling service."""
+@dataclass
+class SlotChangeEvent:
+    """Represents a detected state change on a slot."""
+    face: str  # 'A' or 'B'
+    board_addr: int
+    slot_num: int
+    slot_key: str  # e.g. "A1-5"
+    old_has_material: bool
+    new_has_material: bool
+    event_type: str  # "occupied" | "released"
 
-    def __init__(self, master: Amkn8702g, callback=None):
+
+class SlotPoller:
+    """Background slot state polling service with change detection.
+
+    On each poll cycle, compares current sensor state against the previous
+    snapshot. When a slot's state changes (empty↔occupied), calls the
+    on_change callback with a SlotChangeEvent.
+
+    The on_snapshot callback (optional) receives the full current state
+    dict on every poll cycle.
+    """
+
+    def __init__(
+        self,
+        master: Amkn8702g,
+        on_change: Callable[[SlotChangeEvent], None] = None,
+        on_snapshot: Callable[[Dict[str, SlotState]], None] = None,
+    ):
         self.master = master
-        self.callback = callback  # callable with slot_states dict
+        self.on_change = on_change
+        self.on_snapshot = on_snapshot
         self._running = False
         self._task: Optional[asyncio.Task] = None
+        self._previous: Dict[str, SlotState] = {}
 
     async def start(self, interval: int = None):
         """Start polling in background."""
         self._running = True
-        interval = interval or self.master.slots_per_board  # fallback
+        interval = interval or self.master.slots_per_board
+        # Seed initial state
+        try:
+            self._previous = await self.master.read_all_slots()
+        except Exception as e:
+            logger.warning(f"SlotPoller initial read failed: {e}")
+            self._previous = {}
         self._task = asyncio.create_task(self._poll_loop(interval))
 
     async def stop(self):
@@ -403,12 +436,30 @@ class SlotPoller:
                 pass
 
     async def _poll_loop(self, interval: int):
-        """Main polling loop."""
+        """Main polling loop — detect changes and fire callbacks."""
         while self._running:
             try:
-                slots = await self.master.read_all_slots()
-                if self.callback:
-                    self.callback(slots)
+                current = await self.master.read_all_slots()
+                if self.on_snapshot:
+                    self.on_snapshot(current)
+
+                # Detect changes
+                for key, state in current.items():
+                    prev = self._previous.get(key)
+                    if prev is None or prev.has_material != state.has_material:
+                        event = SlotChangeEvent(
+                            face=state.face,
+                            board_addr=state.board_addr,
+                            slot_num=state.slot_num,
+                            slot_key=key,
+                            old_has_material=prev.has_material if prev else False,
+                            new_has_material=state.has_material,
+                            event_type="occupied" if state.has_material else "released",
+                        )
+                        if self.on_change:
+                            self.on_change(event)
+
+                self._previous = current
             except Exception as e:
                 logger.error(f"Slot poll error: {e}")
             await asyncio.sleep(interval)

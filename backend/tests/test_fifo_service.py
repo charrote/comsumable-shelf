@@ -23,7 +23,7 @@ from app.models import (
     Customer,
     MaterialMaster,
     MaterialCategory,
-    InventoryPallet,
+    InventoryReel,
     MaterialAlternative,
 )
 from app.services.fifo_service import (
@@ -43,7 +43,7 @@ async def _make_pallets(
     customer_id: int,
     quantities: list[float],
     base_time: datetime | None = None,
-) -> list[InventoryPallet]:
+) -> list[InventoryReel]:
     """Create N pallets with given quantities and sequential timestamps.
 
     Returns the list of created pallets (ordered by creation).
@@ -52,12 +52,12 @@ async def _make_pallets(
     pallets = []
     for i, qty in enumerate(quantities):
         t = now + timedelta(minutes=i)
-        p = InventoryPallet(
+        p = InventoryReel(
             material_id=material_id,
             customer_id=customer_id,
             quantity=qty,
             original_quantity=qty,
-            pallet_barcode=f"PALLET-{i:03d}",
+            reel_barcode=f"PALLET-{i:03d}",
             first_in_time=t,
             last_in_time=t,
             status="on_shelf",
@@ -143,24 +143,24 @@ class TestCalculateFifoPallets:
         # Create: (qty=5, t=base+0)  (qty=3, t=base+1)  (qty=5, t=base+2)
         # mixed sort: 3 (qty asc), then 5@t0 (qty asc, time asc), then 5@t2
         t0 = base_time
-        p1 = InventoryPallet(
+        p1 = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=5.0, original_quantity=5.0,
-            pallet_barcode="P-MIX-1",
+            reel_barcode="P-MIX-1",
             first_in_time=t0, last_in_time=t0,
             status="on_shelf",
         )
-        p2 = InventoryPallet(
+        p2 = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=3.0, original_quantity=3.0,
-            pallet_barcode="P-MIX-2",
+            reel_barcode="P-MIX-2",
             first_in_time=t0 + timedelta(minutes=1), last_in_time=t0 + timedelta(minutes=1),
             status="on_shelf",
         )
-        p3 = InventoryPallet(
+        p3 = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=5.0, original_quantity=5.0,
-            pallet_barcode="P-MIX-3",
+            reel_barcode="P-MIX-3",
             first_in_time=t0 + timedelta(minutes=2), last_in_time=t0 + timedelta(minutes=2),
             status="on_shelf",
         )
@@ -316,17 +316,17 @@ class TestCalculateFifoPallets:
         sample_customer: Customer, base_time: datetime,
     ):
         """Pallets with quantity == 0 should be excluded."""
-        p0 = InventoryPallet(
+        p0 = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=0.0, original_quantity=5.0,
-            pallet_barcode="ZERO-1",
+            reel_barcode="ZERO-1",
             first_in_time=base_time, last_in_time=base_time,
             status="on_shelf",
         )
-        p1 = InventoryPallet(
+        p1 = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=3.0, original_quantity=3.0,
-            pallet_barcode="OK-1",
+            reel_barcode="OK-1",
             first_in_time=base_time + timedelta(minutes=1),
             last_in_time=base_time + timedelta(minutes=1),
             status="on_shelf",
@@ -347,10 +347,10 @@ class TestCalculateFifoPallets:
         sample_customer: Customer, base_time: datetime,
     ):
         """Only on_shelf pallets should be considered."""
-        p_exhausted = InventoryPallet(
+        p_exhausted = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=10.0, original_quantity=10.0,
-            pallet_barcode="EXHAUSTED",
+            reel_barcode="EXHAUSTED",
             first_in_time=base_time, last_in_time=base_time,
             status="exhausted",  # should be excluded
         )
@@ -376,18 +376,18 @@ class TestCalculateFifoPallets:
         await db_session.commit()
 
         # Pallet for sample_customer
-        p_c1 = InventoryPallet(
+        p_c1 = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=5.0, original_quantity=5.0,
-            pallet_barcode="C1",
+            reel_barcode="C1",
             first_in_time=base_time, last_in_time=base_time,
             status="on_shelf",
         )
         # Pallet for other customer
-        p_c2 = InventoryPallet(
+        p_c2 = InventoryReel(
             material_id=sample_material.id, customer_id=other.id,
             quantity=5.0, original_quantity=5.0,
-            pallet_barcode="C2",
+            reel_barcode="C2",
             first_in_time=base_time, last_in_time=base_time,
             status="on_shelf",
         )
@@ -437,17 +437,17 @@ class TestGetAvailableQty:
         sample_customer: Customer, base_time: datetime,
     ):
         """Pallets with status != on_shelf are excluded."""
-        p1 = InventoryPallet(
+        p1 = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=10.0, original_quantity=10.0,
-            pallet_barcode="TRACKING",
+            reel_barcode="TRACKING",
             first_in_time=base_time, last_in_time=base_time,
             status="tracking",
         )
-        p2 = InventoryPallet(
+        p2 = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
             quantity=5.0, original_quantity=5.0,
-            pallet_barcode="ON_SHELF",
+            reel_barcode="ON_SHELF",
             first_in_time=base_time + timedelta(minutes=1),
             last_in_time=base_time + timedelta(minutes=1),
             status="on_shelf",

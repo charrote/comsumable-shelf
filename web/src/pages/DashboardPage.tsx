@@ -11,8 +11,8 @@ import { getMaterialsApi, getShelvesApi, getInventoryApi, getDailyReportApi, get
 interface DashboardData {
   totalMaterials: number
   totalShelves: number
-  onShelfPallets: number
-  trackingPallets: number
+  onShelfReels: number
+  trackingReels: number
   pendingReceipts: number
   pendingIssues: number
 }
@@ -33,8 +33,8 @@ export function DashboardPage() {
   const [data, setData] = useState<DashboardData>({
     totalMaterials: 0,
     totalShelves: 0,
-    onShelfPallets: 0,
-    trackingPallets: 0,
+    onShelfReels: 0,
+    trackingReels: 0,
     pendingReceipts: 0,
     pendingIssues: 0,
   })
@@ -102,18 +102,18 @@ export function DashboardPage() {
         pendingIssuesCount = Array.isArray(d) ? d.length : d?.data?.length ?? 0
       }
 
-      const onShelfPallets = pallets.filter(
+      const onShelfReels = pallets.filter(
         (item: any) => item.status === 'on_shelf',
       ).length
-      const trackingPallets = pallets.filter(
+      const trackingReels = pallets.filter(
         (item: any) => item.status === 'tracking',
       ).length
 
       setData({
         totalMaterials: materials.length,
         totalShelves: shelves.length,
-        onShelfPallets,
-        trackingPallets,
+        onShelfReels,
+        trackingReels,
         pendingReceipts: pendingReceiptsCount,
         pendingIssues: pendingIssuesCount,
       })
@@ -194,7 +194,7 @@ export function DashboardPage() {
               <Card>
                 <Statistic
                   title="在架库存盘"
-                  value={data.onShelfPallets}
+                  value={data.onShelfReels}
                   suffix="盘"
                   prefix={<ArrowUpOutlined />}
                   valueStyle={{ color: '#3f8600' }}
@@ -205,7 +205,7 @@ export function DashboardPage() {
               <Card>
                 <Statistic
                   title="跟踪中"
-                  value={data.trackingPallets}
+                  value={data.trackingReels}
                   suffix="盘"
                   prefix={<ArrowDownOutlined />}
                   valueStyle={{ color: '#cf1322' }}

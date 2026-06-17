@@ -141,13 +141,13 @@ fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
             ) {
                 SummaryCard(
                     title = "在架料盘",
-                    value = "${uiState.summary.onShelfPallets}",
+                    value = "${uiState.summary.onShelfReels}",
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f)
                 )
                 SummaryCard(
                     title = "跟踪中",
-                    value = "${uiState.summary.trackingPallets}",
+                    value = "${uiState.summary.trackingReels}",
                     color = MaterialTheme.colorScheme.tertiary,
                     modifier = Modifier.weight(1f)
                 )
@@ -227,7 +227,7 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
         Spacer(modifier = Modifier.height(8.dp))
 
         if (uiState.activeReceiptId == null) {
-            OutboundPalletInputCard(
+            OutboundReelInputCard(
                 title = "操作员",
                 placeholder = "请输入操作员姓名",
                 buttonText = "开始入库",
@@ -236,7 +236,7 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
                 }
             )
         } else {
-            OutboundPalletInputCard(
+            OutboundReelInputCard(
                 title = "条码/储位输入",
                 placeholder = "扫描条码或输入储位",
                 buttonText = "确认",
@@ -299,7 +299,7 @@ fun OutboundScreen(viewModel: OutboundViewModel = hiltViewModel()) {
         Spacer(modifier = Modifier.height(8.dp))
 
         if (uiState.operator.isBlank()) {
-            OutboundPalletInputCard(
+            OutboundReelInputCard(
                 title = "操作员",
                 placeholder = "请输入操作员姓名",
                 buttonText = "确认",
@@ -334,7 +334,7 @@ fun OutboundScreen(viewModel: OutboundViewModel = hiltViewModel()) {
                 }
             }
         } else {
-            OutboundPalletInputCard(
+            OutboundReelInputCard(
                 title = "扫描条码确认拣料",
                 placeholder = "扫描料盘条码",
                 buttonText = "确认出库",
@@ -343,8 +343,8 @@ fun OutboundScreen(viewModel: OutboundViewModel = hiltViewModel()) {
                 isLoading = uiState.isLoading,
                 onScan = {
                     if (barcodeInput.isNotBlank()) {
-                        uiState.currentPickPalletId?.let { palletId ->
-                            viewModel.confirmPick(barcodeInput, palletId)
+                        uiState.currentPickPalletId?.let { reelId ->
+                            viewModel.confirmPick(barcodeInput, reelId)
                         }
                         barcodeInput = ""
                     }
@@ -416,10 +416,10 @@ fun TrackingScreen(viewModel: TrackingViewModel = hiltViewModel()) {
                 CircularProgressIndicator()
             }
         } else if (uiState.selectedTab == 0) {
-            if (uiState.trackingPallets.isEmpty()) {
+            if (uiState.trackingReels.isEmpty()) {
                 Text("暂无跟踪中的物料", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                uiState.trackingPallets.forEach { pallet ->
+                uiState.trackingReels.forEach { pallet ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -510,7 +510,7 @@ fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
 // ======================== Shared Components ========================
 
 @Composable
-fun OutboundPalletInputCard(
+fun OutboundReelInputCard(
     title: String,
     placeholder: String,
     buttonText: String,

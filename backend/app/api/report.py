@@ -10,7 +10,7 @@ from app.schemas import (
     CustomerSummaryResponse,
 )
 from app.utils.database import get_db
-from app.models import Transaction, MaterialMaster, InventoryPallet, Customer, MaterialCategory
+from app.models import Transaction, MaterialMaster, InventoryReel, Customer, MaterialCategory
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -47,12 +47,12 @@ async def get_daily_report(
 
         # Also include materials that have on-shelf inventory (even if no transactions today)
         inv_query = (
-            select(InventoryPallet.material_id)
-            .where(InventoryPallet.status == "on_shelf")
+            select(InventoryReel.material_id)
+            .where(InventoryReel.status == "on_shelf")
             .distinct()
         )
         if customer_id:
-            inv_query = inv_query.where(InventoryPallet.customer_id == customer_id)
+            inv_query = inv_query.where(InventoryReel.customer_id == customer_id)
         inv_result = await db.execute(inv_query)
         for row in inv_result.all():
             if row[0]:
@@ -65,7 +65,7 @@ async def get_daily_report(
                 customer_name="",
                 summary=DailyReportSummary(
                     total_materials=0, total_in=0, total_out=0,
-                    total_balance=0, total_pallets_on_shelf=0, total_pallets_tracking=0,
+                    total_balance=0, total_reels_on_shelf=0, total_reels_tracking=0,
                 ),
                 details=[],
             )
@@ -73,8 +73,8 @@ async def get_daily_report(
         details = []
         total_in = 0.0
         total_out = 0.0
-        total_pallets_on_shelf = 0
-        total_pallets_tracking = 0
+        total_reels_on_shelf = 0
+        total_reels_tracking = 0
 
         for mat_id in sorted(material_ids_in_txns):
             # --- Material name ---
@@ -144,8 +144,8 @@ async def get_daily_report(
             shelf_result = await db.execute(
                 select(func.count())
                 .where(
-                    InventoryPallet.material_id == mat_id,
-                    InventoryPallet.status == "on_shelf",
+                    InventoryReel.material_id == mat_id,
+                    InventoryReel.status == "on_shelf",
                 )
             )
             shelf_count = shelf_result.scalar_one() or 0
@@ -153,14 +153,14 @@ async def get_daily_report(
             tracking_result = await db.execute(
                 select(func.count())
                 .where(
-                    InventoryPallet.material_id == mat_id,
-                    InventoryPallet.status == "tracking",
+                    InventoryReel.material_id == mat_id,
+                    InventoryReel.status == "tracking",
                 )
             )
             tracking_count = tracking_result.scalar_one() or 0
 
-            total_pallets_on_shelf += shelf_count
-            total_pallets_tracking += tracking_count
+            total_reels_on_shelf += shelf_count
+            total_reels_tracking += tracking_count
 
             details.append(DailyReportDetail(
                 material_id=mat_id,
@@ -170,8 +170,8 @@ async def get_daily_report(
                 in_qty=day_in,
                 out_qty=day_out,
                 closing_balance=max(0, closing_balance),
-                pallets_on_shelf=shelf_count,
-                pallets_tracking=tracking_count,
+                reels_on_shelf=shelf_count,
+                reels_tracking=tracking_count,
             ))
 
         total_balance = sum(d.closing_balance for d in details)
@@ -189,8 +189,8 @@ async def get_daily_report(
             total_in=total_in,
             total_out=total_out,
             total_balance=total_balance,
-            total_pallets_on_shelf=total_pallets_on_shelf,
-            total_pallets_tracking=total_pallets_tracking,
+            total_reels_on_shelf=total_reels_on_shelf,
+            total_reels_tracking=total_reels_tracking,
         )
 
         return DailyReportResponse(

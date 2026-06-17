@@ -88,6 +88,15 @@ export async function confirmPickApi(
   return res.data
 }
 
+// ---- Direct Outbound ----
+export async function directOutboundApi(
+  reelId: number,
+  data: t.DirectOutRequest
+): Promise<t.DirectOutResponse> {
+  const res = await api.post(`/inventory/reels/${reelId}/direct-out`, data)
+  return res.data
+}
+
 // ---- Inventory ----
 export async function getInventoryApi(params?: {
   customer_id?: number
@@ -97,7 +106,7 @@ export async function getInventoryApi(params?: {
   return res.data
 }
 
-export async function getTrackingInventoryApi(): Promise<{ pallets: t.TrackingPalletResponse[] }> {
+export async function getTrackingInventoryApi(): Promise<{ reels: t.TrackingReelResponse[] }> {
   const res = await api.get('/inventory/tracking')
   return res.data
 }

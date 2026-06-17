@@ -69,11 +69,11 @@ open class IssueRepository @Inject constructor(
     open suspend fun confirmPick(
         orderId: Int,
         barcode: String,
-        palletId: Int,
+        reelId: Int,
         operator: String
     ): ApiResult<ConfirmPickResponse> {
         return try {
-            val body = ConfirmPickRequest(barcode = barcode, palletId = palletId, operator = operator)
+            val body = ConfirmPickRequest(barcode = barcode, reelId = reelId, operator = operator)
             val response: ConfirmPickResponse = httpService.post("issues/$orderId/confirm-pick", body)
             ApiResult.Success(response)
         } catch (e: HttpException) {

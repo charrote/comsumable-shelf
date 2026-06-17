@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.schemas import (
     ReceiptCreate, ReceiptScanRequest, ReceiptScanResponse,
-    ReceiptAssignSlotRequest, ReceiptDetailResponse
+    ReceiptAssignSlotRequest, ReceiptDetailResponse, MaterialCandidate,
+    ReprintLabelRequest, ReprintLabelResponse,
 )
 from app.utils.database import get_db
-from app.models import Receipt, ReceiptPallet, InventoryPallet, MaterialMaster, Shelf, ShelfSlot, Transaction
-from app.utils.barcode import parse_barcode
+from app.models import Receipt, ReceiptReel, InventoryReel, MaterialMaster, Shelf, ShelfSlot, Transaction
 
 router = APIRouter(prefix="/receipts", tags=["Receipt/Inbound"])
 
@@ -55,7 +55,7 @@ async def get_receipt(
         raise HTTPException(status_code=404, detail="入库单不存在")
 
     items_result = await db.execute(
-        select(ReceiptPallet).where(ReceiptPallet.receipt_id == receipt_id)
+        select(ReceiptReel).where(ReceiptReel.receipt_id == receipt_id)
     )
     items = items_result.scalars().all()
 
@@ -72,7 +72,10 @@ async def get_receipt(
                 "material_id": item.material_id,
                 "quantity": item.quantity,
                 "barcode": item.barcode,
-                "inventory_pallet_id": item.inventory_pallet_id,
+                "customer_material_code": item.customer_material_code,
+                "reel_id": item.reel_id,
+                "internal_label_printed": item.internal_label_printed == 1,
+                "label_printed_at": item.label_printed_at.isoformat() if item.label_printed_at else None,
             }
             for item in items
         ],
@@ -134,9 +137,9 @@ async def assign_receipt_slot(
 
     # Verify receipt pallet (detail) exists and belongs to this receipt
     detail_result = await db.execute(
-        select(ReceiptPallet).where(
-            ReceiptPallet.id == data.receipt_detail_id,
-            ReceiptPallet.receipt_id == receipt_id,
+        select(ReceiptReel).where(
+            ReceiptReel.id == data.receipt_detail_id,
+            ReceiptReel.receipt_id == receipt_id,
         )
     )
     detail = detail_result.scalar_one_or_none()
@@ -151,40 +154,51 @@ async def assign_receipt_slot(
     if not slot:
         raise HTTPException(status_code=404, detail="储位不存在")
 
-    # Check slot capacity
-    if slot.max_quantity is not None:
-        pallet_qty = detail.quantity
-        if pallet_qty > slot.max_quantity:
-            raise HTTPException(
-                status_code=400,
-                detail=f"库存数量 {pallet_qty} 超过储位容量 {slot.max_quantity}",
-            )
+    # Check slot capacity (use global default if slot has no specific cap)
+    pallet_qty = detail.quantity
+    effective_cap = slot.max_quantity
+    if effective_cap is None:
+        from app.models import SystemSetting
+        cap_row = await db.execute(
+            select(SystemSetting.value).where(SystemSetting.key == "default_slot_capacity")
+        )
+        raw_global = cap_row.scalar_one_or_none()
+        if raw_global and raw_global.strip():
+            try:
+                effective_cap = float(raw_global)
+            except (ValueError, TypeError):
+                effective_cap = None
+    if effective_cap is not None and pallet_qty > effective_cap:
+        raise HTTPException(
+            status_code=400,
+            detail=f"库存数量 {pallet_qty} 超过储位容量 {effective_cap}",
+        )
 
     # Check slot is not already occupied
     occupied = await db.execute(
-        select(InventoryPallet).where(
-            InventoryPallet.shelf_slot_id == data.shelf_slot_id,
-            InventoryPallet.status == "on_shelf",
+        select(InventoryReel).where(
+            InventoryReel.shelf_slot_id == data.shelf_slot_id,
+            InventoryReel.status == "on_shelf",
         )
     )
     if occupied.scalar_one_or_none():
         raise HTTPException(status_code=400, detail="该储位已被占用")
 
     # Check that the inventory pallet exists
-    if not detail.inventory_pallet_id:
+    if not detail.reel_id:
         raise HTTPException(status_code=400, detail="该入库明细尚未关联库存托盘，请先扫码入库")
 
     # Assign slot to inventory pallet
     await db.execute(
-        InventoryPallet.__table__.update()
-        .where(InventoryPallet.id == detail.inventory_pallet_id)
+        InventoryReel.__table__.update()
+        .where(InventoryReel.id == detail.reel_id)
         .values(shelf_slot_id=data.shelf_slot_id)
     )
 
     # Also update receipt pallet slot reference
     await db.execute(
-        ReceiptPallet.__table__.update()
-        .where(ReceiptPallet.id == detail.id)
+        ReceiptReel.__table__.update()
+        .where(ReceiptReel.id == detail.id)
         .values(shelf_slot_id=data.shelf_slot_id)
     )
 
@@ -195,8 +209,100 @@ async def assign_receipt_slot(
         "message": f"储位已分配: slot #{data.shelf_slot_id}",
         "receipt_detail_id": data.receipt_detail_id,
         "shelf_slot_id": data.shelf_slot_id,
-        "inventory_pallet_id": detail.inventory_pallet_id,
+        "reel_id": detail.reel_id,
     }
+
+
+@router.post("/{receipt_id}/reprint", response_model=ReprintLabelResponse)
+async def reprint_label(
+    receipt_id: int,
+    data: ReprintLabelRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reprint internal label for a specific receipt reel.
+
+    Retrieves the ReceiptReel record and associated material info,
+    then sends ZPL to the configured printer.
+    """
+    # Verify receipt
+    receipt_result = await db.execute(
+        select(Receipt).where(Receipt.id == receipt_id)
+    )
+    receipt = receipt_result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+
+    # Verify receipt pallet
+    rp_result = await db.execute(
+        select(ReceiptReel).where(
+            ReceiptReel.id == data.receipt_reel_id,
+            ReceiptReel.receipt_id == receipt_id,
+        )
+    )
+    rp = rp_result.scalar_one_or_none()
+    if not rp:
+        raise HTTPException(status_code=404, detail="入库明细不存在")
+
+    # Get material info
+    mat_result = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == rp.material_id)
+    )
+    material = mat_result.scalar_one_or_none()
+    if not material:
+        raise HTTPException(status_code=404, detail="关联物料不存在")
+
+    # Get inventory reel for reel_barcode
+    inv_result = await db.execute(
+        select(InventoryReel).where(InventoryReel.id == rp.reel_id)
+    )
+    inv = inv_result.scalar_one_or_none()
+
+    # Resolve printer — request param > system setting > config default
+    from app.config import settings
+    from app.hal.printer import print_label as send_label
+
+    printer_ip = data.printer_ip or settings.LABEL_PRINTER_IP
+    printer_port = data.printer_port or settings.LABEL_PRINTER_PORT
+
+    if not printer_ip:
+        return ReprintLabelResponse(
+            status="error",
+            printed=False,
+            message="未配置打印机 IP，请在系统设置中配置 LABEL_PRINTER_IP",
+            receipt_reel_id=data.receipt_reel_id,
+        )
+
+    label_ok = await send_label(
+        host=printer_ip,
+        port=printer_port or 9100,
+        material_code=material.code,
+        material_name=material.name,
+        quantity=rp.quantity,
+        customer_material_code=rp.customer_material_code or "",
+        reel_barcode=str(inv.id) if inv else "",
+    )
+
+    if label_ok:
+        now = datetime.utcnow()
+        await db.execute(
+            ReceiptReel.__table__.update()
+            .where(ReceiptReel.id == rp.id)
+            .values(internal_label_printed=1, label_printed_at=now)
+        )
+        await db.commit()
+        return ReprintLabelResponse(
+            status="ok",
+            printed=True,
+            message="标签已重新打印",
+            receipt_reel_id=data.receipt_reel_id,
+        )
+    else:
+        return ReprintLabelResponse(
+            status="error",
+            printed=False,
+            message="标签打印失败，请检查打印机连接（{printer_ip}:{printer_port}）",
+            receipt_reel_id=data.receipt_reel_id,
+        )
 
 
 @router.post("", response_model=ReceiptDetailResponse)
@@ -247,118 +353,206 @@ async def scan_receipt(
     data: ReceiptScanRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Scan barcode for inbound."""
-    barcode = data.barcode
-    parsed = await parse_barcode(barcode, db)
-    if not parsed or not parsed.material_code:
-        return ReceiptScanResponse(
-            status="error",
-            action="error",
-            message="无效的条码格式",
-        )
-    material_code = parsed.material_code
+    """Scan barcode for inbound with intelligent material matching.
+
+    Flow:
+      1. Parse barcode → search material master
+      2. If exact/high-confidence match → auto proceed (creates InventoryReel + ReceiptReel)
+      3. If low-confidence → return candidate list for human review
+      4. If no match → return new_material action
+      5. Human can re-call with manual_material_id or is_new_material to confirm
+    """
     qty = data.qty if data.qty is not None else 1.0
+    barcode = data.barcode.strip()
+    if not barcode:
+        return ReceiptScanResponse(status="error", action="error", message="条码不能为空")
 
-    # Find material
-    result = await db.execute(
-        select(MaterialMaster).where(MaterialMaster.code == material_code)
-    )
-    material = result.scalar_one_or_none()
-    if not material:
-        return ReceiptScanResponse(
-            status="error",
-            action="error",
-            message=f"物料 {material_code} 不存在",
-        )
+    # ── Verify receipt exists ──
+    receipt_result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = receipt_result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
 
-    # Check for duplicate
-    batch_val = parsed.extra.get("batch", "") if parsed.extra else ""
-    existing = await db.execute(
-        select(InventoryPallet).where(
-            InventoryPallet.material_id == material.id,
-            InventoryPallet.customer_code == batch_val,
-            InventoryPallet.status.in_(["on_shelf", "tracking"]),
-        )
-    )
-    dup = existing.scalar_one_or_none()
-    if dup:
+    # ═══════════════════════════════════════════════════════════════════
+    # PATH A: Human review confirmation (second pass)
+    # ═══════════════════════════════════════════════════════════════════
+    if data.manual_material_id is not None or data.is_new_material:
+        return await _handle_human_confirmation(db, receipt_id, data, qty)
+
+    # ═══════════════════════════════════════════════════════════════════
+    # PATH B: First scan — auto matching
+    # ═══════════════════════════════════════════════════════════════════
+    # Check duplicate (behavior controlled by system setting)
+    from app.services.duplicate_check import check_duplicate_scan
+    dup_check = await check_duplicate_scan(db, barcode, receipt.customer_id)
+    if dup_check.action == "block":
         return ReceiptScanResponse(
             status="duplicate",
             action="duplicate",
             duplicate_flag=True,
-            matched_pallet_id=dup.id,
-            warning="该编码已存在",
-            message="该编码已存在, 库存盘 #" + str(dup.id) + ", 已拦截",
+            reel_id=dup_check.existing_reel_id,
+            warning=dup_check.warning,
+            message=dup_check.message,
+        )
+    # warn mode: continue but carry duplicate_flag + warning
+    is_duplicate = dup_check.duplicate
+    dup_warning = dup_check.warning if is_duplicate else None
+
+    # Match material via intelligent service
+    from app.services.receipt_service import match_material_by_barcode
+    match = await match_material_by_barcode(db, barcode, receipt.customer_id)
+
+    if match.action == "auto_proceed" and match.material_id:
+        # High-confidence → auto create reel
+        from app.services.receipt_service import finalize_receipt_reel
+        result = await finalize_receipt_reel(
+            db=db,
+            receipt_id=receipt_id,
+            material_id=match.material_id,
+            barcode=barcode,
+            quantity=qty,
+            operator=data.operator,
+            customer_id=receipt.customer_id,
+            customer_material_code=match.customer_material_code,
+            customer_barcode=barcode,
+            ocr_confidence=match.confidence,
+            manual_intervention=0,
+            auto_assign_slot=True,
+            printer_ip=data.printer_ip,
+            printer_port=data.printer_port,
+        )
+        return ReceiptScanResponse(
+            status="ok",
+            action="first_in",
+            reel_id=result["reel_id"],
+            assigned_slot=result["assigned_slot"],
+            quantity=result["quantity"],
+            material_id=match.material_id,
+            material_code=match.material_code,
+            material_name=match.material_name,
+            confidence=match.confidence,
+            label_printed=result.get("label_printed", False),
+            duplicate_flag=is_duplicate,
+            warning=dup_warning,
+            message=match.message or f"入库成功，数量 {qty} 盘",
         )
 
-    # Create inventory pallet
-    now = datetime.now()
-    pallet = InventoryPallet(
-        material_id=material.id,
-        quantity=qty,
-        original_quantity=qty,
-        pallet_barcode=barcode,
-        customer_code=batch_val,
-        first_in_time=now,
-        last_in_time=now,
-        inbound_type="new",
-        customer_id=material.customer_id,
-    )
-    db.add(pallet)
-    await db.commit()
-    await db.refresh(pallet)
+    elif match.action == "pending_review":
+        # Low-confidence → return candidates for human review
+        return ReceiptScanResponse(
+            status="pending_review",
+            action="pending_review",
+            candidates=[
+                MaterialCandidate(
+                    material_id=c["material_id"],
+                    code=c["code"],
+                    name=c["name"],
+                    confidence=c["confidence"],
+                    extracted_code=c.get("extracted_code", ""),
+                )
+                for c in match.candidates
+            ],
+            customer_material_code=match.customer_material_code,
+            message=match.message or "匹配置信度过低，请人工选择物料",
+        )
 
-    # Create receipt pallet record
-    rp = ReceiptPallet(
+    else:
+        # No match at all → treat as new material
+        return ReceiptScanResponse(
+            status="pending_review",
+            action="new_material",
+            customer_material_code=match.customer_material_code or barcode,
+            message=match.message or f"未找到匹配物料，请确认为新料",
+        )
+
+
+async def _handle_human_confirmation(
+    db: AsyncSession,
+    receipt_id: int,
+    data: ReceiptScanRequest,
+    qty: float,
+) -> ReceiptScanResponse:
+    """PATH A: Handle second-pass scan after human review selection.
+
+    Called when the operator has either:
+      - Selected an existing material from candidates (manual_material_id)
+      - Confirmed this is a new material (is_new_material)
+    """
+    from app.services.receipt_service import finalize_receipt_reel, auto_create_material
+    barcode = data.barcode.strip()
+
+    # Get receipt for customer_id
+    receipt_result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = receipt_result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+
+    material_id = None
+    material_code = ""
+    material_name = ""
+    confidence = 1.0
+    manual_flag = 0
+
+    if data.is_new_material:
+        # ── Operator confirmed as new material → auto-create ──
+        new_code = (data.new_material_code or barcode).strip()
+        new_name = (data.new_material_name or new_code).strip()
+        material = await auto_create_material(
+            db,
+            code=new_code,
+            name=new_name,
+            customer_id=receipt.customer_id,
+            customer_material_code=data.barcode,
+        )
+        material_id = material.id
+        material_code = material.code
+        material_name = material.name
+        manual_flag = 2  # manual_intervention = confirmed as new
+    else:
+        # ── Operator selected existing material ──
+        material_id = data.manual_material_id
+        mat_result = await db.execute(
+            select(MaterialMaster).where(MaterialMaster.id == material_id)
+        )
+        material = mat_result.scalar_one_or_none()
+        if not material:
+            raise HTTPException(status_code=404, detail="选中的物料不存在")
+        material_code = material.code
+        material_name = material.name
+        manual_flag = 1  # manual_intervention = selected existing
+
+    # Create InventoryReel + ReceiptReel
+    result = await finalize_receipt_reel(
+        db=db,
         receipt_id=receipt_id,
-        material_id=material.id,
-        quantity=qty,
+        material_id=material_id,
         barcode=barcode,
+        quantity=qty,
         operator=data.operator,
-        inventory_pallet_id=pallet.id,
+        customer_id=receipt.customer_id,
+        customer_material_code=data.barcode,
+        customer_barcode=barcode,
+        ocr_confidence=confidence,
+        manual_intervention=manual_flag,
+        auto_assign_slot=True,
+        printer_ip=data.printer_ip,
+        printer_port=data.printer_port,
     )
-    db.add(rp)
-    await db.commit()
 
-    # Auto-assign slot if available
-    assigned_slot = None
-    slot_result = await db.execute(
-        select(
-            Shelf.id,
-            ShelfSlot.id,
-            ShelfSlot.global_index,
-            ShelfSlot.max_quantity,
-        )
-        .join(ShelfSlot, Shelf.id == ShelfSlot.shelf_id)
-        .where(
-            Shelf.active == 1,
-            ~ShelfSlot.id.in_(
-                select(InventoryPallet.shelf_slot_id)
-                .where(InventoryPallet.status == "on_shelf")
-            ),
-        )
-        .limit(10)  # fetch a few to try capacity check
-    )
-    rows = slot_result.all()
-    for row in rows:
-        shelf_id, slot_db_id, global_idx, max_qty = row
-        # Check slot capacity
-        if max_qty is not None and qty > max_qty:
-            continue  # try next empty slot
-        assigned_slot = global_idx
-        await db.execute(
-            InventoryPallet.__table__.update()
-            .where(InventoryPallet.id == pallet.id)
-            .values(shelf_slot_id=slot_db_id)
-        )
-        await db.commit()
-        break
+    action_label = "new_material" if data.is_new_material else "first_in"
+    status_label = "ok"
+    message = f"入库成功（{'新料' if data.is_new_material else '人工选择'}），数量 {qty} 盘"
 
     return ReceiptScanResponse(
-        status="ok",
-        action="first_in",
-        inventory_pallet_id=pallet.id,
-        assigned_slot=assigned_slot,
-        duplicate_flag=False,
-        message=f"入库成功, 数量 {qty} 盘",
+        status=status_label,
+        action=action_label,
+        reel_id=result["reel_id"],
+        assigned_slot=result["assigned_slot"],
+        quantity=result["quantity"],
+        material_id=material_id,
+        material_code=material_code,
+        material_name=material_name,
+        confidence=confidence,
+        label_printed=result.get("label_printed", False),
+        message=message,
     )

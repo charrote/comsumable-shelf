@@ -18,7 +18,7 @@ data class OutboundUiState(
     val calcResult: CalculateResponse? = null,
     val assignResult: AssignResponse? = null,
     val confirmResult: ConfirmPickResponse? = null,
-    val currentPickPalletId: Int? = null,
+    val currentPickReelId: Int? = null,
     val error: String? = null,
     val operator: String = ""
 )
@@ -113,14 +113,14 @@ class OutboundViewModel @Inject constructor(
         }
     }
 
-    fun confirmPick(barcode: String, palletId: Int) {
+    fun confirmPick(barcode: String, reelId: Int) {
         val orderId = _uiState.value.selectedIssue?.id ?: return
         val operator = _uiState.value.operator
         if (operator.isBlank()) return
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            when (val result = issueRepository.confirmPick(orderId, barcode, palletId, operator)) {
+            when (val result = issueRepository.confirmPick(orderId, barcode, reelId, operator)) {
                 is ApiResult.Success -> {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,

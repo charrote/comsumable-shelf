@@ -89,7 +89,7 @@ from app.models import (
     MaterialCategory,
     Shelf,
     ShelfSlot,
-    InventoryPallet,
+    InventoryReel,
 )
 
 

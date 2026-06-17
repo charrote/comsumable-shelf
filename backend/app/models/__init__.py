@@ -26,7 +26,7 @@ class Customer(Base):
 
     categories = relationship("MaterialCategory", back_populates="customer")
     materials = relationship("MaterialMaster", back_populates="customer")
-    inventory = relationship("InventoryPallet", back_populates="customer")
+    inventory = relationship("InventoryReel", back_populates="customer")
     bom_headers = relationship("BomHeader", back_populates="customer")
 
 
@@ -117,6 +117,8 @@ class ShelfSlot(Base):
     modbus_tcp_id = Column(Integer, nullable=False)
     modbus_coil_base = Column(Integer, nullable=False)
     max_quantity = Column(Float, nullable=True, comment="储位最大容量（null 表示不限制）")
+    last_event_at = Column(DateTime, nullable=True, comment="最近一次传感器事件时间")
+    last_sensor_state = Column(Integer, default=0, comment="最近一次传感器读取值（0=空, 1=有料）")
 
     shelf = relationship("Shelf", back_populates="slots")
 
@@ -133,19 +135,39 @@ class ShelfSlot(Base):
             self.modbus_tcp_id = 63 + self.board_address
 
 
+class ShelfSlotEvent(Base):
+    """Records sensor state changes on shelf slots."""
+    __tablename__ = "shelf_slot_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    shelf_slot_id = Column(Integer, ForeignKey("shelf_slots.id"), nullable=False, index=True)
+    event_type = Column(String, nullable=False)  # occupied | released | error
+    reel_id = Column(Integer, ForeignKey("inventory_reels.id"))
+    source = Column(String, default="sensor")  # sensor | manual | api
+    old_state = Column(Integer, default=0)
+    new_state = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_slot_event_type", "shelf_slot_id", "event_type", "created_at"),
+    )
+
+
 Shelf.slots = relationship("ShelfSlot", back_populates="shelf")
 
 
-class InventoryPallet(Base):
-    __tablename__ = "inventory_pallets"
+class InventoryReel(Base):
+    __tablename__ = "inventory_reels"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
     shelf_slot_id = Column(Integer, ForeignKey("shelf_slots.id"))
     quantity = Column(Float, nullable=False)
     original_quantity = Column(Float, nullable=False)
-    pallet_barcode = Column(String)
+    reel_barcode = Column(String)
     customer_code = Column(String)
+    customer_material_code = Column(String, comment="客户标签上的物料编码（可能与内部料号不同）")
+    customer_barcode = Column(String, comment="客户标签原始条码全文")
     first_in_time = Column(DateTime, nullable=False)
     last_in_time = Column(DateTime, nullable=False)
     last_out_time = Column(DateTime)
@@ -181,18 +203,23 @@ class Receipt(Base):
     status = Column(String, default="draft")  # draft | confirmed | completed
 
 
-class ReceiptPallet(Base):
-    __tablename__ = "receipt_pallets"
+class ReceiptReel(Base):
+    __tablename__ = "receipt_reels"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     receipt_id = Column(Integer, ForeignKey("receipt.id"), nullable=False)
     material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
     quantity = Column(Float, nullable=False)
     barcode = Column(String)
+    customer_material_code = Column(String, comment="客户标签上的物料编码")
+    ocr_confidence = Column(Float, default=0.0, comment="OCR/条码识别置信度 0.0 ~ 1.0")
+    manual_intervention = Column(Integer, default=0, comment="是否经过人工介入 0=自动 1=人工选择物料 2=确认为新料")
     scanned_at = Column(DateTime, default=datetime.utcnow)
     operator = Column(String)
     shelf_slot_id = Column(Integer, ForeignKey("shelf_slots.id"))
-    inventory_pallet_id = Column(Integer, ForeignKey("inventory_pallets.id"))
+    reel_id = Column(Integer, ForeignKey("inventory_reels.id"))
+    internal_label_printed = Column(Integer, default=0, comment="内部标签是否已打印 0=未打印 1=已打印")
+    label_printed_at = Column(DateTime, comment="内部标签打印时间")
     is_restock = Column(Integer, default=0)
     restock_match_key = Column(String)
 
@@ -219,7 +246,7 @@ class IssueDetail(Base):
     material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
     required_qty = Column(Float, nullable=False)
     picked_qty = Column(Float, default=0)
-    pallet_ids = Column(String)  # JSON
+    reel_ids = Column(String)  # JSON
     pick_strategy = Column(String, default="tail_first")
     status = Column(String, default="pending")  # pending | picking | completed
 
@@ -233,7 +260,7 @@ class Transaction(Base):
     type = Column(String, nullable=False)  # in | out | restock | reverse
     quantity = Column(Float, nullable=False)
     balance_after = Column(Float, nullable=False)
-    inventory_pallet_id = Column(Integer, ForeignKey("inventory_pallets.id"))
+    reel_id = Column(Integer, ForeignKey("inventory_reels.id"))
     source_type = Column(String)  # receipt | issue | xr_transfer
     source_id = Column(Integer)
     operator = Column(String)
@@ -274,7 +301,7 @@ class XrBatch(Base):
     counted_qty = Column(Float, nullable=False)
     scanned_at = Column(DateTime, default=datetime.utcnow)
     operator = Column(String)
-    matched_pallet_id = Column(Integer, ForeignKey("inventory_pallets.id"))
+    matched_reel_id = Column(Integer, ForeignKey("inventory_reels.id"))
     status = Column(String, default="pending_match")  # pending_match | matched | failed
     match_key = Column(String)
 
@@ -318,6 +345,23 @@ class SystemSetting(Base):
     value = Column(String, nullable=False)
     description = Column(String)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CustomerMaterialMapping(Base):
+    """Maps a customer's material code to an internal material master record."""
+    __tablename__ = "customer_material_mappings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    customer_material_code = Column(String, nullable=False, comment="客户料号")
+    internal_material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
+    active = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("customer_id", "customer_material_code", name="uq_cust_mat_code"),
+        Index("idx_cust_mat_map", "customer_id", "customer_material_code"),
+    )
 
 
 class User(Base):

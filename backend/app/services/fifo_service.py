@@ -13,7 +13,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import InventoryPallet, MaterialAlternative, SystemSetting
+from app.models import InventoryReel, MaterialAlternative, SystemSetting
 
 
 async def _get_db_strategy(db) -> str | None:
@@ -44,7 +44,7 @@ async def calculate_fifo_pallets(
         strategy: FIFO strategy (config | tail_first | time_fifo | mixed)
         
     Returns:
-        Dict with pallets_selected, total_selected, shortage, strategy_used
+        Dict with reels_selected, total_selected, shortage, strategy_used
     """
     if strategy == "config":
         # Try DB setting first, fall back to env config
@@ -53,21 +53,21 @@ async def calculate_fifo_pallets(
 
     # Fetch all on_shelf pallets
     query = (
-        select(InventoryPallet)
+        select(InventoryReel)
         .where(
-            InventoryPallet.material_id == material_id,
-            InventoryPallet.customer_id == customer_id,
-            InventoryPallet.status == "on_shelf",
-            InventoryPallet.quantity > 0,
+            InventoryReel.material_id == material_id,
+            InventoryReel.customer_id == customer_id,
+            InventoryReel.status == "on_shelf",
+            InventoryReel.quantity > 0,
         )
-        .order_by(InventoryPallet.last_in_time.asc())
+        .order_by(InventoryReel.last_in_time.asc())
     )
     result = await db.execute(query)
     pallets = result.scalars().all()
 
     if not pallets:
         return {
-            "pallets": [],
+            "reels": [],
             "total_selected": 0,
             "shortage": required_qty,
             "strategy_used": strategy,
@@ -90,7 +90,7 @@ async def calculate_fifo_pallets(
             break
         take_qty = min(pallet.quantity, remaining)
         selected.append({
-            "pallet_id": pallet.id,
+            "reel_id": pallet.id,
             "quantity": take_qty,
             "last_in_time": pallet.last_in_time,
             "shelf_slot_id": pallet.shelf_slot_id,
@@ -102,7 +102,7 @@ async def calculate_fifo_pallets(
     shortage = required_qty - total_selected
 
     return {
-        "pallets": selected,
+        "reels": selected,
         "total_selected": total_selected,
         "shortage": max(0, shortage),
         "strategy_used": strategy,
@@ -116,12 +116,12 @@ async def get_available_qty(
 ) -> float:
     """Get total available quantity for a material."""
     result = await db.execute(
-        select(func.coalesce(func.sum(InventoryPallet.quantity), 0))
+        select(func.coalesce(func.sum(InventoryReel.quantity), 0))
         .where(
-            InventoryPallet.material_id == material_id,
-            InventoryPallet.customer_id == customer_id,
-            InventoryPallet.status == "on_shelf",
-            InventoryPallet.quantity > 0,
+            InventoryReel.material_id == material_id,
+            InventoryReel.customer_id == customer_id,
+            InventoryReel.status == "on_shelf",
+            InventoryReel.quantity > 0,
         )
     )
     return float(result.scalar_one())

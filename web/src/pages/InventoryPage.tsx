@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Table, Input, Space, Tag, Select, Spin, message } from 'antd'
-import { SearchOutlined } from '@ant-design/icons'
-import { getInventoryApi } from '../api'
+import { Table, Input, Space, Tag, Select, Spin, message, Button, Modal, Form, InputNumber } from 'antd'
+import { SearchOutlined, ExportOutlined } from '@ant-design/icons'
+import { getInventoryApi, directOutboundApi } from '../api'
 
 const { Option } = Select
 
 interface InventoryItem {
-  pallet_id: number | string
+  reelId: number | string
   material_code: string
   quantity: number
   first_in_time: string
@@ -21,12 +21,25 @@ const statusColors: Record<string, string> = {
   exhausted: 'red',
 }
 
+const statusLabels: Record<string, string> = {
+  on_shelf: '在架',
+  in_use: '使用中',
+  tracking: '跟踪中',
+  exhausted: '已耗尽',
+}
+
 export function InventoryPage() {
   const [data, setData] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [total, setTotal] = useState(0)
+
+  // ── Direct outbound modal ──
+  const [directModalVisible, setDirectModalVisible] = useState(false)
+  const [directTarget, setDirectTarget] = useState<InventoryItem | null>(null)
+  const [directQty, setDirectQty] = useState<number>(1)
+  const [directLoading, setDirectLoading] = useState(false)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -50,8 +63,41 @@ export function InventoryPage() {
     fetchData()
   }, [fetchData])
 
+  // ── Open direct outbound modal ──
+  const handleOpenDirect = (item: InventoryItem) => {
+    setDirectTarget(item)
+    setDirectQty(item.quantity)
+    setDirectModalVisible(true)
+  }
+
+  // ── Confirm direct outbound ──
+  const handleConfirmDirect = async () => {
+    if (!directTarget) return
+    if (directQty <= 0 || directQty > directTarget.quantity) {
+      message.warning(`出库数量须在 1 ~ ${directTarget.quantity} 之间`)
+      return
+    }
+    setDirectLoading(true)
+    try {
+      const palletId = Number(directTarget.reelId)
+      const res = await directOutboundApi(palletId, {
+        quantity: directQty,
+        operator: 'web',
+        release_slot: true,
+      })
+      message.success(res.data?.message || `盘 #${palletId} 出库成功`)
+      setDirectModalVisible(false)
+      setDirectTarget(null)
+      fetchData() // refresh
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '直接出库失败')
+    } finally {
+      setDirectLoading(false)
+    }
+  }
+
   const columns = [
-    { title: '库存盘号', dataIndex: 'pallet_id', key: 'pallet_id', width: 120 },
+    { title: '库存盘号', dataIndex: 'reelId', key: 'reelId', width: 120 },
     { title: '物料编号', dataIndex: 'material_code', key: 'material_code' },
     { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 80 },
     { title: '入库时间', dataIndex: 'first_in_time', key: 'first_in_time', width: 160 },
@@ -60,14 +106,34 @@ export function InventoryPage() {
       dataIndex: 'shelf_slot_id',
       key: 'shelf_slot_id',
       width: 100,
+      render: (val: any) => (val ? `Slot #${val}` : '-'),
     },
     {
       title: '状态',
       key: 'status',
       width: 100,
       render: (_: any, record: InventoryItem) => (
-        <Tag color={statusColors[record.status] || 'default'}>{record.status}</Tag>
+        <Tag color={statusColors[record.status] || 'default'}>
+          {statusLabels[record.status] || record.status}
+        </Tag>
       ),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 120,
+      render: (_: any, record: InventoryItem) =>
+        record.status !== 'exhausted' ? (
+          <Button
+            type="link"
+            icon={<ExportOutlined />}
+            onClick={() => handleOpenDirect(record)}
+          >
+            直接出库
+          </Button>
+        ) : (
+          <Tag color="default">已耗尽</Tag>
+        ),
     },
   ]
 
@@ -102,9 +168,57 @@ export function InventoryPage() {
         <Table
           columns={columns}
           dataSource={data}
-          rowKey={(record) => String(record.pallet_id)}
+          rowKey={(record) => String(record.reelId)}
           pagination={{ pageSize: 20, total }}
         />
+
+        {/* ── Direct Outbound Confirmation Modal ── */}
+        <Modal
+          title={
+            <Space>
+              <ExportOutlined />
+              直接出库确认
+            </Space>
+          }
+          open={directModalVisible}
+          onOk={handleConfirmDirect}
+          onCancel={() => {
+            setDirectModalVisible(false)
+            setDirectTarget(null)
+          }}
+          okText="确认出库"
+          cancelText="取消"
+          confirmLoading={directLoading}
+          okButtonProps={{ danger: true }}
+        >
+          {directTarget && (
+            <Form layout="vertical">
+              <p>
+                <strong>盘号：</strong>#{directTarget.reelId}
+              </p>
+              <p>
+                <strong>物料：</strong>{directTarget.material_code}
+              </p>
+              <p>
+                <strong>当前库存：</strong>{directTarget.quantity}
+              </p>
+              <Form.Item label="出库数量" required>
+                <InputNumber
+                  min={1}
+                  max={directTarget.quantity}
+                  value={directQty}
+                  onChange={(val) => setDirectQty(val || 0)}
+                  style={{ width: '100%' }}
+                />
+              </Form.Item>
+              {directQty === directTarget.quantity && (
+                <p style={{ color: '#faad14' }}>
+                  出库数量等于库存，该盘将被标记为<strong>已耗尽</strong>，储位将释放。
+                </p>
+              )}
+            </Form>
+          )}
+        </Modal>
       </div>
     </Spin>
   )

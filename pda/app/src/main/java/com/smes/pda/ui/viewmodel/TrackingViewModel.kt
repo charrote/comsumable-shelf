@@ -13,7 +13,7 @@ import javax.inject.Inject
 
 data class TrackingUiState(
     val isLoading: Boolean = false,
-    val trackingPallets: List<TrackingPalletItem> = emptyList(),
+    val trackingReels: List<TrackingPalletItem> = emptyList(),
     val onShelfInventory: InventoryResponse? = null,
     val error: String? = null,
     val selectedTab: Int = 0
@@ -34,7 +34,7 @@ class TrackingViewModel @Inject constructor(
                 is ApiResult.Success -> {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        trackingPallets = result.data
+                        trackingReels = result.data
                     )
                 }
                 is ApiResult.Error -> {

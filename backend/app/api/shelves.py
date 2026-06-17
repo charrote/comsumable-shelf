@@ -1,12 +1,15 @@
-"""Shelf management API routes."""
+"""Shelf management API routes — CRUD + slot sensor polling + events."""
 
 from typing import Optional, List
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends, HTTPException, Query
-from app.schemas import ShelfCreate, ShelfResponse, ShelfSlotCreate, ShelfSlotResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from app.schemas import (
+    ShelfCreate, ShelfResponse, ShelfSlotCreate, ShelfSlotResponse,
+    ShelfSlotEventResponse, SlotSensorState,
+)
 from app.utils.database import get_db
-from app.models import Shelf, ShelfSlot
+from app.models import Shelf, ShelfSlot, ShelfSlotEvent, InventoryReel
 
 router = APIRouter(prefix="/shelves", tags=["Shelf Management"])
 
@@ -138,4 +141,176 @@ async def list_slots(
         board_address=s.board_address, slot_on_board=s.slot_on_board,
         global_index=s.global_index, modbus_tcp_id=s.modbus_tcp_id,
         modbus_coil_base=s.modbus_coil_base,
+        max_quantity=s.max_quantity,
+        last_event_at=s.last_event_at,
+        last_sensor_state=s.last_sensor_state,
     ) for s in slots]
+
+
+# ═══════════════════════════════════════════════
+# Slot Sensor & Polling Endpoints
+# ═══════════════════════════════════════════════
+
+@router.get("/{shelf_id}/slots/state")
+async def get_slot_states(
+    shelf_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get live sensor states for all slots on a shelf.
+
+    Returns hardware sensor reading + DB binding info.
+    """
+    slot_service = getattr(request.app.state, "slot_service", None)
+    if not slot_service or not slot_service.is_running:
+        # Fallback: return DB-only state without live sensor data
+        slots_result = await db.execute(
+            select(ShelfSlot).where(ShelfSlot.shelf_id == shelf_id)
+            .order_by(ShelfSlot.side, ShelfSlot.board_address, ShelfSlot.slot_on_board)
+        )
+        slots = slots_result.scalars().all()
+        result = []
+        for s in slots:
+            pallet = await db.execute(
+                select(InventoryReel).where(
+                    InventoryReel.shelf_slot_id == s.id,
+                    InventoryReel.status == "on_shelf",
+                ).limit(1)
+            )
+            p = pallet.scalar_one_or_none()
+            result.append({
+                "slot_id": s.id,
+                "side": s.side,
+                "board_address": s.board_address,
+                "slot_on_board": s.slot_on_board,
+                "has_material": bool(s.last_sensor_state),
+                "last_event_at": s.last_event_at.isoformat() if s.last_event_at else None,
+                "bound_reel_id": p.id if p else None,
+            })
+        return {"shelf_id": shelf_id, "polling_active": False, "slots": result}
+
+    # Live sensor data
+    live = await slot_service.get_live_state()
+    return {"shelf_id": shelf_id, "polling_active": True, "slots": live}
+
+
+@router.get("/{shelf_id}/events")
+async def list_slot_events(
+    shelf_id: int,
+    limit: int = Query(50, ge=1, le=500),
+    db: AsyncSession = Depends(get_db),
+):
+    """List recent sensor events for a shelf's slots."""
+    result = await db.execute(
+        select(ShelfSlotEvent)
+        .join(ShelfSlot, ShelfSlotEvent.shelf_slot_id == ShelfSlot.id)
+        .where(ShelfSlot.shelf_id == shelf_id)
+        .order_by(ShelfSlotEvent.created_at.desc())
+        .limit(limit)
+    )
+    events = result.scalars().all()
+    return [ShelfSlotEventResponse(
+        id=e.id,
+        shelf_slot_id=e.shelf_slot_id,
+        event_type=e.event_type,
+        reel_id=e.reel_id,
+        source=e.source,
+        old_state=e.old_state,
+        new_state=e.new_state,
+        created_at=e.created_at,
+    ) for e in events]
+
+
+@router.get("/{shelf_id}/polling")
+async def get_polling_status(
+    shelf_id: int,
+    request: Request,
+):
+    """Get the polling status for a shelf."""
+    slot_service = getattr(request.app.state, "slot_service", None)
+    return {
+        "shelf_id": shelf_id,
+        "polling_active": slot_service.is_running if slot_service else False,
+    }
+
+
+@router.post("/{shelf_id}/polling/start")
+async def start_polling(
+    shelf_id: int,
+    request: Request,
+):
+    """Start the slot sensor polling service for a shelf."""
+    slot_service = getattr(request.app.state, "slot_service", None)
+    if not slot_service:
+        raise HTTPException(status_code=500, detail="Slot service not initialized")
+    if slot_service.is_running:
+        return {"status": "ok", "message": "Polling already running"}
+
+    await slot_service.start(shelf_id)
+    return {"status": "ok", "message": f"Polling started for shelf {shelf_id}"}
+
+
+@router.post("/{shelf_id}/polling/stop")
+async def stop_polling(
+    shelf_id: int,
+    request: Request,
+):
+    """Stop the slot sensor polling service."""
+    slot_service = getattr(request.app.state, "slot_service", None)
+    if not slot_service:
+        raise HTTPException(status_code=500, detail="Slot service not initialized")
+    if not slot_service.is_running:
+        return {"status": "ok", "message": "Polling already stopped"}
+
+    await slot_service.stop()
+    return {"status": "ok", "message": f"Polling stopped for shelf {shelf_id}"}
+
+
+@router.post("/{shelf_id}/auto-assign")
+async def manual_auto_assign(
+    shelf_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger auto-assign: bind unassigned reels to occupied slots.
+
+    Scans all slots on the shelf: for each slot where sensor says occupied
+    but no reel is bound, find the most recent unassigned reel and bind it.
+    """
+    from app.services.shelf_service import _find_unbound_reel
+
+    slots_result = await db.execute(
+        select(ShelfSlot).where(ShelfSlot.shelf_id == shelf_id)
+        .order_by(ShelfSlot.side, ShelfSlot.board_address, ShelfSlot.slot_on_board)
+    )
+    slots = slots_result.scalars().all()
+
+    bound = 0
+    for slot in slots:
+        # Check if slot is occupied (by sensor or manual state)
+        if not slot.last_sensor_state:
+            continue
+        # Check if already bound
+        existing = await db.execute(
+            select(InventoryReel).where(
+                InventoryReel.shelf_slot_id == slot.id,
+                InventoryReel.status == "on_shelf",
+            ).limit(1)
+        )
+        if existing.scalar_one_or_none():
+            continue
+        # Find unbound reel
+        reel = await _find_unbound_reel(db, shelf_id)
+        if not reel:
+            break
+        reel.shelf_slot_id = slot.id
+        bound += 1
+
+    if bound > 0:
+        await db.commit()
+
+    return {
+        "status": "ok",
+        "shelf_id": shelf_id,
+        "bound": bound,
+        "message": f"已自动绑定 {bound} 个盘料",
+    }
