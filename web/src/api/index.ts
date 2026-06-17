@@ -59,7 +59,7 @@ export const directOutboundApi = (reelId: number, data: {
 }) => apiClient.post(`/inventory/reels/${reelId}/direct-out`, data)
 
 // Receipt
-export const createReceiptApi = (data: { type: string; operator: string }) =>
+export const createReceiptApi = (data: { type: string; operator: string; customer_id?: number }) =>
   apiClient.post('/receipts', data)
 export const scanReceiptApi = (
   receiptId: number,
@@ -75,14 +75,18 @@ export const scanReceiptApi = (
     printer_port?: number
   }
 ) => apiClient.post(`/receipts/${receiptId}/scan`, data)
-export const getReceiptListApi = (params: any) =>
+export const scanPreviewApi = (receiptId: number, data: { barcode: string; operator: string; qty?: number }) =>
+  apiClient.post(`/receipts/${receiptId}/scan-preview`, data)
+export const getReceiptListApi = (params?: any) =>
   apiClient.get('/receipts', { params })
-export const getReceiptDetailApi = (id: number) =>
+export const getReceiptApi = (id: number) =>
   apiClient.get(`/receipts/${id}`)
 export const assignSlotApi = (receiptId: number, data: { detail_id: number; shelf_slot_id: number }) =>
   apiClient.post(`/receipts/${receiptId}/assign-slot`, data)
 export const confirmReceiptApi = (id: number) =>
   apiClient.put(`/receipts/${id}/confirm`)
+export const completeReceiptApi = (id: number) =>
+  apiClient.put(`/receipts/${id}/complete`)
 export const reprintLabelApi = (
   receiptId: number,
   data: { receipt_reel_id: number; printer_ip?: string; printer_port?: number }
@@ -111,18 +115,33 @@ export const confirmXRRestockApi = (batchId: number, data: { shelf_slot_id: numb
   apiClient.post(`/xr/${batchId}/confirm-restock`, data)
 
 // BOM
-export const uploadBomApi = (file: File, customerCode?: string) => {
+export const getBomListApi = (params?: { customer_id?: number; product_code?: string; status?: string }) =>
+  apiClient.get('/bom', { params })
+export const createBomApi = (data: { customer_id: number; product_material_id: number; version?: string; description?: string }) =>
+  apiClient.post('/bom', data)
+export const getBomApi = (bomId: number) =>
+  apiClient.get(`/bom/${bomId}`)
+export const updateBomApi = (bomId: number, data: { version?: string; status?: string; description?: string }) =>
+  apiClient.put(`/bom/${bomId}`, data)
+export const deleteBomApi = (bomId: number) =>
+  apiClient.delete(`/bom/${bomId}`)
+export const addBomItemApi = (bomId: number, data: any) =>
+  apiClient.post(`/bom/${bomId}/items`, data)
+export const updateBomItemApi = (bomId: number, itemId: number, data: any) =>
+  apiClient.put(`/bom/${bomId}/items/${itemId}`, data)
+export const deleteBomItemApi = (bomId: number, itemId: number) =>
+  apiClient.delete(`/bom/${bomId}/items/${itemId}`)
+export const uploadBomApi = (file: File, customerCode?: string, version?: string) => {
   const formData = new FormData()
   formData.append('file', file)
   const params: any = {}
   if (customerCode) params.customer_code = customerCode
+  if (version) params.version = version
   return apiClient.post('/bom/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     params,
   })
 }
-export const getBomApi = (bomId: number) =>
-  apiClient.get(`/bom/${bomId}`)
 export const generateIssueFromBomApi = (bomId: number, data: any) =>
   apiClient.post(`/bom/${bomId}/generate-issue`, data)
 export const downloadBomTemplateApi = async () => {

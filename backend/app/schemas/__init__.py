@@ -30,6 +30,7 @@ class MaterialCreate(BaseModel):
     code: str
     name: str
     spec: Optional[str] = None
+    unit: Optional[str] = "个"
     category_id: Optional[int] = None
     qty_per_pallet: Optional[float] = None
     barcode_pattern: Optional[str] = None
@@ -72,6 +73,13 @@ class CustomerMaterialMappingResponse(BaseModel):
 
 
 # ---------- Receipt ----------
+class BarcodePreviewItem(BaseModel):
+    field: str
+    label: str
+    value: str
+    editable: bool = True
+
+
 class ReceiptCreate(BaseModel):
     type: str = "normal"
     operator: str
@@ -85,6 +93,24 @@ class MaterialCandidate(BaseModel):
     name: str
     confidence: float
     extracted_code: str = ""
+
+
+class BarcodePreviewResponse(BaseModel):
+    barcode: str
+    status: str  # ok | pending_review | new_material
+    confidence: float
+    material_code: str
+    material_name: str = ""
+    material_id: Optional[int] = None
+    quantity: Optional[float] = None
+    unit: str = "盘"
+    batch_no: Optional[str] = None
+    date_code: Optional[str] = None
+    spec: Optional[str] = None
+    supplier_code: Optional[str] = None
+    extracted_fields: List[BarcodePreviewItem] = []
+    candidates: List[MaterialCandidate] = []
+    message: str = ""
 
 
 class ReceiptScanRequest(BaseModel):
@@ -175,8 +201,69 @@ class ReceiptDetailResponse(BaseModel):
 
 
 # ---------- Issue ----------
+class ReelAssignment(BaseModel):
+    reel_id: int
+    reel_barcode: Optional[str] = None
+    shelf_slot_id: Optional[int] = None
+    slot_code: Optional[str] = None
+    reel_qty: float
+    original_quantity: float
+    pick_quantity: float
+
+
+class IssueDetailItem(BaseModel):
+    id: Optional[int] = None
+    material_id: int
+    material_code: Optional[str] = None
+    material_name: Optional[str] = None
+    material_unit: Optional[str] = None
+    required_qty: float
+    assigned_qty: float = 0
+    picked_qty: float = 0
+    reel_assignments: List[ReelAssignment] = []
+    shortage: float = 0
+    status: str = "pending"
+
+
+class IssueCreateRequest(BaseModel):
+    bom_id: int
+    production_quantity: float
+    customer_id: int
+    required_date: Optional[str] = None
+
+
+class IssueOrderListItem(BaseModel):
+    id: int
+    order_no: str
+    bom_id: Optional[int] = None
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    production_quantity: float
+    customer_id: int
+    customer_name: Optional[str] = None
+    status: str
+    required_date: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    detail_count: int = 0
+
+
+class IssueOrderDetail(BaseModel):
+    id: int
+    order_no: str
+    bom_id: Optional[int] = None
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    production_quantity: float
+    customer_id: int
+    customer_name: Optional[str] = None
+    status: str
+    required_date: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    details: List[IssueDetailItem] = []
+
+
 class IssueCalculateRequest(BaseModel):
-    strategy: str = "config"  # config | tail_first | time_fifo
+    strategy: str = "config"
 
 
 class ReelSelection(BaseModel):
@@ -220,7 +307,7 @@ class IssueConfirmPickRequest(BaseModel):
 
 
 class IssueConfirmPickResponse(BaseModel):
-    status: str  # ok | duplicate_out | completed
+    status: str
     picked_qty: float
     remaining_qty: float
     all_picked: bool
@@ -293,41 +380,84 @@ class XrRestockRequest(BaseModel):
 
 
 # ---------- BOM ----------
+class BomAlternativeSchema(BaseModel):
+    id: Optional[int] = None
+    alternative_material_id: int
+    alternative_material_code: Optional[str] = None
+    alternative_material_name: Optional[str] = None
+    priority: int = 1
+    percentage: float = 100.0
+
+
+class BomItemSchema(BaseModel):
+    id: Optional[int] = None
+    parent_id: Optional[int] = None
+    material_id: int
+    material_code: Optional[str] = None
+    material_name: Optional[str] = None
+    material_unit: Optional[str] = None
+    quantity: float
+    position: int = 0
+    remark: Optional[str] = None
+    alternatives: List[BomAlternativeSchema] = []
+    children: List["BomItemSchema"] = []
+
+
+BomItemSchema.model_rebuild()
+
+
+class BomCreateRequest(BaseModel):
+    customer_id: int
+    product_material_id: int
+    version: str = "1.0"
+    description: Optional[str] = None
+
+
+class BomUpdateRequest(BaseModel):
+    version: Optional[str] = None
+    status: Optional[str] = None
+    description: Optional[str] = None
+
+
+class BomListItem(BaseModel):
+    id: int
+    customer_id: int
+    customer_name: Optional[str] = None
+    product_material_id: int
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    version: str
+    status: str
+    description: Optional[str] = None
+    item_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class BomDetailResponse(BaseModel):
+    id: int
+    customer_id: int
+    customer_name: Optional[str] = None
+    product_material_id: int
+    product_code: Optional[str] = None
+    product_name: Optional[str] = None
+    version: str
+    status: str
+    description: Optional[str] = None
+    items: List[BomItemSchema] = []
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
 class BomUploadResponse(BaseModel):
-    bom_header_id: int
-    bom_name: str
+    bom_id: int
+    product_code: str
+    version: str
     parsed: bool
     total_items: int
     unique_materials: int
     alternates_found: int
     auto_created_count: int = 0
-
-
-class BomDetailResponse(BaseModel):
-    id: int
-    material_code: str
-    material_name: str
-    quantity: float
-    unit: str = "盘"
-    alternate_code: Optional[str] = None
-    alternate_name: Optional[str] = None
-
-
-class BomUpdateRequest(BaseModel):
-    bom_name: Optional[str] = None
-    product_code: Optional[str] = None
-    customer_id: Optional[int] = None
-
-
-class BomListItem(BaseModel):
-    id: int
-    bom_name: str
-    product_code: Optional[str] = None
-    customer_id: int
-    total_items: int = 0
-    parsed: int = 0
-    parsed_at: Optional[datetime] = None
-    created_at: Optional[datetime] = None
 
 
 class BomGenerateIssueRequest(BaseModel):
@@ -386,15 +516,15 @@ class ShelfResponse(BaseModel):
     id: int
     code: str
     name: Optional[str] = None
-    a_sides: int
-    b_sides: int
-    total_slots: int
+    a_sides: Optional[int] = 0
+    b_sides: Optional[int] = 0
+    total_slots: Optional[int] = 0
     controller_ip: Optional[str] = None
-    controller_port: int = 502
-    a_side_count: int
-    b_side_count: int
+    controller_port: Optional[int] = 502
+    a_side_count: Optional[int] = 0
+    b_side_count: Optional[int] = 0
     location: Optional[str] = None
-    active: int = 1
+    active: Optional[int] = 1
 
 
 class ShelfSlotCreate(BaseModel):

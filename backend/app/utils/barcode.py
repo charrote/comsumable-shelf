@@ -1,7 +1,12 @@
 """Smart barcode recognition engine.
 
 Handles multiple SMT reel barcode formats without fixed rules.
-Uses pattern matching, fuzzy matching, and material master lookup.
+Supports:
+  - Standard SMT component codes (R, C, IC, etc.)
+  - GS1-128 / EAN-128 format
+  - Supplier 2D Data Matrix (various formats)
+  - Common SMT manufacturer formats (Murata, TDK, Yageo, Samsung, etc.)
+  - Extracts quantity, batch/lot, date, spec from supplier barcodes
 """
 
 import re
@@ -18,6 +23,14 @@ class BarcodeParseResult:
     raw_barcode: str
     matched_material_id: Optional[int] = None
     extra: Dict = None
+    # Enhanced fields for supplier barcode
+    quantity: Optional[float] = None
+    batch_no: Optional[str] = None
+    date_code: Optional[str] = None
+    date_code_type: Optional[str] = None  # date_code | mfg_date | expiry_date
+    supplier_code: Optional[str] = None
+    spec: Optional[str] = None
+    unit: Optional[str] = None
 
 
 # Known prefix patterns for SMT material barcodes
@@ -299,3 +312,133 @@ def add_material_pattern(material_code: str, category: str = None):
     """Register a material code pattern for future recognition."""
     KNOWN_PREFIXES.append(material_code.split('-')[0] if '-' in material_code else material_code)
     KNOWN_PREFIXES.sort()
+
+
+# ══════════════════════════════════════════════════════════════════
+# Enhanced supplier barcode parsing — extract quantity, batch, date
+# ══════════════════════════════════════════════════════════════════
+
+# GS1 Application Identifiers
+GS1_AI = {
+    "01": "gtin",
+    "10": "batch_no",
+    "11": "mfg_date",
+    "15": "expiry_date",
+    "17": "expiry_date",
+    "30": "count",
+    "37": "count",
+    "240": "supplier_code",
+    "241": "customer_part_no",
+    "410": "ship_to",
+}
+
+# Known supplier barcode regex patterns
+SUPPLIER_PATTERNS = [
+    # Format: MATERIAL_CODE~QTY~LOT~DATE
+    re.compile(r'^(?P<code>[A-Z0-9][A-Z0-9/\-.]+)[~\^](?P<qty>[\d.]+)[~\^](?P<lot>[A-Z0-9]+)[~\^](?P<date>\d{4,8})'),
+    # Format: MATERIAL_CODE^LOT^DATE^QTY (Murata/TDK style)
+    re.compile(r'^(?P<code>[A-Z0-9][A-Z0-9/\-.]+)[\^](?P<lot>[A-Z0-9]+)[\^](?P<date>\d{4,8})[\^](?P<qty>[\d.]+)'),
+    # Format: P/N:MATERIAL_CODE QTY:1234 LOT:ABC123 D/C:2401
+    re.compile(r'(?:P[/*]N[:\s]*|PART[:\s]*|MAT[:\s]*)(?P<code>[A-Z0-9][A-Z0-9/\-.]+)'),
+    # GS1-128: (01)GTIN(10)LOT(17)DATE(30)QTY
+    re.compile(r'\(01\)(?P<gtin>\d{14})\(10\)(?P<lot>[^)]+)\(1[157]\)(?P<date>\d{6})\(30\)(?P<qty>\d+)'),
+    # Samsung/other 2D: MATERIAL_CODE QTY DATE LOT
+    re.compile(r'(?P<code>[A-Z0-9]+(?:-[A-Z0-9]+){2,})\s+(?P<qty>\d+)\s+(?P<date>\d{4,8})\s+(?P<lot>[A-Z0-9]+)'),
+    # Format: MATERIAL_CODE|QTY|LOT|DATE
+    re.compile(r'^(?P<code>[A-Z0-9][A-Z0-9/\-.]+)\|(?P<qty>[\d.]+)\|(?P<lot>[A-Z0-9]+)\|(?P<date>\d{4,8})'),
+]
+
+
+def _detect_separator(barcode: str) -> Optional[str]:
+    """Detect the separator character used in the barcode."""
+    for sep in ['~', '^', '|', '/', ';', ',']:
+        if sep in barcode:
+            return sep
+    return None
+
+
+def extract_supplier_info(barcode: str) -> dict:
+    """Extract quantity, batch/lot, date_code from supplier barcode.
+
+    Attempts multiple supplier format patterns and GS1 parsing.
+    Returns dict with keys: quantity, batch_no, date_code, spec, supplier_code
+    """
+    result = {
+        "quantity": None,
+        "batch_no": None,
+        "date_code": None,
+        "date_code_type": None,
+        "supplier_code": None,
+        "spec": None,
+        "unit": None,
+    }
+    if not barcode:
+        return result
+
+    upper = barcode.strip().upper()
+
+    # ── Try GS1-128 format ──
+    if "(01)" in upper:
+        gs1 = re.compile(r'(?:\((\d{2,3})\)([A-Z0-9]+))')
+        ai_data = {}
+        for m in gs1.finditer(upper):
+            ai = m.group(1)
+            value = m.group(2)
+            ai_data[ai] = value
+        if "30" in ai_data:
+            result["quantity"] = float(ai_data["30"])
+        elif "37" in ai_data:
+            result["quantity"] = float(ai_data["37"])
+        if "10" in ai_data:
+            result["batch_no"] = ai_data["10"]
+        if "11" in ai_data:
+            result["date_code"] = ai_data["11"]
+            result["date_code_type"] = "mfg_date"
+        if "17" in ai_data:
+            result["date_code"] = ai_data["17"]
+            result["date_code_type"] = "expiry_date"
+        if "240" in ai_data:
+            result["supplier_code"] = ai_data["240"]
+        if "241" in ai_data:
+            result["spec"] = ai_data["241"]
+        return result
+
+    # ── Try known supplier patterns ──
+    for pattern in SUPPLIER_PATTERNS:
+        m = pattern.search(upper)
+        if m:
+            d = m.groupdict()
+            if "qty" in d and d["qty"]:
+                result["quantity"] = float(d["qty"])
+            if "lot" in d and d["lot"]:
+                batch = d["lot"].strip()
+                if len(batch) < 50:  # sanity check
+                    result["batch_no"] = batch
+            if "date" in d and d["date"]:
+                result["date_code"] = d["date"]
+            if "gtin" in d:
+                result["supplier_code"] = d["gtin"]
+
+            # Try to extract spec/size from material code
+            code = d.get("code", "")
+            if code:
+                # Extract size info like 0402, 0603, 0805 from code
+                size_m = re.search(r'(0[46812]0[23568]|1[02]12|2[05]12|3216|3225|4532)', code)
+                if size_m:
+                    result["spec"] = size_m.group(1)
+            return result
+
+    # ── Fallback: try to find quantity in barcode ──
+    qty_m = re.search(r'(?:QTY|QUANTITY|QTY:|QTY:)\s*(\d+)', upper)
+    if qty_m:
+        result["quantity"] = float(qty_m.group(1))
+
+    lot_m = re.search(r'(?:LOT|LOT#|LOT:|BATCH|BATCH:)\s*([A-Z0-9]+)', upper)
+    if lot_m:
+        result["batch_no"] = lot_m.group(1)
+
+    date_m = re.search(r'(?:D/C|D/C:|DATE|DATE:|DATE\s*CODE|DC:)\s*(\d{4,8})', upper)
+    if date_m:
+        result["date_code"] = date_m.group(1)
+
+    return result

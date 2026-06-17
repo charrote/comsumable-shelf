@@ -9,8 +9,10 @@ from app.schemas import (
     ReceiptCreate, ReceiptScanRequest, ReceiptScanResponse,
     ReceiptAssignSlotRequest, ReceiptDetailResponse, MaterialCandidate,
     ReprintLabelRequest, ReprintLabelResponse,
+    BarcodePreviewResponse, BarcodePreviewItem,
 )
 from app.utils.database import get_db
+from app.utils.barcode import parse_barcode, extract_supplier_info
 from app.models import Receipt, ReceiptReel, InventoryReel, MaterialMaster, Shelf, ShelfSlot, Transaction
 
 router = APIRouter(prefix="/receipts", tags=["Receipt/Inbound"])
@@ -344,6 +346,101 @@ async def create_receipt(
         created_at=receipt.created_at,
         operator=data.operator,
         status=receipt.status,
+    )
+
+
+@router.post("/{receipt_id}/scan-preview", response_model=BarcodePreviewResponse)
+async def scan_preview(
+    receipt_id: int,
+    data: ReceiptScanRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan barcode and preview parsed info before confirming.
+
+    Parses supplier barcode, extracts material code/quantity/batch/date,
+    finds matching material candidates, returns all for user confirmation.
+    """
+    barcode = data.barcode.strip()
+    if not barcode:
+        return BarcodePreviewResponse(
+            barcode=barcode, status="error", confidence=0, material_code="",
+            message="条码不能为空"
+        )
+
+    # 1) Parse barcode for material match
+    parsed = await parse_barcode(barcode, db)
+    supplier_info = extract_supplier_info(barcode)
+
+    # 2) Find material candidates
+    from app.services.receipt_service import match_material_by_barcode
+    match = await match_material_by_barcode(db, barcode, 1)
+
+    candidates = []
+    if match.candidates:
+        candidates = [
+            MaterialCandidate(
+                material_id=c["material_id"],
+                code=c["code"],
+                name=c["name"],
+                confidence=c["confidence"],
+                extracted_code=c.get("extracted_code", ""),
+            )
+            for c in match.candidates
+        ]
+
+    # 3) Determine quantity from barcode or default
+    qty = supplier_info.get("quantity") or data.qty or 1.0
+
+    # 4) Build extracted fields list for display
+    extracted_fields = []
+    field_map = [
+        ("material_code", "物料编码", parsed.material_code or barcode),
+        ("quantity", "数量", str(qty)),
+        ("unit", "单位", "盘"),
+        ("batch_no", "批次号", supplier_info.get("batch_no") or ""),
+        ("date_code", "生产日期/周期", supplier_info.get("date_code") or ""),
+        ("spec", "规格", supplier_info.get("spec") or ""),
+        ("supplier_code", "供应商编码", supplier_info.get("supplier_code") or ""),
+    ]
+    for key, label, value in field_map:
+        if value:
+            extracted_fields.append(BarcodePreviewItem(
+                field=key, label=label, value=value, editable=True
+            ))
+
+    # 5) Get material info
+    material_code = parsed.material_code or barcode
+    material_name = ""
+    material_id = parsed.matched_material_id
+    if material_id:
+        mat_result = await db.execute(
+            select(MaterialMaster).where(MaterialMaster.id == material_id)
+        )
+        mat = mat_result.scalar_one_or_none()
+        if mat:
+            material_code = mat.code
+            material_name = mat.name
+
+    status = "ok" if match.action == "auto_proceed" else "pending_review" if match.candidates else "new_material"
+    if match.action == "new_material":
+        status = "new_material"
+
+    return BarcodePreviewResponse(
+        barcode=barcode,
+        status=status,
+        confidence=parsed.confidence or match.confidence,
+        material_code=material_code,
+        material_name=material_name,
+        material_id=material_id,
+        quantity=qty,
+        unit="盘",
+        batch_no=supplier_info.get("batch_no") or "",
+        date_code=supplier_info.get("date_code") or "",
+        spec=supplier_info.get("spec") or "",
+        supplier_code=supplier_info.get("supplier_code") or "",
+        extracted_fields=extracted_fields,
+        candidates=candidates,
+        message=match.message or f"解析完成，置信度 {parsed.confidence:.0%}",
     )
 
 

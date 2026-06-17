@@ -27,6 +27,7 @@ class Customer(Base):
     categories = relationship("MaterialCategory", back_populates="customer")
     materials = relationship("MaterialMaster", back_populates="customer")
     inventory = relationship("InventoryReel", back_populates="customer")
+    boms = relationship("Bom", back_populates="customer")
     bom_headers = relationship("BomHeader", back_populates="customer")
 
 
@@ -229,13 +230,16 @@ class IssueOrder(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     order_no = Column(String, unique=True, nullable=False, index=True)
-    bom_header_id = Column(Integer, ForeignKey("bom_headers.id"))
+    bom_id = Column(Integer, ForeignKey("boms.id"))
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    production_quantity = Column(Float, nullable=False, default=1)
     required_date = Column(DateTime)
-    status = Column(String, default="pending")  # pending | calculating | assigned | picking | completed
+    status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
     assigned_at = Column(DateTime)
     completed_at = Column(DateTime)
+
+    bom = relationship("Bom", foreign_keys=[bom_id])
 
 
 class IssueDetail(Base):
@@ -245,10 +249,12 @@ class IssueDetail(Base):
     issue_order_id = Column(Integer, ForeignKey("issue_order.id"), nullable=False)
     material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
     required_qty = Column(Float, nullable=False)
+    assigned_qty = Column(Float, default=0)
     picked_qty = Column(Float, default=0)
-    reel_ids = Column(String)  # JSON
-    pick_strategy = Column(String, default="tail_first")
-    status = Column(String, default="pending")  # pending | picking | completed
+    reel_assignments = Column(Text)
+    status = Column(String, default="pending")
+
+    material = relationship("MaterialMaster", foreign_keys=[material_id])
 
 
 class Transaction(Base):
@@ -306,8 +312,69 @@ class XrBatch(Base):
     match_key = Column(String)
 
 
+class Bom(Base):
+    __tablename__ = "boms"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    product_material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
+    version = Column(String, nullable=False, default="1.0")
+    status = Column(String, nullable=False, default="draft")
+    description = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    customer = relationship("Customer", back_populates="boms")
+    product_material = relationship("MaterialMaster", foreign_keys=[product_material_id])
+    items = relationship("BomItem", back_populates="bom", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("customer_id", "product_material_id", "version", name="uq_bom_product_version"),
+        Index("idx_bom_product", "customer_id", "product_material_id"),
+    )
+
+
+class BomItem(Base):
+    __tablename__ = "bom_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bom_id = Column(Integer, ForeignKey("boms.id"), nullable=False)
+    parent_id = Column(Integer, ForeignKey("bom_items.id"))
+    material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
+    quantity = Column(Float, nullable=False)
+    position = Column(Integer, default=0)
+    remark = Column(String)
+
+    bom = relationship("Bom", back_populates="items")
+    parent = relationship("BomItem", remote_side=[id], backref="children")
+    material = relationship("MaterialMaster", foreign_keys=[material_id])
+    alternatives = relationship("BomAlternative", back_populates="bom_item", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_bom_item_bom", "bom_id"),
+        Index("idx_bom_item_parent", "parent_id"),
+    )
+
+
+class BomAlternative(Base):
+    __tablename__ = "bom_alternatives"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    bom_item_id = Column(Integer, ForeignKey("bom_items.id"), nullable=False)
+    alternative_material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
+    priority = Column(Integer, default=1)
+    percentage = Column(Float, default=100.0)
+
+    bom_item = relationship("BomItem", back_populates="alternatives")
+    alternative_material = relationship("MaterialMaster", foreign_keys=[alternative_material_id])
+
+    __table_args__ = (
+        Index("idx_bom_alt_item", "bom_item_id"),
+    )
+
+
 class BomHeader(Base):
-    __tablename__ = "bom_headers"
+    __tablename__ = "bom_headers_legacy"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
@@ -322,10 +389,10 @@ class BomHeader(Base):
 
 
 class BomDetail(Base):
-    __tablename__ = "bom_details"
+    __tablename__ = "bom_details_legacy"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    bom_header_id = Column(Integer, ForeignKey("bom_headers.id"), nullable=False)
+    bom_header_id = Column(Integer, ForeignKey("bom_headers_legacy.id"), nullable=False)
     material_code = Column(String, nullable=False)
     quantity = Column(Float, nullable=False)
     unit = Column(String, default="盘")

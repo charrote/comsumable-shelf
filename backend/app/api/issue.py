@@ -4,19 +4,41 @@ from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import select, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.schemas import (
-    IssueCalculateRequest, IssueCalculateResponse,
+    IssueCreateRequest, IssueOrderListItem, IssueOrderDetail, IssueDetailItem,
+    ReelAssignment, IssueCalculateRequest, IssueCalculateResponse,
     IssueAssignResponse, IssueConfirmPickRequest, IssueConfirmPickResponse,
     MaterialCalcResult, ReelSelection,
 )
 from app.utils.database import get_db
-from app.models import IssueOrder, IssueDetail, InventoryReel, LedCommand, ShelfSlot, Shelf, BomHeader, MaterialMaster, Transaction
+from app.models import (
+    IssueOrder, IssueDetail, InventoryReel, LedCommand, ShelfSlot, Shelf,
+    Bom, BomItem, MaterialMaster, Transaction, Customer,
+)
 from app.services.fifo_service import calculate_fifo_pallets, get_available_qty
 from app.utils.barcode import parse_barcode
 import json
 
 router = APIRouter(prefix="/issues", tags=["Issue/Outbound"])
+
+
+def _flatten_bom_items(items: List[BomItem]) -> List[dict]:
+    """Flatten BOM tree into list of material requirements."""
+    result = []
+    def walk(item_list, parent_path=""):
+        for item in item_list:
+            path = f"{parent_path}/{item.material_id}" if parent_path else str(item.material_id)
+            result.append({
+                "material_id": item.material_id,
+                "quantity": item.quantity,
+                "path": path,
+            })
+            if item.children:
+                walk(item.children, path)
+    walk(items)
+    return result
 
 
 @router.get("")
@@ -25,20 +47,9 @@ async def list_issues(
     status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """List issue orders."""
-    query = select(
-        IssueOrder.id,
-        IssueOrder.order_no,
-        IssueOrder.bom_header_id,
-        IssueOrder.customer_id,
-        IssueOrder.required_date,
-        IssueOrder.status,
-        IssueOrder.created_at,
-        IssueOrder.assigned_at,
-        IssueOrder.completed_at,
-        BomHeader.bom_name,
-    ).outerjoin(
-        BomHeader, IssueOrder.bom_header_id == BomHeader.id
+    query = select(IssueOrder).options(
+        selectinload(IssueOrder.bom).selectinload(Bom.product_material),
+        selectinload(IssueOrder.bom).selectinload(Bom.customer),
     ).order_by(IssueOrder.created_at.desc())
 
     if customer_id:
@@ -47,77 +58,161 @@ async def list_issues(
         query = query.where(IssueOrder.status == status)
 
     result = await db.execute(query)
-    rows = result.all()
-    issues = []
-    for row in rows:
-        detail_count = await db.execute(
-            select(func.count()).select_from(IssueDetail)
-            .where(IssueDetail.issue_order_id == row.id)
+    orders = result.scalars().all()
+
+    items = []
+    for order in orders:
+        detail_count_result = await db.execute(
+            select(func.count(IssueDetail.id)).where(IssueDetail.issue_order_id == order.id)
         )
-        total_materials = detail_count.scalar_one()
-        issues.append({
-            "id": row.id,
-            "order_no": row.order_no,
-            "bom_header_id": row.bom_header_id,
-            "bom_name": row.bom_name or "",
-            "customer_id": row.customer_id,
-            "required_date": row.required_date.isoformat() if row.required_date else None,
-            "status": row.status,
-            "total_materials": total_materials,
-            "created_at": row.created_at.isoformat() if row.created_at else None,
-        })
-    return {"data": issues}
+        detail_count = detail_count_result.scalar() or 0
+
+        product_code = None
+        product_name = None
+        if order.bom and order.bom.product_material:
+            product_code = order.bom.product_material.code
+            product_name = order.bom.product_material.name
+
+        customer_name = None
+        if order.bom and order.bom.customer:
+            customer_name = order.bom.customer.name
+
+        items.append(IssueOrderListItem(
+            id=order.id,
+            order_no=order.order_no,
+            bom_id=order.bom_id,
+            product_code=product_code,
+            product_name=product_name,
+            production_quantity=order.production_quantity,
+            customer_id=order.customer_id,
+            customer_name=customer_name,
+            status=order.status,
+            required_date=order.required_date,
+            created_at=order.created_at,
+            detail_count=detail_count,
+        ))
+    return items
 
 
 @router.get("/{order_id}")
-async def get_issue(
-    order_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get issue order detail."""
+async def get_issue(order_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(
-            IssueOrder.id,
-            IssueOrder.order_no,
-            IssueOrder.bom_header_id,
-            IssueOrder.customer_id,
-            IssueOrder.required_date,
-            IssueOrder.status,
-            IssueOrder.created_at,
-            IssueOrder.assigned_at,
-            IssueOrder.completed_at,
-        ).where(IssueOrder.id == order_id)
+        select(IssueOrder).where(IssueOrder.id == order_id).options(
+            selectinload(IssueOrder.bom).selectinload(Bom.product_material),
+            selectinload(IssueOrder.bom).selectinload(Bom.customer),
+        )
     )
-    row = result.one_or_none()
-    if not row:
+    order = result.scalar_one_or_none()
+    if not order:
         raise HTTPException(status_code=404, detail="发料单不存在")
 
     details_result = await db.execute(
-        select(IssueDetail).where(IssueDetail.issue_order_id == order_id)
+        select(IssueDetail).where(IssueDetail.issue_order_id == order_id).options(
+            selectinload(IssueDetail.material),
+        )
     )
     details = details_result.scalars().all()
 
-    return {
-        "id": row.id,
-        "order_no": row.order_no,
-        "bom_header_id": row.bom_header_id,
-        "customer_id": row.customer_id,
-        "required_date": row.required_date.isoformat() if row.required_date else None,
-        "status": row.status,
-        "created_at": row.created_at.isoformat() if row.created_at else None,
-        "details": [
-            {
-                "id": d.id,
-                "material_id": d.material_id,
-                "required_qty": d.required_qty,
-                "picked_qty": d.picked_qty,
-                "reel_ids": d.reel_ids,
-                "pick_strategy": d.pick_strategy,
-                "status": d.status,
-            }
-            for d in details
-        ],
-    }
+    product_code = order.bom.product_material.code if order.bom and order.bom.product_material else None
+    product_name = order.bom.product_material.name if order.bom and order.bom.product_material else None
+    customer_name = order.bom.customer.name if order.bom and order.bom.customer else None
+
+    detail_items = []
+    for d in details:
+        reel_assignments = []
+        if d.reel_assignments:
+            try:
+                ra_data = json.loads(d.reel_assignments)
+                for ra in ra_data:
+                    reel_assignments.append(ReelAssignment(**ra))
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        detail_items.append(IssueDetailItem(
+            id=d.id,
+            material_id=d.material_id,
+            material_code=d.material.code if d.material else None,
+            material_name=d.material.name if d.material else None,
+            material_unit=d.material.unit if d.material else None,
+            required_qty=d.required_qty,
+            assigned_qty=d.assigned_qty,
+            picked_qty=d.picked_qty,
+            reel_assignments=reel_assignments,
+            shortage=max(0, d.required_qty - d.assigned_qty),
+            status=d.status,
+        ))
+
+    return IssueOrderDetail(
+        id=order.id,
+        order_no=order.order_no,
+        bom_id=order.bom_id,
+        product_code=product_code,
+        product_name=product_name,
+        production_quantity=order.production_quantity,
+        customer_id=order.customer_id,
+        customer_name=customer_name,
+        status=order.status,
+        required_date=order.required_date,
+        created_at=order.created_at,
+        details=detail_items,
+    )
+
+
+@router.post("")
+async def create_issue(
+    data: IssueCreateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Create issue order from BOM + production quantity."""
+    bom_result = await db.execute(
+        select(Bom).where(Bom.id == data.bom_id).options(
+            selectinload(Bom.items).selectinload(BomItem.material),
+            selectinload(Bom.items).selectinload(BomItem.children),
+            selectinload(Bom.product_material),
+        )
+    )
+    bom = bom_result.scalar_one_or_none()
+    if not bom:
+        raise HTTPException(status_code=404, detail="BOM不存在")
+
+    flat_items = _flatten_bom_items(bom.items)
+    material_qty = {}
+    for item in flat_items:
+        mid = item["material_id"]
+        material_qty[mid] = material_qty.get(mid, 0) + item["quantity"]
+
+    order_no = f"ISS-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    required_date = None
+    if data.required_date:
+        try:
+            required_date = datetime.fromisoformat(data.required_date)
+        except ValueError:
+            pass
+
+    order = IssueOrder(
+        order_no=order_no,
+        bom_id=data.bom_id,
+        customer_id=data.customer_id,
+        production_quantity=data.production_quantity,
+        required_date=required_date,
+        status="pending",
+    )
+    db.add(order)
+    await db.flush()
+
+    for material_id, bom_qty in material_qty.items():
+        required_qty = bom_qty * data.production_quantity
+        detail = IssueDetail(
+            issue_order_id=order.id,
+            material_id=material_id,
+            required_qty=required_qty,
+            status="pending",
+        )
+        db.add(detail)
+
+    await db.commit()
+    await db.refresh(order)
+    return await get_issue(order.id, db)
 
 
 @router.post("/{order_id}/calculate", response_model=IssueCalculateResponse)
@@ -126,70 +221,101 @@ async def calculate_issue(
     data: IssueCalculateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Calculate FIFO pallet selection for an issue order."""
-    order_result = await db.execute(
-        select(IssueOrder).where(IssueOrder.id == order_id)
-    )
+    """Calculate FIFO reel assignment for all materials in the issue order."""
+    order_result = await db.execute(select(IssueOrder).where(IssueOrder.id == order_id))
     order = order_result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="发料单不存在")
-
-    await db.execute(
-        update(IssueOrder).where(IssueOrder.id == order_id).values(status="calculating")
-    )
-    await db.commit()
 
     details_result = await db.execute(
         select(IssueDetail).where(IssueDetail.issue_order_id == order_id)
     )
     details = details_result.scalars().all()
 
-    materials = []
+    strategy = data.strategy
+    if strategy == "config":
+        from app.config import settings
+        strategy = settings.FIFO_STRATEGY
+
+    materials_result = []
+
     for detail in details:
-        available = await get_available_qty(
-            db, detail.material_id, order.customer_id
-        )
-        if available == 0:
-            continue
-
-        calc = await calculate_fifo_pallets(
-            db, detail.material_id, order.customer_id,
-            detail.required_qty, data.strategy
-        )
-
         mat_result = await db.execute(
             select(MaterialMaster).where(MaterialMaster.id == detail.material_id)
         )
         mat = mat_result.scalar_one_or_none()
-        material_code = mat.code if mat else ""
-        material_name = mat.name if mat else ""
+        if not mat:
+            continue
 
-        reels_selected = []
-        for p in calc["reels"]:
-            reels_selected.append(ReelSelection(**p))
+        available = await get_available_qty(db, detail.material_id, order.customer_id)
+        calc = await calculate_fifo_pallets(
+            db, detail.material_id, order.customer_id, detail.required_qty, strategy
+        )
 
-        materials.append(MaterialCalcResult(
+        # calc is a dict with keys: reels, total_selected, shortage
+        calc_reels = calc.get('reels', []) if isinstance(calc, dict) else getattr(calc, 'reels', [])
+        calc_total = calc.get('total_selected', 0) if isinstance(calc, dict) else getattr(calc, 'total_selected', 0)
+
+        reel_selections = [
+            ReelSelection(
+                reel_id=r["reel_id"],
+                quantity=r["quantity"],
+                last_in_time=r["last_in_time"],
+                shelf_slot_id=r["shelf_slot_id"],
+            )
+            for r in calc_reels
+        ]
+
+        reel_assignments = []
+        for r in calc_reels:
+            reel_result = await db.execute(
+                select(InventoryReel).where(InventoryReel.id == r["reel_id"])
+            )
+            reel = reel_result.scalar_one_or_none()
+            slot_code = None
+            if reel and reel.shelf_slot_id:
+                slot_result = await db.execute(
+                    select(ShelfSlot).where(ShelfSlot.id == reel.shelf_slot_id)
+                )
+                slot = slot_result.scalar_one_or_none()
+                if slot:
+                    slot_code = f"S{slot.shelf_id}-{slot.side}{slot.slot_on_board}"
+
+            reel_assignments.append(ReelAssignment(
+                reel_id=r["reel_id"],
+                reel_barcode=reel.reel_barcode if reel else None,
+                shelf_slot_id=r["shelf_slot_id"],
+                slot_code=slot_code,
+                reel_qty=reel.quantity if reel else 0,
+                original_quantity=reel.original_quantity if reel else 0,
+                pick_quantity=r["quantity"],
+            ))
+
+        detail.assigned_qty = calc_total
+        detail.reel_assignments = json.dumps([ra.model_dump() for ra in reel_assignments])
+        detail.status = "completed" if calc_total >= detail.required_qty else "partial"
+
+        materials_result.append(MaterialCalcResult(
             material_id=detail.material_id,
-            material_code=material_code,
-            material_name=material_name,
+            material_code=mat.code,
+            material_name=mat.name,
             required_qty=detail.required_qty,
             available_qty=available,
-            strategy=calc["strategy_used"],
-            reels_selected=reels_selected,
-            total_selected=calc["total_selected"],
-            shortage=calc["shortage"],
+            strategy=strategy,
+            reels_selected=reel_selections,
+            total_selected=calc_total,
+            shortage=max(0, detail.required_qty - calc_total),
         ))
 
-    await db.execute(
-        update(IssueOrder).where(IssueOrder.id == order_id).values(status="calculated")
-    )
+    order.status = "assigned"
+    order.assigned_at = datetime.now()
     await db.commit()
 
     return IssueCalculateResponse(
         issue_order_id=order_id,
-        calculated_at=datetime.now(),
-        strategy_used=calc["strategy_used"],
-        materials=materials,
+        calculated_at=order.assigned_at,
+        strategy_used=strategy,
+        materials=materials_result,
     )
 
 
@@ -198,85 +324,67 @@ async def assign_led(
     order_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Assign LED commands for an issue order."""
-    order_result = await db.execute(
-        select(IssueOrder).where(IssueOrder.id == order_id)
-    )
+    """Create LED commands for assigned reels."""
+    order_result = await db.execute(select(IssueOrder).where(IssueOrder.id == order_id))
     order = order_result.scalar_one_or_none()
     if not order:
         raise HTTPException(status_code=404, detail="发料单不存在")
 
-    details = await db.execute(
+    details_result = await db.execute(
         select(IssueDetail).where(IssueDetail.issue_order_id == order_id)
     )
-    details = details.scalars().all()
+    details = details_result.scalars().all()
 
-    all_commands = []
-    shelf_id = None
+    commands = []
+    shelf_ids = set()
 
     for detail in details:
-        if not detail.reel_ids:
+        if not detail.reel_assignments:
             continue
-        reel_ids = json.loads(detail.reel_ids)
-        if not reel_ids:
+        try:
+            ra_data = json.loads(detail.reel_assignments)
+        except (json.JSONDecodeError, TypeError):
             continue
 
-        for pid in reel_ids:
-            pallet_result = await db.execute(
-                select(InventoryReel).where(InventoryReel.id == pid)
-            )
-            pallet = pallet_result.scalar_one_or_none()
-            if not pallet or not pallet.shelf_slot_id:
+        for ra in ra_data:
+            slot_id = ra.get("shelf_slot_id")
+            if not slot_id:
                 continue
 
-            slot_id = pallet.shelf_slot_id
-
-            shelf_result = await db.execute(
-                select(ShelfSlot.shelf_id).where(ShelfSlot.id == slot_id)
+            slot_result = await db.execute(
+                select(ShelfSlot).where(ShelfSlot.id == slot_id).options(
+                    selectinload(ShelfSlot.shelf)
+                )
             )
-            shelf_row = shelf_result.scalar_one_or_none()
-            if not shelf_row:
+            slot = slot_result.scalar_one_or_none()
+            if not slot or not slot.shelf:
                 continue
-            current_shelf_id = shelf_row
 
+            shelf_ids.add(slot.shelf.id)
             cmd = LedCommand(
-                issue_order_id=order_id,
-                material_id=pallet.material_id,
-                shelf_id=current_shelf_id,
+                shelf_id=slot.shelf.id,
                 slot_id=slot_id,
-                color="green",
-                duration=0,
+                issue_order_id=order_id,
+                material_id=detail.material_id,
+                quantity=ra.get("pick_quantity", 0),
                 status="queued",
             )
             db.add(cmd)
-            all_commands.append({
-                "command_id": cmd.id,
+            commands.append({
                 "slot_id": slot_id,
-                "color": "green",
-                "status": "queued",
+                "material_id": detail.material_id,
+                "quantity": ra.get("pick_quantity", 0),
             })
 
-        if not shelf_id and pallet and pallet.shelf_slot_id:
-            slot_row = await db.execute(
-                select(ShelfSlot.shelf_id).where(ShelfSlot.id == pallet.shelf_slot_id)
-            )
-            shelf_id = slot_row.scalar_one()
-
-    if all_commands:
-        await db.execute(
-            update(IssueOrder).where(IssueOrder.id == order_id).values(
-                status="assigned",
-                assigned_at=datetime.now(),
-            )
-        )
-        await db.commit()
+    order.status = "picking"
+    await db.commit()
 
     return IssueAssignResponse(
         assigned=True,
-        led_commands_created=len(all_commands),
-        shelf_id=shelf_id or 0,
-        commands=all_commands,
-        message="亮灯指令已下发至料架",
+        led_commands_created=len(commands),
+        shelf_id=list(shelf_ids)[0] if shelf_ids else 0,
+        commands=commands,
+        message=f"已生成 {len(commands)} 个LED指令",
     )
 
 
@@ -286,13 +394,7 @@ async def confirm_pick(
     data: IssueConfirmPickRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Confirm pick via PDA scan.
-
-    Includes:
-      - Quantity validation (pick cannot exceed remaining required_qty)
-      - Partial pallet consumption (split pallet if picking less than full qty)
-      - Transaction logging for outbound movement
-    """
+    """Confirm pick via PDA scan."""
     order_result = await db.execute(
         select(IssueOrder).where(IssueOrder.id == order_id)
     )
@@ -311,11 +413,11 @@ async def confirm_pick(
             message="无效的条码格式",
         )
 
-    # Find pending/picking issue detail
     detail_result = await db.execute(
         select(IssueDetail).where(
             IssueDetail.issue_order_id == order_id,
-            IssueDetail.status.in_(["pending", "picking"]),
+            IssueDetail.status.in_(["pending", "picking", "partial", "completed"]),
+            IssueDetail.material_id == parsed.material_id if parsed.material_id else True,
         )
     )
     detail = detail_result.scalar_one_or_none()
@@ -329,13 +431,11 @@ async def confirm_pick(
             message="该物料需求已全部出库",
         )
 
-    # Look up pallet
     pallet_result = await db.execute(
         select(InventoryReel).where(InventoryReel.id == data.reel_id)
     )
     pallet = pallet_result.scalar_one_or_none()
 
-    # --- Quantity validation: cap pick at remaining need ---
     remaining_need = detail.required_qty - detail.picked_qty
     available = pallet.quantity if pallet else 0
     pick_qty = min(available, remaining_need)
@@ -351,9 +451,7 @@ async def confirm_pick(
 
     now = datetime.now()
 
-    # --- Partial consumption: split pallet if picking less than full ---
     if pick_qty < available:
-        # Reduce existing pallet
         await db.execute(
             update(InventoryReel)
             .where(InventoryReel.id == data.reel_id)
@@ -364,7 +462,6 @@ async def confirm_pick(
             )
         )
     else:
-        # Exhaust the pallet
         await db.execute(
             update(InventoryReel)
             .where(InventoryReel.id == data.reel_id)
@@ -376,7 +473,6 @@ async def confirm_pick(
             )
         )
 
-    # --- Update picked qty on issue detail ---
     new_picked = detail.picked_qty + pick_qty
     all_picked = new_picked >= detail.required_qty
     await db.execute(
@@ -385,7 +481,6 @@ async def confirm_pick(
         .values(picked_qty=new_picked, status="completed" if all_picked else "picking")
     )
 
-    # --- Record Transaction for outbound movement ---
     txn = Transaction(
         customer_id=order.customer_id,
         material_id=detail.material_id,
@@ -401,7 +496,6 @@ async def confirm_pick(
     )
     db.add(txn)
 
-    # --- Clear LED commands for this pallet's slot ---
     cleared = []
     if pallet and pallet.shelf_slot_id:
         led_result = await db.execute(
@@ -417,9 +511,7 @@ async def confirm_pick(
             cmd.cleared_at = now
             cleared.append(cmd.slot_id)
 
-    # --- Mark issue order completed if all items done ---
     if all_picked:
-        # Check if all details are completed
         all_details = await db.execute(
             select(IssueDetail).where(IssueDetail.issue_order_id == order_id)
         )

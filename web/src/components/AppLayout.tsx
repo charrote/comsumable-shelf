@@ -128,6 +128,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         >
           {children}
         </Content>
+        <div style={{ textAlign: 'center', padding: '12px 0', color: '#999', fontSize: 12 }}>
+          Copyright &copy; 2026 hwazun.cloud All Rights Reserved.
+        </div>
       </Layout>
     </Layout>
   )

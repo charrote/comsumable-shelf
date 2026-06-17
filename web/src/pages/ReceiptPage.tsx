@@ -1,524 +1,425 @@
-import { useState } from 'react'
-import { Card, Form, Input, Button, Space, Tag, Steps, Spin, message, Modal, List, Typography, Radio } from 'antd'
-import { CheckCircleOutlined, CloseCircleOutlined, QuestionCircleOutlined, PlusCircleOutlined, PrinterOutlined } from '@ant-design/icons'
-import { createReceiptApi, scanReceiptApi, confirmReceiptApi, reprintLabelApi } from '../api'
+import { useState, useEffect, useRef } from 'react'
+import { Table, Button, Card, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Descriptions, Typography, Spin, Row, Col, Statistic, Popconfirm, Radio } from 'antd'
+import { ScanOutlined, PlusOutlined, PrinterOutlined, CheckCircleOutlined, CloseCircleOutlined, HistoryOutlined } from '@ant-design/icons'
+import { createReceiptApi, scanReceiptApi, getReceiptListApi, getReceiptApi, confirmReceiptApi, reprintLabelApi, getMaterialsApi, scanPreviewApi } from '../api'
 
 const { Text, Title } = Typography
 
-interface MaterialCandidate {
-  material_id: number
-  code: string
-  name: string
-  confidence: number
-  extracted_code: string
-}
-
-interface ScanResult {
-  status: string               // ok | duplicate | pending_review | error
-  action: string               // first_in | duplicate | pending_review | new_material
-  reelId?: number | null
-  assigned_slot?: number | null
-  material_code: string
-  material_name: string
-  quantity: number
-  message: string
-  duplicate_flag: boolean
-  warning?: string | null
-  barcode: string
-  // Pending review fields
-  candidates?: MaterialCandidate[]
-  customer_material_code?: string
-  material_id?: number | null
-  confidence?: number
-  // Label printing
-  label_printed?: boolean
-}
-
-/** Status tag color & label map */
-const STATUS_META: Record<string, { color: string; label: string; icon: React.ReactNode }> = {
-  ok:             { color: 'green',  label: '成功',     icon: <CheckCircleOutlined /> },
-  duplicate:      { color: 'red',    label: '重复',     icon: <CloseCircleOutlined /> },
-  pending_review: { color: 'orange', label: '待确认',   icon: <QuestionCircleOutlined /> },
-  error:          { color: 'red',    label: '失败',     icon: <CloseCircleOutlined /> },
-}
+const statusLabels: Record<string, string> = { draft: '草稿', confirmed: '已确认', completed: '已完成' }
+const statusColors: Record<string, string> = { draft: 'default', confirmed: 'blue', completed: 'green' }
 
 export function ReceiptPage() {
-  const [form] = Form.useForm()
+  const [receipts, setReceipts] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
-  const [step, setStep] = useState(0)
-  const [receiptId, setReceiptId] = useState<number | null>(null)
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null)
-  const [scanHistory, setScanHistory] = useState<ScanResult[]>([])
+  const [createModal, setCreateModal] = useState(false)
+  const [createForm] = Form.useForm()
+  const [currentReceipt, setCurrentReceipt] = useState<any>(null)
+  const [detailModal, setDetailModal] = useState(false)
+  const [reprintModal, setReprintModal] = useState(false)
+  const [reprintReelList, setReprintReelList] = useState<any[]>([])
+  const [materials, setMaterials] = useState<any[]>([])
 
-  // ── Review modal state ──
-  const [reviewVisible, setReviewVisible] = useState(false)
-  const [pendingBarcode, setPendingBarcode] = useState('')
-  const [pendingCandidates, setPendingCandidates] = useState<MaterialCandidate[]>([])
-  const [pendingCustomerCode, setPendingCustomerCode] = useState('')
+  // ── Scan Preview Flow ──
+  const barcodeInputRef = useRef<any>(null)
+  const [showScanModal, setShowScanModal] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [previewData, setPreviewData] = useState<any>(null)
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null)
-  const [newMaterialCode, setNewMaterialCode] = useState('')
-  const [newMaterialName, setNewMaterialName] = useState('')
-  const [reviewMode, setReviewMode] = useState<'select' | 'new'>('select') // 'select' | 'new'
+  const [editQty, setEditQty] = useState<number>(1)
+  const [editBatch, setEditBatch] = useState('')
+  const [editDateCode, setEditDateCode] = useState('')
+  const [editSpec, setEditSpec] = useState('')
+  const [isNewMaterial, setIsNewMaterial] = useState(false)
+  const [newCode, setNewCode] = useState('')
+  const [newName, setNewName] = useState('')
 
-  // ── Create receipt ──
-  const handleCreate = async (values: { operator: string }) => {
+  const loadReceipts = async () => {
     setLoading(true)
     try {
-      const res = await createReceiptApi({ type: 'incoming', operator: values.operator })
-      const id = res.data?.id ?? res.data?.receipt_id
-      setReceiptId(id)
-      message.success('入库单创建成功')
-      setStep(1)
-      form.resetFields()
-    } catch (err: any) {
-      message.error(err.response?.data?.detail || '创建入库单失败')
-    } finally {
-      setLoading(false)
-    }
+      const res = await getReceiptListApi()
+      setReceipts(res.data?.data || res.data || [])
+    } catch { message.error('加载收料单失败') }
+    finally { setLoading(false) }
   }
 
-  // ── Scan barcode ──
-  const handleScan = async (values: { barcode: string }) => {
-    if (!receiptId) return
-    setLoading(true)
-    setScanResult(null)
-    try {
-      const res = await scanReceiptApi(receiptId, {
-        barcode: values.barcode,
-        operator: form.getFieldValue('operator') || '',
-      })
-      const response = res.data
-      const result: ScanResult = {
-        status: response.status,
-        action: response.action,
-        reelId: response.reelId ?? null,
-        assigned_slot: response.assigned_slot ?? null,
-        material_code: response.material_code ?? '',
-        material_name: response.material_name ?? '',
-        quantity: response.quantity ?? 0,
-        message: response.message || '',
-        duplicate_flag: response.duplicate_flag || false,
-        warning: response.warning ?? null,
-        barcode: values.barcode,
-        candidates: response.candidates || [],
-        customer_material_code: response.customer_material_code || '',
-        material_id: response.material_id ?? null,
-        confidence: response.confidence ?? 0,
-        label_printed: response.label_printed ?? false,
-      }
-      setScanResult(result)
-      form.resetFields(['barcode'])
+  useEffect(() => { loadReceipts(); loadMaterials() }, [])
 
-      if (response.status === 'ok') {
-        // Auto-proceed → add to history
-        setScanHistory((prev) => [...prev, result])
-        message.success(result.message || '入库成功')
-      } else if (response.status === 'duplicate') {
-        message.warning(result.message)
-      } else if (response.status === 'pending_review') {
-        // Open review modal
-        setPendingBarcode(values.barcode)
-        setPendingCandidates(result.candidates || [])
-        setPendingCustomerCode(result.customer_material_code || values.barcode)
-        setSelectedMaterialId(null)
-        setNewMaterialCode(result.customer_material_code || values.barcode)
-        setNewMaterialName(result.customer_material_code || values.barcode)
-        setReviewMode('select')
-        setReviewVisible(true)
-      }
-    } catch (err: any) {
-      const detail = err.response?.data?.detail || '扫码失败'
-      message.error(detail)
-      setScanResult({
-        status: 'error', action: 'error',
-        reelId: null, assigned_slot: null,
-        material_code: '', material_name: '', quantity: 0,
-        message: detail, duplicate_flag: false, warning: null,
-        barcode: values.barcode,
-      })
-    } finally {
-      setLoading(false)
-    }
+  const loadMaterials = async () => {
+    try {
+      const res = await getMaterialsApi({})
+      setMaterials(res.data?.data || res.data || [])
+    } catch {}
   }
 
-  // ── Confirm human review: send second-pass scan ──
-  const handleConfirmReview = async () => {
-    if (!receiptId) return
-    setLoading(true)
-    setReviewVisible(false)
+  const handleCreate = async (values: any) => {
     try {
-      const params: any = {
-        barcode: pendingBarcode,
-        operator: form.getFieldValue('operator') || '',
-      }
-      if (reviewMode === 'select' && selectedMaterialId) {
-        params.manual_material_id = selectedMaterialId
-      } else if (reviewMode === 'new') {
-        params.is_new_material = true
-        params.new_material_code = newMaterialCode
-        params.new_material_name = newMaterialName
+      const res = await createReceiptApi({ type: 'normal', operator: values.operator, customer_id: 1 })
+      message.success(`收料单 ${res.data.receipt_no} 创建成功`)
+      setCreateModal(false)
+      createForm.resetFields()
+      loadReceipts()
+      startScan(res.data.id)
+    } catch (e: any) { message.error(e.response?.data?.detail || '创建失败') }
+  }
+
+  const startScan = (receiptId?: number) => {
+    const id = receiptId || currentReceipt?.id
+    if (!id) { message.error('请先选择收料单'); return }
+    setShowScanModal(true)
+    setPreviewData(null)
+    setSelectedMaterialId(null)
+    setIsNewMaterial(false)
+    setTimeout(() => barcodeInputRef.current?.focus(), 100)
+  }
+
+  const handleBarcodeScan = async (barcode: string) => {
+    if (!barcode || !currentReceipt?.id) return
+    setScanning(true)
+    try {
+      // Step 1: Preview scan — parse barcode and return candidates + extracted fields
+      const previewRes = await scanPreviewApi(currentReceipt.id, {
+        barcode, operator: 'admin', qty: 1,
+      })
+      const data = previewRes.data
+
+      if (data.status === 'ok') {
+        // Auto-matched with high confidence — confirm directly
+        const confirmRes = await scanReceiptApi(currentReceipt.id, {
+          barcode, operator: 'admin', qty: 1,
+        })
+        const confirmData = confirmRes.data
+        if (confirmData.status === 'ok') {
+          message.success(`入库成功！Reel#${confirmData.reel_id} ${confirmData.message || ''}`)
+          loadReceiptDetail()
+          setShowScanModal(false)
+        } else {
+          message.warning(confirmData.message || '入库结果异常')
+        }
       } else {
-        message.error('请选择物料或确认新料')
-        setLoading(false)
-        return
+        // Need user review — show preview
+        setPreviewData({
+          barcode,
+          material_code: data.material_code || barcode,
+          material_name: data.material_name || '',
+          quantity: data.quantity || 1,
+          batch_no: data.batch_no || '',
+          date_code: data.date_code || '',
+          spec: data.spec || '',
+          candidates: data.candidates || [],
+          status: data.status,
+          message: data.message,
+        })
+        setEditQty(data.quantity || 1)
+        setEditBatch(data.batch_no || '')
+        setEditDateCode(data.date_code || '')
+        setEditSpec(data.spec || '')
+        setNewCode(data.material_code || barcode)
+        setNewName(data.material_name || '')
+        setSelectedMaterialId(data.candidates?.[0]?.material_id || null)
+        setIsNewMaterial(data.status === 'new_material')
       }
-
-      const res = await scanReceiptApi(receiptId, params)
-      const response = res.data
-      const result: ScanResult = {
-        status: response.status,
-        action: response.action,
-        reelId: response.reelId ?? null,
-        assigned_slot: response.assigned_slot ?? null,
-        material_code: response.material_code ?? '',
-        material_name: response.material_name ?? '',
-        quantity: response.quantity ?? 0,
-        message: response.message || '',
-        duplicate_flag: response.duplicate_flag || false,
-        warning: response.warning ?? null,
-        barcode: pendingBarcode,
-        material_id: response.material_id ?? null,
-        confidence: response.confidence ?? 1.0,
-        label_printed: response.label_printed ?? false,
-      }
-      setScanResult(result)
-      setScanHistory((prev) => [...prev, result])
-      message.success(result.message || '入库成功')
-    } catch (err: any) {
-      message.error(err.response?.data?.detail || '确认失败')
-    } finally {
-      setLoading(false)
-    }
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '扫码失败')
+    } finally { setScanning(false) }
   }
 
-  // ── Next scan ──
-  const handleNextScan = () => {
-    setScanResult(null)
-    form.resetFields(['barcode'])
-    setTimeout(() => form.getFieldInstance('barcode')?.focus(), 0)
-  }
-
-  // ── Confirm receipt ──
-  const handleConfirm = async () => {
-    if (!receiptId) return
-    setLoading(true)
+  const handleConfirmScan = async (barcode: string, force = false) => {
+    if (!currentReceipt?.id) return
+    setScanning(true)
     try {
-      await confirmReceiptApi(receiptId)
-      setStep(2)
-      message.success('入库确认完成')
-    } catch (err: any) {
-      message.error(err.response?.data?.detail || '入库确认失败')
-    } finally {
-      setLoading(false)
-    }
+      const payload: any = {
+        barcode,
+        operator: 'admin',
+        qty: editQty,
+      }
+      if (isNewMaterial) {
+        payload.is_new_material = true
+        payload.new_material_code = newCode || barcode
+        payload.new_material_name = newName || newCode || barcode
+      } else if (selectedMaterialId) {
+        payload.manual_material_id = selectedMaterialId
+      } else if (previewData?.candidates?.[0]) {
+        payload.manual_material_id = previewData.candidates[0].material_id
+      }
+
+      const res = await scanReceiptApi(currentReceipt.id, payload)
+      const data = res.data
+      if (data.status === 'ok') {
+        message.success(`入库成功！Reel#${data.reel_id} ${data.message || ''}`)
+        loadReceiptDetail()
+        setShowScanModal(false)
+      } else {
+        message.warning(data.message || '入库结果异常')
+      }
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '确认失败')
+    } finally { setScanning(false) }
   }
 
-  const handleBackToCreate = () => {
-    setStep(0)
-    setReceiptId(null)
-    setScanResult(null)
-    setScanHistory([])
-    form.resetFields()
+  const loadReceiptDetail = async () => {
+    if (!currentReceipt?.id) return
+    try {
+      const res = await getReceiptApi(currentReceipt.id)
+      setCurrentReceipt(res.data)
+    } catch {}
   }
 
-  // ── Render ──
-  const meta = STATUS_META[scanResult?.status || ''] ?? STATUS_META.error
+  const selectReceipt = async (record: any) => {
+    try {
+      const res = await getReceiptApi(record.id)
+      setCurrentReceipt(res.data)
+      setDetailModal(true)
+    } catch { message.error('加载收料单详情失败') }
+  }
+
+  const handleConfirm = async () => {
+    if (!currentReceipt?.id) return
+    try {
+      await confirmReceiptApi(currentReceipt.id)
+      message.success('收料单已确认')
+      loadReceiptDetail()
+      loadReceipts()
+    } catch (e: any) { message.error(e.response?.data?.detail || '确认失败') }
+  }
+
+  const handleReprint = async (receiptReelId: number) => {
+    if (!currentReceipt?.id) return
+    try {
+      const res = await reprintLabelApi(currentReceipt.id, { receipt_reel_id: receiptReelId })
+      if (res.data?.printed) message.success('标签已重新打印')
+      else message.warning(res.data?.message || '打印失败')
+    } catch (e: any) { message.error(e.response?.data?.detail || '重打失败') }
+  }
+
+  const columns = [
+    { title: '收料单号', dataIndex: 'receipt_no', key: 'receipt_no', width: 180 },
+    { title: '操作员', dataIndex: 'operator', key: 'operator', width: 100 },
+    { title: '类型', dataIndex: 'type', key: 'type', width: 80 },
+    { title: '状态', dataIndex: 'status', key: 'status', width: 80,
+      render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v]}</Tag>,
+    },
+    { title: '创建时间', dataIndex: 'created_at', key: 'created_at', width: 170,
+      render: (v: string) => v ? new Date(v).toLocaleString() : '-',
+    },
+    { title: '操作', key: 'action', width: 160,
+      render: (_: any, r: any) => (
+        <Space>
+          <Button type="link" size="small" onClick={() => selectReceipt(r)}>详情</Button>
+          {r.status === 'draft' && (
+            <Button type="link" size="small" icon={<ScanOutlined />} onClick={() => { selectReceipt(r).then(() => startScan(r.id)) }}>扫码</Button>
+          )}
+        </Space>
+      ),
+    },
+  ]
 
   return (
-    <Spin spinning={loading}>
-      <div>
-        <h2>入库管理</h2>
-        <Steps current={step} style={{ marginBottom: 24 }}>
-          <Steps.Step title="创建入库单" />
-          <Steps.Step title="扫码入库" />
-          <Steps.Step title="确认完成" />
-        </Steps>
-
-        {/* ── Step 0: Create ── */}
-        {step === 0 && (
-          <Card title="创建入库单" style={{ marginBottom: 16 }}>
-            <Form layout="vertical" form={form} onFinish={handleCreate}>
-              <Form.Item name="operator" label="操作员" rules={[{ required: true, message: '请输入操作员姓名' }]}>
-                <Input placeholder="输入操作员姓名" />
-              </Form.Item>
-              <Form.Item>
-                <Button type="primary" htmlType="submit" loading={loading}>
-                  创建入库单
-                </Button>
-              </Form.Item>
-            </Form>
-          </Card>
-        )}
-
-        {/* ── Step 1: Scan ── */}
-        {step === 1 && (
-          <>
-            <Card title="扫码入库" style={{ marginBottom: 16 }}>
-              <Form layout="vertical" form={form} onFinish={handleScan}>
-                <Form.Item name="barcode" label="扫描条码" rules={[{ required: true, message: '请扫描或输入条码' }]}>
-                  <Input
-                    placeholder="扫码枪扫描或手动输入"
-                    addonAfter={
-                      <Button type="primary" htmlType="submit" loading={loading}>
-                        确认
-                      </Button>
-                    }
-                    onPressEnter={() => form.submit()}
-                  />
-                </Form.Item>
-              </Form>
-            </Card>
-
-            {/* ── Scan result card ── */}
-            {scanResult && (
-              <Card
-                title="扫描结果"
-                style={{ marginBottom: 16 }}
-                extra={
-                  <Tag color={meta.color} icon={meta.icon}>
-                    {meta.label}
-                  </Tag>
-                }
-              >
-                <p><strong>条码：</strong>{scanResult.barcode}</p>
-                <p><strong>结果：</strong>{scanResult.message}</p>
-
-                {scanResult.warning && (
-                  <p style={{ color: '#faad14' }}><strong>警告：</strong>{scanResult.warning}</p>
-                )}
-
-                {scanResult.material_code && (
-                  <p><strong>物料编码：</strong><Text code>{scanResult.material_code}</Text></p>
-                )}
-                {scanResult.material_name && (
-                  <p><strong>物料名称：</strong>{scanResult.material_name}</p>
-                )}
-                {scanResult.confidence !== undefined && scanResult.confidence > 0 && (
-                  <p><strong>匹配置信度：</strong>{(scanResult.confidence * 100).toFixed(0)}%</p>
-                )}
-                {scanResult.reelId && (
-                  <p><strong>库存盘 ID：</strong><Tag color="blue">{scanResult.reelId}</Tag></p>
-                )}
-                {scanResult.assigned_slot && (
-                  <p><strong>分配储位：</strong><Tag color="green">{scanResult.assigned_slot}</Tag></p>
-                )}
-                {scanResult.quantity > 0 && (
-                  <p><strong>数量：</strong>{scanResult.quantity} 盘</p>
-                )}
-                {scanResult.status === 'ok' && scanResult.label_printed !== undefined && (
-                  <p>
-                    <strong>标签打印：</strong>
-                    {scanResult.label_printed ? (
-                      <Tag color="green" icon={<PrinterOutlined />}>已打印</Tag>
-                    ) : (
-                      <Tag color="default" icon={<PrinterOutlined />}>未打印</Tag>
-                    )}
-                    {scanResult.reelId && !scanResult.label_printed && (
-                      <Button
-                        size="small"
-                        icon={<PrinterOutlined />}
-                        onClick={async () => {
-                          try {
-                            await reprintLabelApi(receiptId!, {
-                              receipt_reel_id: scanResult.reelId!,
-                            })
-                            message.success('标签重打请求已发送')
-                          } catch (e: any) {
-                            message.error(e.response?.data?.detail || '重打失败')
-                          }
-                        }}
-                      >
-                        重打
-                      </Button>
-                    )}
-                  </p>
-                )}
-                {scanResult.candidates && scanResult.candidates.length > 0 && (
-                  <p style={{ color: '#faad14' }}>
-                    <QuestionCircleOutlined /> 系统无法确定物料，请在弹窗中选择
-                  </p>
-                )}
-              </Card>
-            )}
-
-            {/* ── Scan history ── */}
-            {scanHistory.length > 0 && (
-              <Card title="扫码记录" size="small" style={{ marginBottom: 16 }}>
-                {scanHistory.map((item, idx) => (
-                  <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', borderBottom: idx < scanHistory.length - 1 ? '1px solid #f0f0f0' : 'none' }}>
-                    <div>
-                      <Tag color={item.status === 'ok' ? 'green' : item.status === 'pending_review' ? 'orange' : 'red'}>
-                        {item.status === 'ok' ? `#${item.reelId}` : item.status === 'pending_review' ? '已确认' : item.status}
-                      </Tag>
-                      {item.barcode}
-                      {item.material_code ? ` → ${item.material_code}` : ''}
-                      {item.message ? ` — ${item.message}` : ''}
-                      {item.label_printed !== undefined && (
-                        item.label_printed ? <Tag color="green" icon={<PrinterOutlined />} style={{ marginLeft: 8 }}>已打印</Tag>
-                          : <Tag color="default" icon={<PrinterOutlined />} style={{ marginLeft: 8 }}>未打印</Tag>
-                      )}
-                    </div>
-                    {item.status === 'ok' && item.reelId && !item.label_printed && (
-                      <Button
-                        size="small"
-                        type="link"
-                        icon={<PrinterOutlined />}
-                        onClick={async () => {
-                          try {
-                            await reprintLabelApi(receiptId!, {
-                              receipt_reel_id: item.reelId!,
-                            })
-                            message.success('标签重打请求已发送')
-                          } catch (e: any) {
-                            message.error(e.response?.data?.detail || '重打失败')
-                          }
-                        }}
-                      >
-                        重打标签
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </Card>
-            )}
-
-            <Space>
-              <Button onClick={handleNextScan} disabled={!scanResult}>
-                继续扫码
-              </Button>
-              <Button type="primary" onClick={handleConfirm} disabled={scanHistory.length === 0}>
-                完成入库
-              </Button>
-            </Space>
-          </>
-        )}
-
-        {/* ── Step 2: Done ── */}
-        {step === 2 && (
-          <Card title="入库完成">
-            <p>入库单号：<strong>{receiptId}</strong></p>
-            <p>扫码总数：<strong>{scanHistory.length}</strong></p>
-            <p>
-              成功：
-              <strong style={{ color: 'green' }}>{scanHistory.filter((s) => s.status === 'ok').length}</strong>
-              {' / '}待确认：
-              <strong style={{ color: 'orange' }}>{scanHistory.filter((s) => s.status === 'pending_review').length}</strong>
-              {' / '}失败：
-              <strong style={{ color: 'red' }}>{scanHistory.filter((s) => s.status === 'error' || s.status === 'duplicate').length}</strong>
-            </p>
-            <Button type="primary" onClick={handleBackToCreate}>
-              新建入库单
-            </Button>
-          </Card>
-        )}
-
-        {/* ══════════════════════════════════════════════════════════
-            Review Modal — material selection / new material confirm
-           ══════════════════════════════════════════════════════════ */}
-        <Modal
-          title={
-            <Space>
-              <QuestionCircleOutlined style={{ color: '#faad14' }} />
-              物料确认
-            </Space>
-          }
-          open={reviewVisible}
-          onOk={handleConfirmReview}
-          onCancel={() => setReviewVisible(false)}
-          okText="确认入库"
-          okButtonProps={{
-            disabled: reviewMode === 'select' && !selectedMaterialId,
-          }}
-          width={520}
-        >
-          <p style={{ marginBottom: 16 }}>
-            <Text strong>客户条码：</Text>
-            <Text code>{pendingBarcode}</Text>
-          </p>
-          <p style={{ marginBottom: 16 }}>
-            <Text strong>识别物料编码：</Text>
-            <Text code>{pendingCustomerCode}</Text>
-          </p>
-
-          {/* ── Tabs: Select existing / New material ── */}
-          <Radio.Group
-            value={reviewMode}
-            onChange={(e) => setReviewMode(e.target.value)}
-            style={{ marginBottom: 16, width: '100%' }}
-          >
-            <Radio.Button value="select" style={{ width: '50%', textAlign: 'center' }}>
-              选择已有物料
-            </Radio.Button>
-            <Radio.Button value="new" style={{ width: '50%', textAlign: 'center' }}>
-              确认为新物料
-            </Radio.Button>
-          </Radio.Group>
-
-          {reviewMode === 'select' && (
-            <>
-              {pendingCandidates.length === 0 ? (
-                <Text type="secondary">暂无匹配的候选物料</Text>
-              ) : (
-                <List
-                  size="small"
-                  bordered
-                  dataSource={pendingCandidates}
-                  renderItem={(item) => (
-                    <List.Item
-                      onClick={() => setSelectedMaterialId(item.material_id)}
-                      style={{
-                        cursor: 'pointer',
-                        background: selectedMaterialId === item.material_id ? '#e6f4ff' : undefined,
-                      }}
-                      actions={[
-                        selectedMaterialId === item.material_id ? (
-                          <Tag color="blue">已选</Tag>
-                        ) : (
-                          <Button size="small" type="link">选择</Button>
-                        ),
-                      ]}
-                    >
-                      <List.Item.Meta
-                        title={<Text code>{item.code}</Text>}
-                        description={
-                          <Space>
-                            <Text>{item.name}</Text>
-                            <Tag color="default">{(item.confidence * 100).toFixed(0)}%</Tag>
-                          </Space>
-                        }
-                      />
-                    </List.Item>
-                  )}
-                />
-              )}
-            </>
-          )}
-
-          {reviewMode === 'new' && (
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <p>
-                <Text type="secondary">系统将使用以下信息自动创建新物料：</Text>
-              </p>
-              <Form layout="vertical">
-                <Form.Item label="新物料编码">
-                  <Input
-                    value={newMaterialCode}
-                    onChange={(e) => setNewMaterialCode(e.target.value)}
-                    placeholder="输入物料编码"
-                  />
-                </Form.Item>
-                <Form.Item label="新物料名称（可选）">
-                  <Input
-                    value={newMaterialName}
-                    onChange={(e) => setNewMaterialName(e.target.value)}
-                    placeholder="输入物料名称，留空则使用编码"
-                  />
-                </Form.Item>
-              </Form>
-            </Space>
-          )}
-        </Modal>
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <h2 style={{ margin: 0 }}>收料管理</h2>
+        <Space>
+          <Button icon={<HistoryOutlined />} onClick={() => setReprintModal(true)}>标签重打</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModal(true)}>新建收料单</Button>
+        </Space>
       </div>
-    </Spin>
+
+      <Table columns={columns} dataSource={receipts} rowKey="id" loading={loading} pagination={{ pageSize: 20 }} />
+
+      <Modal title="新建收料单" open={createModal} onCancel={() => { setCreateModal(false); createForm.resetFields() }} onOk={() => createForm.submit()}>
+        <Form form={createForm} layout="vertical" onFinish={handleCreate}>
+          <Form.Item name="operator" label="操作员" rules={[{ required: true }]}>
+            <Input placeholder="操作员姓名" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal title={`收料单详情 - ${currentReceipt?.receipt_no || ''}`} open={detailModal} onCancel={() => setDetailModal(false)} width={700} footer={null}>
+        {currentReceipt && (
+          <div>
+            <Descriptions column={3} size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="状态"><Tag color={statusColors[currentReceipt.status]}>{statusLabels[currentReceipt.status]}</Tag></Descriptions.Item>
+              <Descriptions.Item label="类型">{currentReceipt.type}</Descriptions.Item>
+              <Descriptions.Item label="操作员">{currentReceipt.operator}</Descriptions.Item>
+              <Descriptions.Item label="创建时间">{currentReceipt.created_at ? new Date(currentReceipt.created_at).toLocaleString() : '-'}</Descriptions.Item>
+            </Descriptions>
+            <Table
+              dataSource={currentReceipt.items || []} rowKey="id" size="small" pagination={false}
+              columns={[
+                { title: '物料', dataIndex: 'material_code', key: 'material_code' },
+                { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 80,
+                  render: (v: number, r: any) => `${v} ${r.material_unit || '盘'}`,
+                },
+                { title: 'Reel#', dataIndex: 'reel_id', key: 'reel_id', width: 80 },
+                { title: '条码', dataIndex: 'barcode', key: 'barcode', ellipsis: true },
+                { title: '标签', dataIndex: 'internal_label_printed', key: 'label', width: 80,
+                  render: (v: boolean, r: any) => (
+                    <Space>
+                      <Tag color={v ? 'green' : 'default'}>{v ? '已打' : '未打'}</Tag>
+                      <Button type="link" size="small" icon={<PrinterOutlined />} onClick={() => handleReprint(r.id)} />
+                    </Space>
+                  ),
+                },
+              ]}
+            />
+            <Space style={{ marginTop: 16 }}>
+              {currentReceipt.status === 'draft' && (
+                <>
+                  <Button icon={<ScanOutlined />} onClick={() => startScan()}>扫码入库</Button>
+                  <Popconfirm title="确认该收料单？确认后不可修改" onConfirm={handleConfirm}>
+                    <Button type="primary" icon={<CheckCircleOutlined />}>确认收料</Button>
+                  </Popconfirm>
+                </>
+              )}
+            </Space>
+          </div>
+        )}
+      </Modal>
+
+      <Modal title="标签重打" open={reprintModal} onCancel={() => setReprintModal(false)} width={600} footer={null}>
+        <Table
+          dataSource={receipts.filter(r => r.status !== 'draft')} rowKey="id" size="small" pagination={false}
+          columns={[
+            { title: '收料单号', dataIndex: 'receipt_no', key: 'receipt_no', width: 180 },
+            { title: '状态', dataIndex: 'status', key: 'status', width: 80,
+              render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v]}</Tag>,
+            },
+            { title: '操作', key: 'action', width: 100,
+              render: (_: any, r: any) => (
+                <Button size="small" icon={<PrinterOutlined />} onClick={async () => {
+                  try {
+                    const detail = await getReceiptApi(r.id)
+                    const items = detail.data?.items || []
+                    if (items.length === 0) { message.warning('该收料单没有明细'); return }
+                    Modal.confirm({
+                      title: '选择要重打的标签',
+                      content: (
+                        <div>
+                          {items.map((item: any) => (
+                            <div key={item.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                              <span>Reel#{item.reel_id} - {item.material_code || item.material_name || '-'}</span>
+                              <Button size="small" icon={<PrinterOutlined />} onClick={() => reprintLabelApi(r.id, { receipt_reel_id: item.id }).then(res => {
+                                if (res.data?.printed) message.success('重打成功')
+                                else message.warning(res.data?.message || '打印失败')
+                              })}>打印</Button>
+                            </div>
+                          ))}
+                        </div>
+                      ),
+                      okButtonProps: { style: { display: 'none' } },
+                    })
+                  } catch { message.error('加载详情失败') }
+                }}>选择</Button>
+              ),
+            },
+          ]}
+        />
+      </Modal>
+
+      <Modal
+        title="扫码入库确认"
+        open={showScanModal}
+        onCancel={() => setShowScanModal(false)}
+        onOk={() => {
+          if (!currentReceipt?.id) return
+          const bc = previewData?.barcode || ''
+          handleConfirmScan(bc)
+        }}
+        confirmLoading={scanning}
+        width={650}
+      >
+        <Form layout="vertical">
+          <Form.Item label="扫描条码">
+            <Input.Search
+              ref={barcodeInputRef}
+              placeholder="扫描供应商条码..."
+              enterButton={<ScanOutlined />}
+              loading={scanning}
+              onSearch={handleBarcodeScan}
+              autoFocus
+            />
+          </Form.Item>
+        </Form>
+
+        {previewData && (
+          <Card title="条码解析结果" size="small" style={{ marginTop: 16 }}>
+            <Descriptions column={2} size="small">
+              <Descriptions.Item label="条码">{previewData.barcode}</Descriptions.Item>
+              <Descriptions.Item label="匹配状态">
+                <Tag color={previewData.status === 'ok' ? 'green' : 'orange'}>
+                  {previewData.status === 'ok' ? '自动匹配' : previewData.status === 'new_material' ? '新料号' : '待确认'}
+                </Tag>
+              </Descriptions.Item>
+            </Descriptions>
+            <div style={{ marginTop: 8, background: '#f5f5f5', padding: 12, borderRadius: 4 }}>
+              {previewData.status === 'ok' ? (
+                <p style={{ color: '#52c41a', margin: 0 }}>{previewData.message}</p>
+              ) : previewData.status === 'new_material' ? (
+                <div>
+                  <Form layout="inline" size="small">
+                    <Form.Item label="新料号">
+                      <Input value={newCode} onChange={e => setNewCode(e.target.value)} placeholder={previewData.material_code} style={{ width: 180 }} />
+                    </Form.Item>
+                    <Form.Item label="名称">
+                      <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="新物料名称" style={{ width: 180 }} />
+                    </Form.Item>
+                  </Form>
+                </div>
+              ) : (
+                <div>
+                  <Text strong>匹配候选项：</Text>
+                  <Radio.Group onChange={e => {
+                      if (e.target.value === -1) {
+                        setIsNewMaterial(true)
+                        setSelectedMaterialId(null)
+                      } else {
+                        setIsNewMaterial(false)
+                        setSelectedMaterialId(e.target.value)
+                      }
+                    }} value={isNewMaterial ? -1 : selectedMaterialId}>
+                    <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
+                      {previewData.candidates?.map((c: any) => (
+                        <Radio key={c.material_id} value={c.material_id}>
+                          <Space>
+                            <Text strong>{c.code}</Text>
+                            <Text type="secondary">{c.name}</Text>
+                            <Tag color={c.confidence >= 0.8 ? 'green' : c.confidence >= 0.5 ? 'orange' : 'red'}>
+                              {(c.confidence * 100).toFixed(0)}%
+                            </Tag>
+                          </Space>
+                        </Radio>
+                      ))}
+                      <Radio value={-1}>
+                        <Text>其他（新建料号）</Text>
+                      </Radio>
+                    </Space>
+                  </Radio.Group>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: 12 }}>
+              <Text strong>可编辑字段：</Text>
+              <Row gutter={16} style={{ marginTop: 8 }}>
+                <Col span={8}>
+                  <Form.Item label="数量" style={{ marginBottom: 0 }}>
+                    <InputNumber min={0.01} value={editQty} onChange={v => setEditQty(v || 1)} style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="批次号" style={{ marginBottom: 0 }}>
+                    <Input value={editBatch} onChange={e => setEditBatch(e.target.value)} placeholder="从条码解析" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="生产周期" style={{ marginBottom: 0 }}>
+                    <Input value={editDateCode} onChange={e => setEditDateCode(e.target.value)} placeholder="如：2401" />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </div>
+          </Card>
+        )}
+      </Modal>
+    </div>
   )
 }

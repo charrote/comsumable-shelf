@@ -55,6 +55,7 @@ async def create_material(
         raise HTTPException(status_code=400, detail="物料编码已存在")
     material = MaterialMaster(
         code=data.code, name=data.name, spec=data.spec,
+        unit=data.unit or "个",
         category_id=data.category_id, qty_per_pallet=data.qty_per_pallet,
         barcode_pattern=data.barcode_pattern, active=1,
         customer_id=1,
@@ -101,6 +102,7 @@ async def update_material(
     m.code = data.code
     m.name = data.name
     m.spec = data.spec
+    m.unit = data.unit
     m.category_id = data.category_id
     m.qty_per_pallet = data.qty_per_pallet
     m.barcode_pattern = data.barcode_pattern
