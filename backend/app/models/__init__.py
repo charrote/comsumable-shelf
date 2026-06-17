@@ -116,6 +116,7 @@ class ShelfSlot(Base):
     global_index = Column(Integer, nullable=False)
     modbus_tcp_id = Column(Integer, nullable=False)
     modbus_coil_base = Column(Integer, nullable=False)
+    max_quantity = Column(Float, nullable=True, comment="储位最大容量（null 表示不限制）")
 
     shelf = relationship("Shelf", back_populates="slots")
 

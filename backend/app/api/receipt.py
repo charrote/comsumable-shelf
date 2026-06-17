@@ -151,6 +151,15 @@ async def assign_receipt_slot(
     if not slot:
         raise HTTPException(status_code=404, detail="储位不存在")
 
+    # Check slot capacity
+    if slot.max_quantity is not None:
+        pallet_qty = detail.quantity
+        if pallet_qty > slot.max_quantity:
+            raise HTTPException(
+                status_code=400,
+                detail=f"库存数量 {pallet_qty} 超过储位容量 {slot.max_quantity}",
+            )
+
     # Check slot is not already occupied
     occupied = await db.execute(
         select(InventoryPallet).where(
@@ -318,6 +327,7 @@ async def scan_receipt(
             Shelf.id,
             ShelfSlot.id,
             ShelfSlot.global_index,
+            ShelfSlot.max_quantity,
         )
         .join(ShelfSlot, Shelf.id == ShelfSlot.shelf_id)
         .where(
@@ -327,17 +337,22 @@ async def scan_receipt(
                 .where(InventoryPallet.status == "on_shelf")
             ),
         )
-        .limit(1)
+        .limit(10)  # fetch a few to try capacity check
     )
-    row = slot_result.first()
-    if row:
-        assigned_slot = row[2]
+    rows = slot_result.all()
+    for row in rows:
+        shelf_id, slot_db_id, global_idx, max_qty = row
+        # Check slot capacity
+        if max_qty is not None and qty > max_qty:
+            continue  # try next empty slot
+        assigned_slot = global_idx
         await db.execute(
             InventoryPallet.__table__.update()
             .where(InventoryPallet.id == pallet.id)
-            .values(shelf_slot_id=row[1])
+            .values(shelf_slot_id=slot_db_id)
         )
         await db.commit()
+        break
 
     return ReceiptScanResponse(
         status="ok",

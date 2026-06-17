@@ -139,6 +139,32 @@ class IssueConfirmPickResponse(BaseModel):
 
 
 # ---------- Inventory ----------
+class InventoryUpdateRequest(BaseModel):
+    """Update inventory pallet fields (partial update)."""
+    quantity: Optional[float] = Field(None, ge=0, description="盘数量（>=0）")
+    status: Optional[str] = Field(None, pattern=r"^(on_shelf|in_use|tracking|exhausted)$")
+    shelf_slot_id: Optional[int] = Field(None, description="储位 ID（null 表示解除绑定）")
+    note: Optional[str] = Field(None, max_length=500, description="变更备注")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "quantity": 5.0,
+                "status": "on_shelf",
+                "shelf_slot_id": 12,
+                "note": "盘点调整",
+            }
+        }
+    }
+
+
+class InventoryUpdateResponse(BaseModel):
+    status: str = "ok"
+    pallet_id: int
+    updated_fields: List[str]
+    message: str
+
+
 class InventoryResponse(BaseModel):
     pallets: List[dict]
     summary: dict
@@ -284,6 +310,7 @@ class ShelfSlotCreate(BaseModel):
     slot_on_board: int
     global_index: int
     modbus_coil_base: int
+    max_quantity: Optional[float] = Field(None, ge=0, description="储位最大容量（null=不限制）")
 
 
 class ShelfSlotResponse(BaseModel):
@@ -295,6 +322,7 @@ class ShelfSlotResponse(BaseModel):
     global_index: int
     modbus_tcp_id: int
     modbus_coil_base: int
+    max_quantity: Optional[float] = None
 
 
 # ---------- System Settings ----------

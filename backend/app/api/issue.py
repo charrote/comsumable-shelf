@@ -11,7 +11,7 @@ from app.schemas import (
     MaterialCalcResult, PalletSelection,
 )
 from app.utils.database import get_db
-from app.models import IssueOrder, IssueDetail, InventoryPallet, LedCommand, ShelfSlot, Shelf, BomHeader, MaterialMaster
+from app.models import IssueOrder, IssueDetail, InventoryPallet, LedCommand, ShelfSlot, Shelf, BomHeader, MaterialMaster, Transaction
 from app.services.fifo_service import calculate_fifo_pallets, get_available_qty
 from app.utils.barcode import parse_barcode
 import json
@@ -286,7 +286,13 @@ async def confirm_pick(
     data: IssueConfirmPickRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Confirm pick via PDA scan."""
+    """Confirm pick via PDA scan.
+
+    Includes:
+      - Quantity validation (pick cannot exceed remaining required_qty)
+      - Partial pallet consumption (split pallet if picking less than full qty)
+      - Transaction logging for outbound movement
+    """
     order_result = await db.execute(
         select(IssueOrder).where(IssueOrder.id == order_id)
     )
@@ -305,7 +311,7 @@ async def confirm_pick(
             message="无效的条码格式",
         )
 
-    # Check duplicate pick
+    # Find pending/picking issue detail
     detail_result = await db.execute(
         select(IssueDetail).where(
             IssueDetail.issue_order_id == order_id,
@@ -323,36 +329,79 @@ async def confirm_pick(
             message="该物料需求已全部出库",
         )
 
-    # Look up pallet to get actual quantity
+    # Look up pallet
     pallet_result = await db.execute(
         select(InventoryPallet).where(InventoryPallet.id == data.pallet_id)
     )
     pallet = pallet_result.scalar_one_or_none()
-    pick_qty = pallet.quantity if pallet else 1.0
 
-    # Update pallet status
-    await db.execute(
-        update(InventoryPallet)
-        .where(InventoryPallet.id == data.pallet_id)
-        .values(
-            status="exhausted",
-            quantity=0,
-            last_out_time=datetime.now(),
-            last_out_order_id=order_id,
+    # --- Quantity validation: cap pick at remaining need ---
+    remaining_need = detail.required_qty - detail.picked_qty
+    available = pallet.quantity if pallet else 0
+    pick_qty = min(available, remaining_need)
+    if pick_qty <= 0:
+        return IssueConfirmPickResponse(
+            status="error",
+            picked_qty=0,
+            remaining_qty=remaining_need,
+            all_picked=False,
+            cleared_leds=[],
+            message="库存托盘数量不足或需求已满足",
         )
-    )
 
-    # Update picked qty
+    now = datetime.now()
+
+    # --- Partial consumption: split pallet if picking less than full ---
+    if pick_qty < available:
+        # Reduce existing pallet
+        await db.execute(
+            update(InventoryPallet)
+            .where(InventoryPallet.id == data.pallet_id)
+            .values(
+                quantity=available - pick_qty,
+                last_out_time=now,
+                last_out_order_id=order_id,
+            )
+        )
+    else:
+        # Exhaust the pallet
+        await db.execute(
+            update(InventoryPallet)
+            .where(InventoryPallet.id == data.pallet_id)
+            .values(
+                status="exhausted",
+                quantity=0,
+                last_out_time=now,
+                last_out_order_id=order_id,
+            )
+        )
+
+    # --- Update picked qty on issue detail ---
     new_picked = detail.picked_qty + pick_qty
     all_picked = new_picked >= detail.required_qty
-
     await db.execute(
         update(IssueDetail)
         .where(IssueDetail.id == detail.id)
         .values(picked_qty=new_picked, status="completed" if all_picked else "picking")
     )
 
-    # Clear LED commands for this pallet's slot
+    # --- Record Transaction for outbound movement ---
+    txn = Transaction(
+        customer_id=order.customer_id,
+        material_id=detail.material_id,
+        type="out",
+        quantity=pick_qty,
+        balance_after=available - pick_qty,
+        inventory_pallet_id=pallet.id if pallet else None,
+        source_type="issue",
+        source_id=order_id,
+        operator=data.operator,
+        note=f"发料单 #{order.order_no} 确认拣料",
+        created_at=now,
+    )
+    db.add(txn)
+
+    # --- Clear LED commands for this pallet's slot ---
     cleared = []
     if pallet and pallet.shelf_slot_id:
         led_result = await db.execute(
@@ -365,15 +414,22 @@ async def confirm_pick(
         led_commands = led_result.scalars().all()
         for cmd in led_commands:
             cmd.status = "cleared"
-            cmd.cleared_at = datetime.now()
+            cmd.cleared_at = now
             cleared.append(cmd.slot_id)
 
+    # --- Mark issue order completed if all items done ---
     if all_picked:
-        await db.execute(
-            update(IssueOrder)
-            .where(IssueOrder.id == order_id)
-            .values(status="completed", completed_at=datetime.now())
+        # Check if all details are completed
+        all_details = await db.execute(
+            select(IssueDetail).where(IssueDetail.issue_order_id == order_id)
         )
+        all_done = all(d.status == "completed" for d in all_details.scalars().all())
+        if all_done:
+            await db.execute(
+                update(IssueOrder)
+                .where(IssueOrder.id == order_id)
+                .values(status="completed", completed_at=now)
+            )
 
     await db.commit()
 

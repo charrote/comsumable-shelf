@@ -120,13 +120,12 @@ async def check_alternative_material(
     customer_id: int,
 ) -> List[int]:
     """Find alternative material IDs for a given material."""
+    from sqlalchemy import literal_column
+    subq = select(MaterialMaster.code).where(MaterialMaster.id == material_id).scalar_subquery()
     result = await db.execute(
         select(MaterialAlternative.alternate_code)
         .where(
-            MaterialAlternative.original_code == (
-                select(MaterialMaster.code)
-                .where(MaterialMaster.id == material_id)
-            ),
+            MaterialAlternative.original_code == subq,
             MaterialAlternative.customer_id == customer_id,
             MaterialAlternative.active == 1,
         )
