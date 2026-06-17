@@ -111,11 +111,11 @@ export const confirmXRRestockApi = (batchId: number, data: { shelf_slot_id: numb
   apiClient.post(`/xr/${batchId}/confirm-restock`, data)
 
 // BOM
-export const uploadBomApi = (file: File, customerId?: number) => {
+export const uploadBomApi = (file: File, customerCode?: string) => {
   const formData = new FormData()
   formData.append('file', file)
   const params: any = {}
-  if (customerId) params.customer_id = customerId
+  if (customerCode) params.customer_code = customerCode
   return apiClient.post('/bom/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     params,
@@ -125,6 +125,17 @@ export const getBomApi = (bomId: number) =>
   apiClient.get(`/bom/${bomId}`)
 export const generateIssueFromBomApi = (bomId: number, data: any) =>
   apiClient.post(`/bom/${bomId}/generate-issue`, data)
+export const downloadBomTemplateApi = async () => {
+  const res = await apiClient.get('/bom/template', { responseType: 'blob' })
+  const url = window.URL.createObjectURL(new Blob([res.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', 'BOM导入模板.xlsx')
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
 
 // Report
 export const getDailyReportApi = (date: string, customerId?: number) =>
@@ -155,3 +166,13 @@ export const updateUserApi = (id: number, data: any) =>
   apiClient.put(`/users/${id}`, data)
 export const deleteUserApi = (id: number) =>
   apiClient.delete(`/users/${id}`)
+
+// Customers
+export const getCustomersApi = () =>
+  apiClient.get('/customers')
+export const createCustomerApi = (data: { name: string; code: string; contact_name?: string; contact_phone?: string; address?: string }) =>
+  apiClient.post('/customers', data)
+export const updateCustomerApi = (id: number, data: { name: string; code: string; contact_name?: string; contact_phone?: string; address?: string }) =>
+  apiClient.put(`/customers/${id}`, data)
+export const deleteCustomerApi = (id: number) =>
+  apiClient.delete(`/customers/${id}`)

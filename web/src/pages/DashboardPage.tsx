@@ -5,6 +5,9 @@ import {
   ArrowDownOutlined,
   ShopOutlined,
   DatabaseOutlined,
+  WarningOutlined,
+  FileTextOutlined,
+  InboxOutlined,
 } from '@ant-design/icons'
 import { getMaterialsApi, getShelvesApi, getInventoryApi, getDailyReportApi, getReceiptListApi, getIssueListApi } from '../api'
 
@@ -160,7 +163,7 @@ export function DashboardPage() {
           textAlign: 'center', margin: '40px 0', padding: 24,
           background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8,
         }}>
-          <p style={{ fontSize: 16, marginBottom: 8, color: '#ad6800' }}>⚠️ 部分数据加载异常</p>
+          <p style={{ fontSize: 16, marginBottom: 8, color: '#ad6800' }}><WarningOutlined style={{ marginRight: 8 }} />部分数据加载异常</p>
           <p style={{ color: '#d46b08' }}>{error}</p>
           <p style={{ marginTop: 12, fontSize: 13, color: '#999' }}>
             部分面板仍显示已有数据
@@ -241,8 +244,8 @@ export function DashboardPage() {
             <Col span={12}>
               <Card title="待处理事项">
                 <div>
-                  <p>📋 待确认入库: {data.pendingReceipts} 单</p>
-                  <p>📦 待执行发料: {data.pendingIssues} 单</p>
+                  <p><FileTextOutlined style={{ marginRight: 8 }} />待确认入库: {data.pendingReceipts} 单</p>
+                  <p><InboxOutlined style={{ marginRight: 8 }} />待执行发料: {data.pendingIssues} 单</p>
                 </div>
               </Card>
             </Col>

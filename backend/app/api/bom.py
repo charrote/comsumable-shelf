@@ -10,13 +10,44 @@ from app.schemas import (
     BomGenerateIssueRequest,
 )
 from app.utils.database import get_db
-from app.models import BomHeader, BomDetail, IssueOrder, IssueDetail, MaterialMaster
+from app.models import BomHeader, BomDetail, IssueOrder, IssueDetail, MaterialMaster, Customer
 from app.config import settings
 from app.services.bom_service import ensure_materials_exist
 import openpyxl
+from openpyxl import Workbook
+from fastapi.responses import StreamingResponse
 import os
+import io
+from urllib.parse import quote
 
 router = APIRouter(prefix="/bom", tags=["BOM"])
+
+
+@router.get("/template")
+async def download_bom_template():
+    """Download BOM Excel template."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BOM模板"
+
+    headers = ["产品编码", "物料编码", "数量", "单位", "替代物料编码"]
+    ws.append(headers)
+
+    ws.append(["PROD-001", "MAT-001", 10, "盘", "MAT-002"])
+
+    widths = [20, 20, 10, 10, 20]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('BOM导入模板.xlsx')}"},
+    )
 
 
 @router.get("")
@@ -123,10 +154,18 @@ async def delete_bom(
 @router.post("/upload")
 async def upload_bom(
     file: UploadFile = File(...),
-    customer_id: int = None,
+    customer_code: str = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Upload and parse BOM Excel file."""
+    if not customer_code:
+        raise HTTPException(status_code=400, detail="客户编码不能为空")
+
+    customer_result = await db.execute(select(Customer).where(Customer.code == customer_code))
+    customer = customer_result.scalar_one_or_none()
+    if customer is None:
+        raise HTTPException(status_code=400, detail="客户不存在")
+
     # Save file temporarily
     data_dir = os.path.join(os.path.dirname(__file__), "..", "data", "bom")
     os.makedirs(data_dir, exist_ok=True)
@@ -141,7 +180,7 @@ async def upload_bom(
     ws = wb.active
 
     bom_header = BomHeader(
-        customer_id=customer_id,
+        customer_id=customer.id,
         bom_name=file.filename,
         file_path=file_path,
         parsed=1,

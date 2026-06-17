@@ -18,6 +18,7 @@ from app.api.shelves import router as shelves_router
 from app.api.materials import router as materials_router
 from app.api.users import router as users_router
 from app.api.settings import router as settings_router
+from app.api.customers import router as customers_router
 from app.services.led_service import LedService
 from app.services.shelf_service import SlotPollingService
 
@@ -102,6 +103,7 @@ app.include_router(shelves_router, prefix=settings.API_PREFIX)
 app.include_router(materials_router, prefix=settings.API_PREFIX)
 app.include_router(users_router, prefix=settings.API_PREFIX)
 app.include_router(settings_router, prefix=settings.API_PREFIX)
+app.include_router(customers_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/health")

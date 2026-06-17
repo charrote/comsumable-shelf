@@ -1,8 +1,8 @@
-import { useState } from 'react'
-import { Table, Button, Card, Upload, Tag, message, Spin, Input } from 'antd'
-import { UploadOutlined } from '@ant-design/icons'
+import { useState, useEffect } from 'react'
+import { Table, Button, Card, Upload, Tag, message, Select } from 'antd'
+import { UploadOutlined, DownloadOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
-import { uploadBomApi } from '../api'
+import { uploadBomApi, downloadBomTemplateApi, getCustomersApi } from '../api'
 
 const columns = [
   { title: 'BOM 名称', dataIndex: 'bom_name', key: 'bom_name' },
@@ -22,14 +22,26 @@ export function BOMPage() {
   const [fileList, setFileList] = useState<UploadFile[]>([])
   const [bomList, setBomList] = useState<any[]>([])
   const [uploading, setUploading] = useState(false)
+  const [customers, setCustomers] = useState<any[]>([])
 
-  const [customerId, setCustomerId] = useState<number | undefined>(undefined)
+  const [customerCode, setCustomerCode] = useState<string | undefined>(undefined)
+
+  useEffect(() => {
+    getCustomersApi().then(res => {
+      setCustomers(Array.isArray(res.data) ? res.data : [])
+    }).catch(() => {})
+  }, [])
 
   const customRequest = async (options: any) => {
     const { file, onSuccess, onError } = options
+    if (!customerCode) {
+      message.error('请填写客户编码')
+      onError(new Error('客户编码为空'))
+      return
+    }
     setUploading(true)
     try {
-      const res = await uploadBomApi(file as File, customerId)
+      const res = await uploadBomApi(file as File, customerCode)
       const bom = { ...(res.data?.data ?? res.data), id: res.data?.bom_header_id ?? res.data?.id }
       setBomList(prev => [...prev, bom])
       message.success(`BOM "${bom.bom_name || file.name}" 上传成功`)
@@ -51,26 +63,36 @@ export function BOMPage() {
       <h2>BOM 管理</h2>
       <Card title="上传 BOM" style={{ marginBottom: 16 }}>
         <div style={{ marginBottom: 12 }}>
-          <Input
-            type="number"
-            placeholder="客户 ID (可选)"
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : undefined)}
-            style={{ width: 200 }}
-          />
+          <Select
+            placeholder="选择客户 (必填)"
+            value={customerCode}
+            onChange={(v) => setCustomerCode(v)}
+            style={{ width: 240 }}
+            showSearch
+            optionFilterProp="children"
+          >
+            {customers.map(c => (
+              <Select.Option key={c.id} value={c.code}>{c.name} ({c.code})</Select.Option>
+            ))}
+          </Select>
         </div>
-        <Upload
-          multiple={false}
-          fileList={fileList}
-          onChange={handleChange}
-          customRequest={customRequest}
-          showUploadList={true}
-          accept=".xlsx,.xls"
-        >
-          <Button icon={<UploadOutlined />} loading={uploading} disabled={uploading}>
-            选择 BOM 文件
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Upload
+            multiple={false}
+            fileList={fileList}
+            onChange={handleChange}
+            customRequest={customRequest}
+            showUploadList={true}
+            accept=".xlsx,.xls"
+          >
+            <Button icon={<UploadOutlined />} loading={uploading} disabled={uploading}>
+              选择 BOM 文件
+            </Button>
+          </Upload>
+          <Button icon={<DownloadOutlined />} onClick={downloadBomTemplateApi}>
+            下载模板
           </Button>
-        </Upload>
+        </div>
         <p style={{ color: '#999', marginTop: 8 }}>支持 Excel 格式 (xlsx/xls)</p>
       </Card>
       <Table

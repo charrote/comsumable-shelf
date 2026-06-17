@@ -9,6 +9,7 @@ import { ReceiptPage } from './pages/ReceiptPage'
 import { IssueOrderPage } from './pages/IssueOrderPage'
 import { XrManagePage } from './pages/XrManagePage'
 import { BOMPage } from './pages/BOMPage'
+import { CustomerPage } from './pages/CustomerPage'
 import { ReportPage } from './pages/ReportPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { UserManagementPage } from './pages/UserManagementPage'
@@ -36,6 +37,7 @@ export default function App() {
                 <Route path="issue" element={<IssueOrderPage />} />
                 <Route path="xr" element={<XrManagePage />} />
                 <Route path="bom" element={<BOMPage />} />
+                <Route path="customers" element={<CustomerPage />} />
                 <Route path="report" element={<ReportPage />} />
                 <Route path="settings" element={<SystemSettingsPage />} />
                 <Route path="users" element={<UserManagementPage />} />

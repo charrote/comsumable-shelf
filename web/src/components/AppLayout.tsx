@@ -40,6 +40,7 @@ const menuItems = [
     children: [
       { key: '/settings', label: '系统设置' },
       { key: '/users', label: '用户管理' },
+      { key: '/customers', label: '客户管理' },
       { key: '/app-download', icon: <DownloadOutlined />, label: 'PDA下载' },
     ],
   },
