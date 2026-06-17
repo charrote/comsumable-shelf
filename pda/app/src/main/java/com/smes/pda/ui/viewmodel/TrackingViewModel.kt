@@ -2,9 +2,7 @@ package com.smes.pda.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.smes.pda.data.model.ApiResult
-import com.smes.pda.data.model.InventoryResponse
-import com.smes.pda.data.model.TrackingPalletResponse
+import com.smes.pda.data.model.*
 import com.smes.pda.data.repository.InventoryRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -15,7 +13,7 @@ import javax.inject.Inject
 
 data class TrackingUiState(
     val isLoading: Boolean = false,
-    val trackingPallets: List<TrackingPalletResponse> = emptyList(),
+    val trackingPallets: List<TrackingPalletItem> = emptyList(),
     val onShelfInventory: InventoryResponse? = null,
     val error: String? = null,
     val selectedTab: Int = 0
@@ -36,7 +34,7 @@ class TrackingViewModel @Inject constructor(
                 is ApiResult.Success -> {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        trackingPallets = result.data.pallets
+                        trackingPallets = result.data
                     )
                 }
                 is ApiResult.Error -> {

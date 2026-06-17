@@ -2,8 +2,8 @@ package com.smes.pda.di
 
 import android.content.Context
 import com.smes.pda.data.api.ApiConfig
-import com.smes.pda.data.api.ApiService
-import com.smes.pda.data.api.AuthInterceptor
+import com.smes.pda.data.api.HttpService
+import com.smes.pda.data.local.SettingsDataStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -17,14 +17,14 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideAuthInterceptor(@ApplicationContext context: Context): AuthInterceptor {
-        return AuthInterceptor(context)
+    fun provideSettingsDataStore(@ApplicationContext context: Context): SettingsDataStore {
+        return SettingsDataStore(context)
     }
 
     @Provides
     @Singleton
-    fun provideApiService(authInterceptor: AuthInterceptor): ApiService {
-        return ApiService(authInterceptor)
+    fun provideHttpService(settingsDataStore: SettingsDataStore): HttpService {
+        return HttpService(settingsDataStore)
     }
 
     @Provides

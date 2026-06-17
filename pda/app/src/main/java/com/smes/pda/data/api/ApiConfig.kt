@@ -9,7 +9,7 @@ class ApiConfig @Inject constructor() {
         val instance: ApiConfig = ApiConfig()
     }
 
-    var baseUrl: String = "http://localhost:8080/api"
+    var baseUrl: String = "http://101.34.63.68/api"
     var connectTimeout: Long = 30_000
     var readTimeout: Long = 30_000
 }

@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Assignment
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -15,7 +16,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import com.smes.pda.data.model.ApiResult
-import com.smes.pda.data.model.IssueOrderResponse
+import com.smes.pda.data.model.DashboardResponse
+import com.smes.pda.data.model.IssueDetailResponse
 import com.smes.pda.ui.screens.RestockScreen
 import com.smes.pda.ui.theme.ConsumableShelfTheme
 import com.smes.pda.ui.viewmodel.*
@@ -63,7 +65,7 @@ fun Navigation() {
                                     Screen.Inbound -> Icons.Default.AddCircle
                                     Screen.Outbound -> Icons.Default.RemoveCircle
                                     Screen.Restock -> Icons.Default.Refresh
-                                    Screen.Tracking -> Icons.Default.Assignment
+                                    Screen.Tracking -> Icons.AutoMirrored.Filled.Assignment
                                     Screen.Settings -> Icons.Default.Settings
                                 },
                                 contentDescription = screen.title
@@ -99,18 +101,66 @@ fun Navigation() {
     }
 }
 
+// ======================== Home Screen ========================
+
 @Composable
-fun HomeScreen() {
+fun HomeScreen(viewModel: HomeViewModel = hiltViewModel()) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadSummary()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("智能物料架 PDA", style = MaterialTheme.typography.headlineMedium)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text("SMT车间物料管理系统", style = MaterialTheme.typography.bodyLarge)
+        Text(
+            "智能物料架 PDA",
+            style = MaterialTheme.typography.headlineMedium
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            "SMT车间物料管理系统",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (uiState.isLoading) {
+            CircularProgressIndicator()
+        } else {
+            // Summary cards
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SummaryCard(
+                    title = "在架料盘",
+                    value = "${uiState.summary.onShelfPallets}",
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                SummaryCard(
+                    title = "跟踪中",
+                    value = "${uiState.summary.trackingPallets}",
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        uiState.error?.let { error ->
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                error,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
         Text(
             "版本 1.0.0",
@@ -119,6 +169,41 @@ fun HomeScreen() {
         )
     }
 }
+
+@Composable
+fun SummaryCard(
+    title: String,
+    value: String,
+    color: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier,
+        colors = CardDefaults.cardColors(
+            containerColor = color.copy(alpha = 0.1f)
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                value,
+                style = MaterialTheme.typography.headlineLarge,
+                color = color
+            )
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+// ======================== Inbound Screen ========================
 
 @Composable
 fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
@@ -195,6 +280,8 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
         }
     }
 }
+
+// ======================== Outbound Screen ========================
 
 @Composable
 fun OutboundScreen(viewModel: OutboundViewModel = hiltViewModel()) {
@@ -286,6 +373,8 @@ fun OutboundScreen(viewModel: OutboundViewModel = hiltViewModel()) {
     }
 }
 
+// ======================== Tracking Screen ========================
+
 @Composable
 fun TrackingScreen(viewModel: TrackingViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
@@ -336,7 +425,7 @@ fun TrackingScreen(viewModel: TrackingViewModel = hiltViewModel()) {
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text("料号: ${pallet.materialCode}", style = MaterialTheme.typography.titleSmall)
-                            Text("数量: ${pallet.qty}", style = MaterialTheme.typography.bodySmall)
+                            Text("数量: ${pallet.quantity}", style = MaterialTheme.typography.bodySmall)
                             Text("状态: ${pallet.status}", style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -346,8 +435,16 @@ fun TrackingScreen(viewModel: TrackingViewModel = hiltViewModel()) {
     }
 }
 
+// ======================== Settings Screen ========================
+
 @Composable
-fun SettingsScreen() {
+fun SettingsScreen(viewModel: SettingsViewModel = hiltViewModel()) {
+    val uiState by viewModel.uiState.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadSettings()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -355,14 +452,49 @@ fun SettingsScreen() {
     ) {
         Text("系统设置", style = MaterialTheme.typography.headlineSmall)
         Spacer(modifier = Modifier.height(16.dp))
+
+        // API URL setting
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("服务器地址", style = MaterialTheme.typography.titleMedium)
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("http://10.0.2.2:8080/api", style = MaterialTheme.typography.bodyMedium)
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = uiState.apiUrl,
+                    onValueChange = { viewModel.updateApiUrl(it) },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("http://example.com/api") },
+                    singleLine = true,
+                    enabled = !uiState.isSaving
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.saveSettings() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = uiState.apiUrl.isNotBlank() && !uiState.isSaving
+                ) {
+                    if (uiState.isSaving) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("保存")
+                    }
+                }
+                if (uiState.saveSuccess) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "已保存",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
+
         Spacer(modifier = Modifier.height(8.dp))
+
+        // Version info
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text("版本", style = MaterialTheme.typography.titleMedium)
@@ -372,6 +504,8 @@ fun SettingsScreen() {
         }
     }
 }
+
+// ======================== Shared Components ========================
 
 @Composable
 fun OutboundPalletInputCard(

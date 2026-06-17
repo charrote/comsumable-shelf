@@ -36,12 +36,10 @@ class AuthViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             when (val result = authRepository.login(username, password)) {
                 is ApiResult.Success -> {
-                    val me = authRepository.getMe()
-                    val user = if (me is ApiResult.Success) me.data else null
                     _uiState.value = AuthUiState(
                         isLoading = false,
                         isLoggedIn = true,
-                        user = user
+                        user = result.data
                     )
                 }
                 is ApiResult.Error -> {
@@ -55,8 +53,10 @@ class AuthViewModel @Inject constructor(
     }
 
     fun logout() {
-        authRepository.logout()
-        _uiState.value = AuthUiState()
+        viewModelScope.launch {
+            authRepository.logout()
+            _uiState.value = AuthUiState()
+        }
     }
 
     fun clearError() {

@@ -13,11 +13,11 @@ import javax.inject.Inject
 
 data class OutboundUiState(
     val isLoading: Boolean = false,
-    val pendingIssues: List<IssueOrderResponse> = emptyList(),
-    val selectedIssue: IssueOrderResponse? = null,
-    val calcResult: IssueCalculateResponse? = null,
-    val assignResult: IssueAssignResponse? = null,
-    val confirmResult: IssueConfirmPickResponse? = null,
+    val pendingIssues: List<IssueListItem> = emptyList(),
+    val selectedIssue: IssueDetailResponse? = null,
+    val calcResult: CalculateResponse? = null,
+    val assignResult: AssignResponse? = null,
+    val confirmResult: ConfirmPickResponse? = null,
     val currentPickPalletId: Int? = null,
     val error: String? = null,
     val operator: String = ""

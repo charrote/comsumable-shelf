@@ -32,3 +32,6 @@ pda/local.properties
 
 # Web public/apk — build artifact, rebuilt with build-and-copy.sh
 web/public/apk/
+
+# PDA test files — unit tests not shipped to production
+pda/app/src/test/

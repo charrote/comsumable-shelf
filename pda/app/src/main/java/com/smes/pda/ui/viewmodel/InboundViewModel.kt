@@ -51,6 +51,7 @@ class InboundViewModel @Inject constructor(
     }
 
     fun scanBarcode(barcode: String) {
+        if (barcode.isBlank()) return
         val receiptId = _uiState.value.activeReceiptId ?: return
         val operator = _uiState.value.operator
         if (operator.isBlank()) return
