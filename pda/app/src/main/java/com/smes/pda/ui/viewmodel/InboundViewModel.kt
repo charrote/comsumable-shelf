@@ -31,21 +31,28 @@ class InboundViewModel @Inject constructor(
 
     fun initReceipt(operator: String) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            when (val result = receiptRepository.createReceipt(operator)) {
-                is ApiResult.Success -> {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        activeReceiptId = result.data.id,
-                        operator = operator
-                    )
+            try {
+                _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+                when (val result = receiptRepository.createReceipt(operator)) {
+                    is ApiResult.Success -> {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            activeReceiptId = result.data.id,
+                            operator = operator
+                        )
+                    }
+                    is ApiResult.Error -> {
+                        _uiState.value = _uiState.value.copy(
+                            isLoading = false,
+                            error = result.message
+                        )
+                    }
                 }
-                is ApiResult.Error -> {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = result.message
-                    )
-                }
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    error = "异常: ${e.message ?: e.javaClass.simpleName}"
+                )
             }
         }
     }
