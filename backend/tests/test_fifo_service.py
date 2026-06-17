@@ -203,6 +203,60 @@ class TestCalculateFifoPallets:
         # time_fifo picks pallet[0] (earliest) first → partial 3 from 10
         assert result["pallets"][0]["quantity"] == 3.0
 
+    async def test_config_reads_from_db_setting_when_present(
+        self, db_session: AsyncSession, sample_material: MaterialMaster,
+        sample_customer: Customer, base_time: datetime,
+    ):
+        """strategy='config' reads fifo_strategy from system_settings DB table."""
+        from app.models import SystemSetting
+
+        # Insert DB setting with "time_fifo" — should take priority
+        db_setting = SystemSetting(
+            key="fifo_strategy",
+            value="time_fifo",
+            description="FIFO 出库策略",
+        )
+        db_session.add(db_setting)
+        await db_session.commit()
+
+        # DO NOT monkeypatch settings.FIFO_STRATEGY — leave it as "tail_first"
+        # The DB setting should override it
+        quantities = [10.0, 5.0]
+        await _make_pallets(db_session, sample_material.id, sample_customer.id, quantities, base_time)
+
+        result = await calculate_fifo_pallets(
+            db_session, sample_material.id, sample_customer.id,
+            required_qty=3.0, strategy="config",
+        )
+
+        # Should use DB value (time_fifo) not env default (tail_first)
+        assert result["strategy_used"] == "time_fifo"
+        # time_fifo picks earliest pallet first → partial 3 from 10
+        assert result["pallets"][0]["quantity"] == 3.0
+
+    async def test_config_falls_back_to_env_when_db_unset(
+        self, db_session: AsyncSession, sample_material: MaterialMaster,
+        sample_customer: Customer, base_time: datetime,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """No DB setting → falls back to settings.FIFO_STRATEGY (env/config)."""
+        # Ensure no DB fifo_strategy exists (tests start clean)
+        # Override env default
+        monkeypatch.setattr("app.config.settings.FIFO_STRATEGY", "mixed")
+
+        quantities = [5.0, 10.0]
+        await _make_pallets(db_session, sample_material.id, sample_customer.id, quantities, base_time)
+
+        result = await calculate_fifo_pallets(
+            db_session, sample_material.id, sample_customer.id,
+            required_qty=8.0, strategy="config",
+        )
+
+        # mixed sorts by (qty, last_in_time): 5.0 first, 10.0 second
+        assert result["strategy_used"] == "mixed"
+        assert result["pallets"][0]["quantity"] == 5.0
+        assert result["pallets"][1]["quantity"] == 3.0  # partial of 10
+
     # ------------------------------------------------------------------
     #  Shortage scenarios
     # ------------------------------------------------------------------

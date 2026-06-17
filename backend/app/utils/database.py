@@ -46,12 +46,13 @@ async def init_db():
 
 
 async def seed_db():
-    """Seed default data (admin user, etc.)."""
-    from app.models import User
+    """Seed default data (admin user, system settings, etc.)."""
+    from app.models import User, SystemSetting
     from app.services.auth_service import get_password_hash
     from sqlalchemy import select
 
     async with async_session() as session:
+        # --- Admin user ---
         result = await session.execute(
             select(User).where(User.username == "admin")
         )
@@ -63,4 +64,20 @@ async def seed_db():
                 active=1,
             )
             session.add(admin)
-            await session.commit()
+
+        # --- Default system settings ---
+        default_settings = [
+            {
+                "key": "fifo_strategy",
+                "value": settings.FIFO_STRATEGY,
+                "description": "FIFO 出库策略 (tail_first | time_fifo | mixed)",
+            },
+        ]
+        for s in default_settings:
+            existing = await session.execute(
+                select(SystemSetting).where(SystemSetting.key == s["key"])
+            )
+            if existing.scalar_one_or_none() is None:
+                session.add(SystemSetting(**s))
+
+        await session.commit()

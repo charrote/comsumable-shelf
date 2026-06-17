@@ -13,7 +13,18 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import InventoryPallet, MaterialAlternative
+from app.models import InventoryPallet, MaterialAlternative, SystemSetting
+
+
+async def _get_db_strategy(db) -> str | None:
+    """Read FIFO strategy from system_settings table.
+
+    Returns None if not set, allowing caller to fall back to env config.
+    """
+    result = await db.execute(
+        select(SystemSetting.value).where(SystemSetting.key == "fifo_strategy")
+    )
+    return result.scalar_one_or_none()
 
 
 async def calculate_fifo_pallets(
@@ -36,7 +47,9 @@ async def calculate_fifo_pallets(
         Dict with pallets_selected, total_selected, shortage, strategy_used
     """
     if strategy == "config":
-        strategy = settings.FIFO_STRATEGY
+        # Try DB setting first, fall back to env config
+        db_strategy = await _get_db_strategy(db)
+        strategy = db_strategy if db_strategy else settings.FIFO_STRATEGY
 
     # Fetch all on_shelf pallets
     query = (
