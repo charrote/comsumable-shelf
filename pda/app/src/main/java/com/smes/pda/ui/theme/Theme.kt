@@ -44,7 +44,8 @@ fun ConsumableShelfTheme(
     val colors = if (darkTheme) DarkColors else LightColors
     val view = LocalView.current
     if (!view.isInEditMode) {
-        WindowCompat.getInsetsController(view.window, view).isAppearanceLightStatusBars = !darkTheme
+        val window = (view.context as? Activity)?.window ?: return
+        WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
     }
 
     MaterialTheme(

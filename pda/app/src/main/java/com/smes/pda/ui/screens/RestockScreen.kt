@@ -66,7 +66,7 @@ fun RestockScreen(viewModel: RestockViewModel = hiltViewModel()) {
                             "操作: ${result.action}",
                             style = MaterialTheme.typography.bodySmall
                         )
-                        result.assigned_slot?.let {
+                        result.assignedSlot?.let {
                             Text("分配储位: $it")
                         }
                     }
@@ -84,7 +84,7 @@ fun RestockScreen(viewModel: RestockViewModel = hiltViewModel()) {
                                 .padding(vertical = 4.dp)
                         ) {
                             Text(
-                                scan.message,
+                                scan.message ?: "",
                                 modifier = Modifier.padding(8.dp),
                                 style = MaterialTheme.typography.bodySmall
                             )

@@ -1,29 +1,16 @@
 package com.smes.pda.di
 
 import com.smes.pda.data.repository.*
+import dagger.Binds
 import dagger.Module
-import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 
+// Repositories are auto-provided via @Inject constructor() on each class.
+// This module is kept for future bindings to interfaces if needed.
 @Module
 @InstallIn(SingletonComponent::class)
-object RepositoryModule {
-
-    @Provides
-    @Singleton
-    fun provideAuthRepository(authRepository: AuthRepository): AuthRepository = authRepository
-
-    @Provides
-    @Singleton
-    fun provideReceiptRepository(receiptRepository: ReceiptRepository): ReceiptRepository = receiptRepository
-
-    @Provides
-    @Singleton
-    fun provideIssueRepository(issueRepository: IssueRepository): IssueRepository = issueRepository
-
-    @Provides
-    @Singleton
-    fun provideInventoryRepository(inventoryRepository: InventoryRepository): InventoryRepository = inventoryRepository
+abstract class RepositoryModule {
+    // Bindings go here when repositories implement interfaces
 }

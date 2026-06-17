@@ -179,7 +179,7 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("结果: ${result.message}")
                         Text("操作: ${result.action}")
-                        result.assigned_slot?.let { Text("储位: $it") }
+                        result.assignedSlot?.let { Text("储位: $it") }
                     }
                 }
             }
@@ -239,7 +239,7 @@ fun OutboundScreen(viewModel: OutboundViewModel = hiltViewModel()) {
                     onClick = { viewModel.selectIssue(issue.id) }
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        Text("单号: ${issue.order_no}", style = MaterialTheme.typography.titleSmall)
+                        Text("单号: ${issue.orderNo}", style = MaterialTheme.typography.titleSmall)
                         Text("状态: ${issue.status}", style = MaterialTheme.typography.bodySmall)
                     }
                 }
@@ -270,8 +270,8 @@ fun OutboundScreen(viewModel: OutboundViewModel = hiltViewModel()) {
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("状态: ${result.status}")
-                        Text("已拣: ${result.picked_qty}, 剩余: ${result.remaining_qty}")
-                        if (result.all_picked) {
+                        Text("已拣: ${result.pickedQty}, 剩余: ${result.remainingQty}")
+                        if (result.allPicked) {
                             Text("本单已完成!", color = MaterialTheme.colorScheme.primary)
                         }
                     }
@@ -335,8 +335,8 @@ fun TrackingScreen(viewModel: TrackingViewModel = hiltViewModel()) {
                             .padding(vertical = 4.dp)
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
-                            Text("料号: ${pallet.material_code}", style = MaterialTheme.typography.titleSmall)
-                            Text("数量: ${pallet.quantity}", style = MaterialTheme.typography.bodySmall)
+                            Text("料号: ${pallet.materialCode}", style = MaterialTheme.typography.titleSmall)
+                            Text("数量: ${pallet.qty}", style = MaterialTheme.typography.bodySmall)
                             Text("状态: ${pallet.status}", style = MaterialTheme.typography.bodySmall)
                         }
                     }

@@ -4,7 +4,7 @@ __pycache__/
 *.pyo
 venv/
 .env
-data/
+backend/data/
 logs/
 
 # Node
@@ -23,3 +23,12 @@ Thumbs.db
 
 # Build
 *.db
+
+# PDA (Android) — build artifacts
+pda/.gradle/
+pda/app/build/
+pda/build/
+pda/local.properties
+
+# Web public/apk — build artifact, rebuilt with build-and-copy.sh
+web/public/apk/
