@@ -3,7 +3,7 @@
 Handles XR point machine data upload and pallet matching.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import select, update
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models import XrBatch, InventoryPallet, Transaction, MaterialMaster
+from app.hal.printer import print_label
 
 
 async def handle_xr_upload(
@@ -18,6 +19,8 @@ async def handle_xr_upload(
     reel_id: str,
     counted_qty: float,
     device_id: Optional[str] = None,
+    printer_ip: Optional[str] = None,
+    printer_port: Optional[int] = None,
 ) -> dict:
     """Process XR point machine data upload.
     
@@ -26,24 +29,15 @@ async def handle_xr_upload(
         reel_id: Reel/barcode ID from XR device
         counted_qty: Counted quantity
         device_id: XR device identifier
+        printer_ip: Label printer IP (from browser config)
+        printer_port: Label printer port (from browser config)
         
     Returns:
         Dict with success status and action details
     """
-    # Parse reel_id to extract material code
-    # Format: [material_code][batch][quantity][serial]
-    material_code = _parse_reel_id(reel_id)
-
-    if not material_code:
-        return {
-            "success": False,
-            "code": -1,
-            "message": "无法解析物料编码",
-        }
-
-    # Find material
+    # Find material by reel_id (full barcode as material code)
     result = await db.execute(
-        select(MaterialMaster).where(MaterialMaster.code == material_code)
+        select(MaterialMaster).where(MaterialMaster.code == reel_id)
     )
     material = result.scalar_one_or_none()
 
@@ -51,15 +45,15 @@ async def handle_xr_upload(
         return {
             "success": False,
             "code": -1,
-            "message": f"物料 {material_code} 不存在",
+            "message": f"物料 {reel_id} 不存在",
         }
 
     # Create XR batch record
     xr_batch = XrBatch(
         device_id=device_id,
-        material_code=material_code,
+        material_code=reel_id,
         counted_qty=counted_qty,
-        match_key=f"{material_code}_{datetime.now().isoformat()}",
+        match_key=f"{reel_id}_{datetime.now().isoformat()}",
     )
     db.add(xr_batch)
     await db.commit()
@@ -77,6 +71,16 @@ async def handle_xr_upload(
         xr_batch.matched_pallet_id = match_result["pallet_id"]
         xr_batch.status = "matched"
         await db.commit()
+
+        # Print label after successful count
+        if printer_ip and printer_port:
+            await print_label(
+                host=printer_ip,
+                port=printer_port,
+                material_code=material.code,
+                material_name=material.name,
+                quantity=counted_qty,
+            )
 
         return {
             "success": True,
@@ -154,17 +158,6 @@ async def auto_match_xr(
         }
     else:
         return {"matched": False}
-
-
-def _parse_reel_id(reel_id: str) -> Optional[str]:
-    """Parse reel ID to extract material code.
-    
-    Default logic: take first 10 characters as material code.
-    Override this based on actual barcode format.
-    """
-    if len(reel_id) >= 10:
-        return reel_id[:10]
-    return None
 
 
 async def confirm_restock(

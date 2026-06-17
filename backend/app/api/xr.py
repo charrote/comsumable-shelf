@@ -51,6 +51,8 @@ async def xr_upload(
         reel_id=data.reel_id,
         counted_qty=data.qty,
         device_id=None,
+        printer_ip=data.printer_ip,
+        printer_port=data.printer_port,
     )
     return XrUploadResponse(**result)
 

@@ -183,6 +183,8 @@ class TrackingPalletResponse(BaseModel):
 class XrUploadRequest(BaseModel):
     reel_id: str
     qty: float
+    printer_ip: Optional[str] = None
+    printer_port: Optional[int] = None
 
 
 class XrUploadResponse(BaseModel):

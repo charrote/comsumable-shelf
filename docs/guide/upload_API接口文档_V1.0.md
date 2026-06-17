@@ -26,6 +26,7 @@
 | 版本 | 日期 | 修订内容 | 修订人 |
 | --- | --- | --- | --- |
 | V1.0 | 2026-06-17 | 初始版本，规范 | — |
+| V1.1 | 2026-06-17 | 新增打印机参数 printer_ip / printer_port；移除 reel_id 解析逻辑 | dev |
 
 ## 接口概述
 
@@ -67,8 +68,10 @@
 
 | 字段名 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| reel_id | string | 是 | 料盘唯一标识（Reel ID） |
+| reel_id | string | 是 | 物料编码（料盘唯一标识） |
 | qty | number | 是 | 点料数量 |
+| printer_ip | string | 否 | 标签打印机 IP（前端持久化配置，为空则不打印） |
+| printer_port | integer | 否 | 标签打印机端口（默认 9100） |
 
 ### 请求示例
 
@@ -79,8 +82,10 @@ Content-Type: application/json
 Authorization: Bearer eyJhbG...9...
 
 {
-    "reel_id": "R20240617001",
-    "qty": 1500
+    "reel_id": "4500067189",
+    "qty": 2999,
+    "printer_ip": "192.168.1.200",
+    "printer_port": 9100
 }
 ```
 
