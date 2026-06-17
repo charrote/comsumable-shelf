@@ -6,7 +6,7 @@ import {
   ShopOutlined,
   DatabaseOutlined,
 } from '@ant-design/icons'
-import { getMaterialsApi, getShelvesApi, getInventoryApi, getDailyReportApi } from '../api'
+import { getMaterialsApi, getShelvesApi, getInventoryApi, getDailyReportApi, getReceiptListApi, getIssueListApi } from '../api'
 
 interface DashboardData {
   totalMaterials: number
@@ -52,6 +52,8 @@ export function DashboardPage() {
         getShelvesApi(),
         getInventoryApi({}),
         getDailyReportApi(today),
+        getReceiptListApi({ status: 'draft' }),
+        getIssueListApi({ status: 'pending' }),
       ])
 
       clearTimeout(slowTimer)
@@ -61,6 +63,8 @@ export function DashboardPage() {
       let shelves: any[] = []
       let pallets: any[] = []
       let reportDetails: any[] = []
+      let pendingReceiptsCount = 0
+      let pendingIssuesCount = 0
 
       if (results[0].status === 'fulfilled') {
         const d = results[0].value.data
@@ -88,6 +92,16 @@ export function DashboardPage() {
         reportDetails = d?.details ?? []
       }
 
+      if (results[4].status === 'fulfilled') {
+        const d = results[4].value.data
+        pendingReceiptsCount = Array.isArray(d) ? d.length : d?.data?.length ?? 0
+      }
+
+      if (results[5].status === 'fulfilled') {
+        const d = results[5].value.data
+        pendingIssuesCount = Array.isArray(d) ? d.length : d?.data?.length ?? 0
+      }
+
       const onShelfPallets = pallets.filter(
         (item: any) => item.status === 'on_shelf',
       ).length
@@ -100,8 +114,8 @@ export function DashboardPage() {
         totalShelves: shelves.length,
         onShelfPallets,
         trackingPallets,
-        pendingReceipts: 0,
-        pendingIssues: 0,
+        pendingReceipts: pendingReceiptsCount,
+        pendingIssues: pendingIssuesCount,
       })
 
       setTransactions(

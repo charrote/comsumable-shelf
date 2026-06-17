@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as t from '../types/api'
 
 const BASE_URL = 'http://localhost:8080/api'
@@ -9,8 +10,8 @@ const api: AxiosInstance = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
-api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
-  const token = localStorage.getItem('token')
+api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+  const token = await AsyncStorage.getItem('token')
   if (token && config.headers) {
     config.headers.Authorization = `Bearer ${token}`
   }
@@ -19,9 +20,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 api.interceptors.response.use(
   (res) => res,
-  (err) => {
+  async (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('token')
+      await AsyncStorage.removeItem('token')
     }
     return Promise.reject(err)
   }

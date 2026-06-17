@@ -2,9 +2,9 @@
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from app.schemas import (
     ReceiptCreate, ReceiptScanRequest, ReceiptScanResponse,
     ReceiptAssignSlotRequest, ReceiptDetailResponse
@@ -14,6 +14,109 @@ from app.models import Receipt, ReceiptPallet, InventoryPallet, MaterialMaster, 
 from app.utils.barcode import parse_barcode
 
 router = APIRouter(prefix="/receipts", tags=["Receipt/Inbound"])
+
+
+@router.get("")
+async def list_receipts(
+    status: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """List receipt orders."""
+    query = select(Receipt).order_by(Receipt.created_at.desc())
+    if status:
+        query = query.where(Receipt.status == status)
+    result = await db.execute(query)
+    receipts = result.scalars().all()
+    return {
+        "data": [
+            {
+                "id": r.id,
+                "receipt_no": r.receipt_no,
+                "customer_id": r.customer_id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "operator": r.created_by or "",
+                "status": r.status,
+                "type": r.type,
+            }
+            for r in receipts
+        ]
+    }
+
+
+@router.get("/{receipt_id}")
+async def get_receipt(
+    receipt_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Get receipt order detail."""
+    result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+
+    items_result = await db.execute(
+        select(ReceiptPallet).where(ReceiptPallet.receipt_id == receipt_id)
+    )
+    items = items_result.scalars().all()
+
+    return ReceiptDetailResponse(
+        id=receipt.id,
+        receipt_no=receipt.receipt_no,
+        customer_id=receipt.customer_id,
+        created_at=receipt.created_at,
+        operator=receipt.created_by or "",
+        status=receipt.status,
+        items=[
+            {
+                "id": item.id,
+                "material_id": item.material_id,
+                "quantity": item.quantity,
+                "barcode": item.barcode,
+                "inventory_pallet_id": item.inventory_pallet_id,
+            }
+            for item in items
+        ],
+    )
+
+
+@router.put("/{receipt_id}/confirm")
+async def confirm_receipt(
+    receipt_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Confirm receipt — transition from draft to confirmed."""
+    result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+    if receipt.status != "draft":
+        raise HTTPException(status_code=400, detail=f"入库单状态为 {receipt.status}，无法确认")
+
+    await db.execute(
+        update(Receipt).where(Receipt.id == receipt_id).values(status="confirmed")
+    )
+    await db.commit()
+    return {"status": "ok", "message": "入库单已确认", "receipt_id": receipt_id}
+
+
+@router.put("/{receipt_id}/complete")
+async def complete_receipt(
+    receipt_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Complete receipt — transition from confirmed to completed."""
+    result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+    if receipt.status != "confirmed":
+        raise HTTPException(status_code=400, detail=f"入库单状态为 {receipt.status}，无法完成")
+
+    await db.execute(
+        update(Receipt).where(Receipt.id == receipt_id).values(status="completed")
+    )
+    await db.commit()
+    return {"status": "ok", "message": "入库单已完成", "receipt_id": receipt_id}
 
 
 @router.post("", response_model=ReceiptDetailResponse)
@@ -40,6 +143,7 @@ async def create_receipt(
     receipt = Receipt(
         receipt_no=receipt_no,
         type=data.type,
+        customer_id=data.customer_id,
         created_by=data.operator,
         status="draft",
     )
@@ -50,7 +154,7 @@ async def create_receipt(
     return ReceiptDetailResponse(
         id=receipt.id,
         receipt_no=receipt.receipt_no,
-        customer_id=0,
+        customer_id=receipt.customer_id,
         created_at=receipt.created_at,
         operator=data.operator,
         status=receipt.status,
@@ -73,7 +177,7 @@ async def scan_receipt(
             message="无效的条码格式",
         )
     material_code = parsed.material_code
-    qty = 50.0  # default quantity
+    qty = data.qty if data.qty is not None else 1.0
 
     # Find material
     result = await db.execute(

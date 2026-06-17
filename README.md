@@ -176,7 +176,7 @@ ComsumableManager/
 │   │   ├── api/               # API 路由
 │   │   ├── hal/               # 硬件抽象层
 │   │   │   ├── modbus.py      # Modbus TCP 协议
-│   │   │   └── modbus_tcp.py  # 完整 Modbus 实现
+│   │   │   └── modbus.py       # 完整 Modbus 实现
 │   │   ├── models/            # 数据库模型
 │   │   ├── schemas/           # Pydantic Schema
 │   │   ├── services/          # 业务逻辑

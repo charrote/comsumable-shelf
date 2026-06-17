@@ -124,22 +124,47 @@ async def parse_barcode(barcode: str, material_db=None) -> BarcodeParseResult:
     known_prefix = _find_known_prefix(raw)
 
     # Query material database for candidates
-    candidates = []
-    try:
-        from sqlalchemy import select
-        result = await material_db.execute(
-            select(material_db.get_bind().classes.MaterialMaster if hasattr(material_db.get_bind(), 'classes') else None)
-        )
-    except:
-        candidates = []
+    matched_material_id = None
+    best_confidence = _calculate_confidence(raw, extracted)
 
-    # If we have DB access, use it for better matching
-    # For now, return best guess based on extraction
-    confidence = _calculate_confidence(raw, extracted)
+    if material_db is not None:
+        try:
+            from app.models import MaterialMaster
+            from sqlalchemy import select
+
+            # Try exact match first
+            result = await material_db.execute(
+                select(MaterialMaster).where(MaterialMaster.code == extracted, MaterialMaster.active == 1)
+            )
+            material = result.scalar_one_or_none()
+            if material:
+                extracted = material.code
+                matched_material_id = material.id
+                best_confidence = 1.0
+            else:
+                # Try fuzzy match against all active materials
+                result = await material_db.execute(
+                    select(MaterialMaster).where(MaterialMaster.active == 1)
+                )
+                all_materials = result.scalars().all()
+                if all_materials:
+                    best_mat = None
+                    best_score = 0.0
+                    for mat in all_materials:
+                        score = _calculate_confidence(raw, mat.code)
+                        if score > best_score:
+                            best_score = score
+                            best_mat = mat
+                    if best_mat and best_score > 0.5:
+                        extracted = best_mat.code
+                        matched_material_id = best_mat.id
+                        best_confidence = best_score
+        except Exception:
+            pass
 
     # Boost confidence for known prefix matches
     if known_prefix:
-        confidence = min(1.0, confidence + 0.1)
+        best_confidence = min(1.0, best_confidence + 0.1)
 
     # Determine format source
     if raw.upper() == extracted.upper():
@@ -151,9 +176,10 @@ async def parse_barcode(barcode: str, material_db=None) -> BarcodeParseResult:
 
     return BarcodeParseResult(
         material_code=extracted,
-        confidence=confidence,
+        confidence=best_confidence,
         source_format=source,
         raw_barcode=barcode,
+        matched_material_id=matched_material_id,
     )
 
 

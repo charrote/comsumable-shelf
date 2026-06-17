@@ -11,7 +11,7 @@ from app.schemas import (
     MaterialCalcResult, PalletSelection,
 )
 from app.utils.database import get_db
-from app.models import IssueOrder, IssueDetail, InventoryPallet, LedCommand, ShelfSlot, Shelf, BomHeader
+from app.models import IssueOrder, IssueDetail, InventoryPallet, LedCommand, ShelfSlot, Shelf, BomHeader, MaterialMaster
 from app.services.fifo_service import calculate_fifo_pallets, get_available_qty
 from app.utils.barcode import parse_barcode
 import json
@@ -157,14 +157,21 @@ async def calculate_issue(
             detail.required_qty, data.strategy
         )
 
+        mat_result = await db.execute(
+            select(MaterialMaster).where(MaterialMaster.id == detail.material_id)
+        )
+        mat = mat_result.scalar_one_or_none()
+        material_code = mat.code if mat else ""
+        material_name = mat.name if mat else ""
+
         pallets_selected = []
         for p in calc["pallets"]:
             pallets_selected.append(PalletSelection(**p))
 
         materials.append(MaterialCalcResult(
             material_id=detail.material_id,
-            material_code="",
-            material_name="",
+            material_code=material_code,
+            material_name=material_name,
             required_qty=detail.required_qty,
             available_qty=available,
             strategy=calc["strategy_used"],
@@ -316,20 +323,27 @@ async def confirm_pick(
             message="该物料需求已全部出库",
         )
 
+    # Look up pallet to get actual quantity
+    pallet_result = await db.execute(
+        select(InventoryPallet).where(InventoryPallet.id == data.pallet_id)
+    )
+    pallet = pallet_result.scalar_one_or_none()
+    pick_qty = pallet.quantity if pallet else 1.0
+
     # Update pallet status
     await db.execute(
         update(InventoryPallet)
         .where(InventoryPallet.id == data.pallet_id)
         .values(
             status="exhausted",
+            quantity=0,
             last_out_time=datetime.now(),
             last_out_order_id=order_id,
         )
     )
-    await db.commit()
 
     # Update picked qty
-    new_picked = detail.picked_qty + 1.0
+    new_picked = detail.picked_qty + pick_qty
     all_picked = new_picked >= detail.required_qty
 
     await db.execute(
@@ -337,6 +351,22 @@ async def confirm_pick(
         .where(IssueDetail.id == detail.id)
         .values(picked_qty=new_picked, status="completed" if all_picked else "picking")
     )
+
+    # Clear LED commands for this pallet's slot
+    cleared = []
+    if pallet and pallet.shelf_slot_id:
+        led_result = await db.execute(
+            select(LedCommand).where(
+                LedCommand.issue_order_id == order_id,
+                LedCommand.slot_id == pallet.shelf_slot_id,
+                LedCommand.status == "queued",
+            )
+        )
+        led_commands = led_result.scalars().all()
+        for cmd in led_commands:
+            cmd.status = "cleared"
+            cmd.cleared_at = datetime.now()
+            cleared.append(cmd.slot_id)
 
     if all_picked:
         await db.execute(
@@ -349,9 +379,9 @@ async def confirm_pick(
 
     return IssueConfirmPickResponse(
         status="ok",
-        picked_qty=1.0,
+        picked_qty=pick_qty,
         remaining_qty=max(0, detail.required_qty - new_picked),
         all_picked=all_picked,
-        cleared_leds=[],
+        cleared_leds=cleared,
         message="出库成功" if not all_picked else "该物料需求已全部出库",
     )

@@ -81,19 +81,28 @@ class LedService:
 
     async def light_slot(self, slot_id: int, color: LedColor = LedColor.GREEN,
                          duration_ms: int = 0):
-        """Light a specific slot."""
-        cmd = LedCommand(
-            face='A',  # default, will be resolved
-            board_addr=1,
-            slot_num=1,
-            color=color,
-            duration_ms=duration_ms,
-        )
-        await self._command_queue.put(cmd)
+        """Light a specific slot by ShelfSlot ID."""
+        async with AsyncSession() as session:
+            result = await session.execute(
+                select(ShelfSlot).where(ShelfSlot.id == slot_id)
+            )
+            slot = result.scalar_one_or_none()
+            if not slot:
+                return False
+
+            cmd = LedCommand(
+                face=slot.side,
+                board_addr=slot.board_address,
+                slot_num=slot.slot_on_board,
+                color=color,
+                duration_ms=duration_ms,
+            )
+            await self._command_queue.put(cmd)
+            return True
 
     async def light_slot_by_shelf(self, shelf_slot_id: int,
                                     color: LedColor = LedColor.GREEN):
-        """Light a slot by ShelfSlot ID from database."""
+        """Light a slot by ShelfSlot ID from database (direct, no queue)."""
         async with AsyncSession() as session:
             result = await session.execute(
                 select(ShelfSlot).where(ShelfSlot.id == shelf_slot_id)

@@ -18,6 +18,7 @@ from app.api.shelves import router as shelves_router
 from app.api.materials import router as materials_router
 from app.api.users import router as users_router
 from app.api.settings import router as settings_router
+from app.services.led_service import LedService
 
 structlog.configure(
     processors=[
@@ -40,8 +41,26 @@ async def lifespan(app: FastAPI):
     await init_db()
     await seed_db()
     logger.info("Database initialized")
+
+    led_service = LedService()
+    try:
+        await led_service.init(
+            master_ip=settings.MASTER_IP,
+            port=settings.MASTER_PORT,
+        )
+        app.state.led_service = led_service
+        logger.info("LED service started")
+    except Exception as e:
+        logger.warning(f"LED service init failed (hardware may be offline): {e}")
+        app.state.led_service = led_service
+
     yield
     logger.info("Shutting down ConsumableShelf backend")
+    try:
+        await led_service.shutdown()
+        logger.info("LED service stopped")
+    except Exception as e:
+        logger.warning(f"LED service shutdown error: {e}")
 
 
 app = FastAPI(

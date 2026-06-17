@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, createJSONStorage } from 'zustand/middleware'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { loginApi, getMeApi } from '../api'
 import type { UserResponse } from '../types/api'
 
@@ -25,7 +26,7 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true, error: null })
         try {
           const tokenRes = await loginApi({ username, password })
-          localStorage.setItem('token', tokenRes.access_token)
+          await AsyncStorage.setItem('token', tokenRes.access_token)
           const user = await getMeApi()
           set({
             token: tokenRes.access_token,
@@ -40,13 +41,17 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      logout: () => {
-        localStorage.removeItem('token')
+      logout: async () => {
+        await AsyncStorage.removeItem('token')
         set({ token: null, user: null, error: null })
       },
 
       clearError: () => set({ error: null }),
     }),
-    { name: 'pda-auth-storage', partialize: (state) => ({ token: state.token, user: state.user }) }
+    {
+      name: 'pda-auth-storage',
+      storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state) => ({ token: state.token, user: state.user }),
+    }
   )
 )

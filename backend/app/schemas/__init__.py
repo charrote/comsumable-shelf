@@ -50,11 +50,13 @@ class MaterialResponse(BaseModel):
 class ReceiptCreate(BaseModel):
     type: str = "normal"
     operator: str
+    customer_id: int = 1
 
 
 class ReceiptScanRequest(BaseModel):
     barcode: str
     operator: str
+    qty: Optional[float] = None
 
 
 class ReceiptScanResponse(BaseModel):
