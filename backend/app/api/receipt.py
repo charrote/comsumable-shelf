@@ -10,7 +10,7 @@ from app.schemas import (
     ReceiptAssignSlotRequest, ReceiptDetailResponse
 )
 from app.utils.database import get_db
-from app.models import Receipt, ReceiptPallet, InventoryPallet, MaterialMaster, Shelf, ShelfSlot
+from app.models import Receipt, ReceiptPallet, InventoryPallet, MaterialMaster, Shelf, ShelfSlot, Transaction
 from app.utils.barcode import parse_barcode
 
 router = APIRouter(prefix="/receipts", tags=["Receipt/Inbound"])
@@ -117,6 +117,77 @@ async def complete_receipt(
     )
     await db.commit()
     return {"status": "ok", "message": "入库单已完成", "receipt_id": receipt_id}
+
+
+@router.put("/{receipt_id}/assign-slot")
+async def assign_receipt_slot(
+    receipt_id: int,
+    data: ReceiptAssignSlotRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually assign a shelf slot to a receipt pallet item."""
+    # Verify receipt exists
+    result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+
+    # Verify receipt pallet (detail) exists and belongs to this receipt
+    detail_result = await db.execute(
+        select(ReceiptPallet).where(
+            ReceiptPallet.id == data.receipt_detail_id,
+            ReceiptPallet.receipt_id == receipt_id,
+        )
+    )
+    detail = detail_result.scalar_one_or_none()
+    if not detail:
+        raise HTTPException(status_code=404, detail="入库明细不存在")
+
+    # Verify shelf slot exists
+    slot_result = await db.execute(
+        select(ShelfSlot).where(ShelfSlot.id == data.shelf_slot_id)
+    )
+    slot = slot_result.scalar_one_or_none()
+    if not slot:
+        raise HTTPException(status_code=404, detail="储位不存在")
+
+    # Check slot is not already occupied
+    occupied = await db.execute(
+        select(InventoryPallet).where(
+            InventoryPallet.shelf_slot_id == data.shelf_slot_id,
+            InventoryPallet.status == "on_shelf",
+        )
+    )
+    if occupied.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="该储位已被占用")
+
+    # Check that the inventory pallet exists
+    if not detail.inventory_pallet_id:
+        raise HTTPException(status_code=400, detail="该入库明细尚未关联库存托盘，请先扫码入库")
+
+    # Assign slot to inventory pallet
+    await db.execute(
+        InventoryPallet.__table__.update()
+        .where(InventoryPallet.id == detail.inventory_pallet_id)
+        .values(shelf_slot_id=data.shelf_slot_id)
+    )
+
+    # Also update receipt pallet slot reference
+    await db.execute(
+        ReceiptPallet.__table__.update()
+        .where(ReceiptPallet.id == detail.id)
+        .values(shelf_slot_id=data.shelf_slot_id)
+    )
+
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "message": f"储位已分配: slot #{data.shelf_slot_id}",
+        "receipt_detail_id": data.receipt_detail_id,
+        "shelf_slot_id": data.shelf_slot_id,
+        "inventory_pallet_id": detail.inventory_pallet_id,
+    }
 
 
 @router.post("", response_model=ReceiptDetailResponse)

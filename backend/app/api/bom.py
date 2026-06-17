@@ -2,11 +2,11 @@
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from app.schemas import (
-    BomUploadResponse, BomDetailResponse,
+    BomUploadResponse, BomDetailResponse, BomUpdateRequest, BomListItem,
     BomGenerateIssueRequest,
 )
 from app.utils.database import get_db
@@ -16,6 +16,107 @@ import openpyxl
 import os
 
 router = APIRouter(prefix="/bom", tags=["BOM"])
+
+
+@router.get("")
+async def list_boms(
+    customer_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """List all BOM headers with item counts."""
+    query = select(
+        BomHeader.id,
+        BomHeader.bom_name,
+        BomHeader.product_code,
+        BomHeader.customer_id,
+        BomHeader.parsed,
+        BomHeader.parsed_at,
+        BomHeader.created_at,
+        func.count(BomDetail.id).label("total_items"),
+    ).outerjoin(
+        BomDetail, BomHeader.id == BomDetail.bom_header_id
+    ).group_by(BomHeader.id).order_by(BomHeader.created_at.desc())
+
+    if customer_id is not None:
+        query = query.where(BomHeader.customer_id == customer_id)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    return {
+        "data": [
+            BomListItem(
+                id=row.id,
+                bom_name=row.bom_name,
+                product_code=row.product_code,
+                customer_id=row.customer_id,
+                total_items=row.total_items or 0,
+                parsed=row.parsed,
+                parsed_at=row.parsed_at,
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
+    }
+
+
+@router.put("/{bom_id}")
+async def update_bom(
+    bom_id: int,
+    data: BomUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update BOM header properties."""
+    result = await db.execute(select(BomHeader).where(BomHeader.id == bom_id))
+    bom = result.scalar_one_or_none()
+    if not bom:
+        raise HTTPException(status_code=404, detail="BOM不存在")
+
+    update_values = {}
+    if data.bom_name is not None:
+        update_values["bom_name"] = data.bom_name
+    if data.product_code is not None:
+        update_values["product_code"] = data.product_code
+    if data.customer_id is not None:
+        update_values["customer_id"] = data.customer_id
+
+    if update_values:
+        await db.execute(
+            update(BomHeader).where(BomHeader.id == bom_id).values(**update_values)
+        )
+        await db.commit()
+
+    return {"status": "ok", "message": "BOM已更新", "bom_id": bom_id}
+
+
+@router.delete("/{bom_id}")
+async def delete_bom(
+    bom_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a BOM header and its details."""
+    result = await db.execute(select(BomHeader).where(BomHeader.id == bom_id))
+    bom = result.scalar_one_or_none()
+    if not bom:
+        raise HTTPException(status_code=404, detail="BOM不存在")
+
+    # Check if BOM has related issue orders
+    issue_count = await db.execute(
+        select(func.count()).select_from(IssueOrder)
+        .where(IssueOrder.bom_header_id == bom_id)
+    )
+    if issue_count.scalar_one() > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"该BOM已关联 {issue_count.scalar_one()} 个发料单，无法删除。请先删除关联的发料单。"
+        )
+
+    # Delete details first, then header
+    await db.execute(delete(BomDetail).where(BomDetail.bom_header_id == bom_id))
+    await db.execute(delete(BomHeader).where(BomHeader.id == bom_id))
+    await db.commit()
+
+    return {"status": "ok", "message": "BOM已删除", "bom_id": bom_id}
 
 
 @router.post("/upload")
@@ -165,10 +266,19 @@ async def generate_issue(
         from datetime import datetime
         required_date = datetime.fromisoformat(data.required_date)
 
-    # Create issue order
-    from datetime import datetime
+    # Create issue order with sequential numbering
     date_str = datetime.now().strftime("%Y%m%d")
-    order_no = f"IS-{date_str}-001"
+    seq_result = await db.execute(
+        select(func.coalesce(func.max(IssueOrder.order_no), "0"))
+        .where(IssueOrder.order_no.like(f"IS-{date_str}-%"))
+    )
+    seq_val = seq_result.scalar_one()
+    if seq_val and seq_val != "0":
+        last_seq = int(seq_val.split("-")[-1])
+        new_seq = last_seq + 1
+    else:
+        new_seq = 1
+    order_no = f"IS-{date_str}-{new_seq:03d}"
     order = IssueOrder(
         order_no=order_no,
         bom_header_id=bom_id,

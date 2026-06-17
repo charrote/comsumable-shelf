@@ -19,6 +19,7 @@ engine = create_async_engine(
 )
 
 async_session = async_sessionmaker(engine, expire_on_commit=False)
+async_session_factory = async_session  # alias for external use
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

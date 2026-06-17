@@ -194,6 +194,23 @@ class BomDetailResponse(BaseModel):
     alternate_name: Optional[str] = None
 
 
+class BomUpdateRequest(BaseModel):
+    bom_name: Optional[str] = None
+    product_code: Optional[str] = None
+    customer_id: Optional[int] = None
+
+
+class BomListItem(BaseModel):
+    id: int
+    bom_name: str
+    product_code: Optional[str] = None
+    customer_id: int
+    total_items: int = 0
+    parsed: int = 0
+    parsed_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
 class BomGenerateIssueRequest(BaseModel):
     customer_id: int
     required_date: Optional[str] = None
