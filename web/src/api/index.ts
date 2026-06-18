@@ -195,3 +195,77 @@ export const updateCustomerApi = (id: number, data: { name: string; code: string
   apiClient.put(`/customers/${id}`, data)
 export const deleteCustomerApi = (id: number) =>
   apiClient.delete(`/customers/${id}`)
+
+// ── Hardware Debug ──
+export const getHardwareDebugStatusApi = () =>
+  apiClient.get('/hardware-debug/status')
+export const hardwareDebugConnectApi = (ip: string, port: number = 502) =>
+  apiClient.post('/hardware-debug/connect', { ip, port })
+export const hardwareDebugDisconnectApi = () =>
+  apiClient.post('/hardware-debug/disconnect')
+export const hardwareDebugPingApi = () =>
+  apiClient.get('/hardware-debug/ping')
+
+// Mainboard
+export const getMainboardInfoApi = () =>
+  apiClient.get('/hardware-debug/mainboard/info')
+export const getMainboardConfigApi = () =>
+  apiClient.get('/hardware-debug/mainboard/config')
+export const getMainboardRelaysApi = () =>
+  apiClient.get('/hardware-debug/mainboard/relays')
+export const setMainboardRelayApi = (relayNum: number, on: boolean) =>
+  apiClient.post('/hardware-debug/mainboard/relay', { relay_num: relayNum, on })
+export const calibrateMainboardApi = () =>
+  apiClient.post('/hardware-debug/mainboard/calibrate')
+export const resetMainboardApi = () =>
+  apiClient.post('/hardware-debug/mainboard/reset')
+export const saveMainboardConfigApi = () =>
+  apiClient.post('/hardware-debug/mainboard/save-config')
+
+// Raw Modbus
+export const debugReadRegistersApi = (address: number, count: number, funcCode: number = 3, station: number = 200) =>
+  apiClient.post('/hardware-debug/read-registers', { address, count, func_code: funcCode, station })
+export const debugWriteRegisterApi = (address: number, value: number, station: number = 200) =>
+  apiClient.post('/hardware-debug/write-register', { address, value, station })
+export const debugReadCoilsApi = (address: number, count: number, station: number = 200) =>
+  apiClient.post('/hardware-debug/read-coils', { address, count, station })
+export const debugWriteCoilApi = (address: number, on: boolean, station: number = 200) =>
+  apiClient.post('/hardware-debug/write-coil', { address, on, station })
+export const debugWriteCoilsApi = (address: number, values: boolean[], station: number = 200) =>
+  apiClient.post('/hardware-debug/write-coils', { address, values, station })
+export const debugReadDigitalInputsApi = (address: number, count: number, station: number = 200) =>
+  apiClient.post('/hardware-debug/read-digital-inputs', { address, count, station })
+
+// LED Boards
+export const getDebugBoardsApi = () =>
+  apiClient.get('/hardware-debug/boards')
+export const getDebugBoardInfoApi = (station: number) =>
+  apiClient.get(`/hardware-debug/boards/${station}/info`)
+export const getDebugBoardSlotsApi = (station: number, slotCount: number = 20) =>
+  apiClient.get(`/hardware-debug/boards/${station}/slots`, { params: { slot_count: slotCount } })
+export const getDebugBoardAdValuesApi = (station: number) =>
+  apiClient.get(`/hardware-debug/boards/${station}/ad-values`)
+export const getDebugBoardCalibrationApi = (station: number) =>
+  apiClient.get(`/hardware-debug/boards/${station}/calibration`)
+export const debugControlLedApi = (station: number, slotNum: number, color: string) =>
+  apiClient.post(`/hardware-debug/boards/${station}/led`, { slot_num: slotNum, color })
+export const debugControlAllLedsApi = (station: number, colors: string[]) =>
+  apiClient.post(`/hardware-debug/boards/${station}/led-all`, { colors })
+export const debugLedTestApi = (station: number) =>
+  apiClient.post(`/hardware-debug/boards/${station}/led-test`)
+export const debugCalibrateBoardApi = (station: number) =>
+  apiClient.post(`/hardware-debug/boards/${station}/calibrate`)
+export const debugResetBoardApi = (station: number) =>
+  apiClient.post(`/hardware-debug/boards/${station}/reset`)
+export const debugSetJudgmentApi = (station: number, value: number) =>
+  apiClient.post(`/hardware-debug/boards/${station}/set-judgment`, { value })
+
+// Logs
+export const getHardwareDebugLogsApi = (since?: number, level?: string, limit?: number) =>
+  apiClient.get('/hardware-debug/logs', { params: { since, level, limit } })
+export const clearHardwareDebugLogsApi = () =>
+  apiClient.post('/hardware-debug/logs/clear')
+
+// Mainboard slot states (from controller's cache)
+export const getMainboardSlotsApi = (face: 'A' | 'B', count: number = 700) =>
+  apiClient.get('/hardware-debug/mainboard/slots', { params: { face, count } })

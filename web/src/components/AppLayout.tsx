@@ -15,6 +15,7 @@ import {
   MenuUnfoldOutlined,
   LogoutOutlined,
   DownloadOutlined,
+  BugOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -28,7 +29,7 @@ const menuItems = [
   { key: '/material', icon: <BoxPlotOutlined />, label: '物料主数据' },
   { key: '/shelf', icon: <DatabaseOutlined />, label: '料架管理' },
   { key: '/inventory', icon: <ContainerOutlined />, label: '库存管理' },
-  { key: '/receipt', icon: <ReadOutlined />, label: '入库管理' },
+  { key: '/receipt', icon: <ReadOutlined />, label: '入库收料' },
   { key: '/issue', icon: <SendOutlined />, label: '发料管理' },
   { key: '/xr', icon: <DesktopOutlined />, label: '点料机管理' },
   { key: '/bom', icon: <FileExcelOutlined />, label: 'BOM管理' },
@@ -42,6 +43,7 @@ const menuItems = [
       { key: '/users', label: '用户管理' },
       { key: '/customers', label: '客户管理' },
       { key: '/app-download', icon: <DownloadOutlined />, label: 'PDA下载' },
+      { key: '/hardware-debug', icon: <BugOutlined />, label: '硬件调试' },
     ],
   },
 ]
