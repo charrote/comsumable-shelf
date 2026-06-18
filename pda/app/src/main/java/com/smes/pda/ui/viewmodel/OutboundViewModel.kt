@@ -19,6 +19,7 @@ data class OutboundUiState(
     val assignResult: AssignResponse? = null,
     val confirmResult: ConfirmPickResponse? = null,
     val currentPickReelId: Int? = null,
+    val currentPickPalletId: Int? = null,
     val error: String? = null,
     val operator: String = ""
 )

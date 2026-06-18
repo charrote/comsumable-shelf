@@ -366,7 +366,6 @@ async def assign_led(
                 slot_id=slot_id,
                 issue_order_id=order_id,
                 material_id=detail.material_id,
-                quantity=ra.get("pick_quantity", 0),
                 status="queued",
             )
             db.add(cmd)
@@ -413,11 +412,15 @@ async def confirm_pick(
             message="无效的条码格式",
         )
 
+    material_filter = True
+    if parsed.matched_material_id is not None:
+        material_filter = IssueDetail.material_id == parsed.matched_material_id
+
     detail_result = await db.execute(
         select(IssueDetail).where(
             IssueDetail.issue_order_id == order_id,
             IssueDetail.status.in_(["pending", "picking", "partial", "completed"]),
-            IssueDetail.material_id == parsed.material_id if parsed.material_id else True,
+            material_filter,
         )
     )
     detail = detail_result.scalar_one_or_none()

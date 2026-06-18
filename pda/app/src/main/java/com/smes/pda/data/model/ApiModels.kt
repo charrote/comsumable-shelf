@@ -241,6 +241,9 @@ data class InventoryResponse(
     val summary: InventorySummary? = null
 )
 
+// Type alias for ViewModel usage
+typealias TrackingPalletItem = TrackingReelItem
+
 @Serializable
 data class TrackingReelItem(
     @SerialName("reel_id") val reelId: Int,
@@ -281,6 +284,7 @@ data class DirectOutResponse(
 
 @Serializable
 data class DashboardResponse(
+    @SerialName("app_name") val appName: String = "智能物料管理系统",
     @SerialName("today_inbound") val todayInbound: Int = 0,
     @SerialName("today_outbound") val todayOutbound: Int = 0,
     @SerialName("on_shelf_pallets") val onShelfPallets: Int = 0,

@@ -22,13 +22,16 @@ android {
         applicationId = "com.smes.pda"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        // 默认 API 地址（debug 使用模拟器 localhost 映射，release 使用生产地址）
+        buildConfigField("String", "DEFAULT_API_URL", "\"http://101.34.63.68/api\"")
     }
 
     buildTypes {
@@ -38,6 +41,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            buildConfigField("String", "DEFAULT_API_URL", "\"http://101.34.63.68/api\"")
         }
         debug {
             isMinifyEnabled = false

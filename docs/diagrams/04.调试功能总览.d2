@@ -1,0 +1,105 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    pad: 30
+  }
+}
+
+"硬件调试页面": {
+  shape: text
+  near: top-center
+  style: {
+    font-size: 20
+    bold: true
+  }
+}
+
+sec1: {
+  shape: rectangle
+  style: {
+    fill: "#E3F2FD"
+    stroke: "#1565C0"
+    strokeWidth: 2
+    borderRadius: 10
+  }
+  |md
+  **① 主控板连接**
+  ---
+  - IP / Port 配置
+  - 连接 / 断开
+  - Ping 检测
+  |
+}
+
+sec2: {
+  shape: rectangle
+  style: {
+    fill: "#FFF3E0"
+    stroke: "#E65100"
+    strokeWidth: 2
+    borderRadius: 10
+  }
+  |md
+  **② 主控板信息**
+  ---
+  - 设备详情
+  - 继电器控制
+  - 主控板操作
+  |
+}
+
+sec3: {
+  shape: rectangle
+  style: {
+    fill: "#E8F5E9"
+    stroke: "#2E7D32"
+    strokeWidth: 2
+    borderRadius: 10
+  }
+  |md
+  **③ 感应灯板调试**
+  ---
+  - A / B 面切换
+  - 储位状态
+  - LED 控制
+  - 校准 / 复位
+  |
+}
+
+sec4: {
+  shape: rectangle
+  style: {
+    fill: "#F3E5F5"
+    stroke: "#7B1FA2"
+    strokeWidth: 2
+    borderRadius: 10
+  }
+  |md
+  **④ 寄存器浏览器**
+  ---
+  - Raw Modbus 读写
+  |
+}
+
+sec5: {
+  shape: rectangle
+  style: {
+    fill: "#263238"
+    stroke: "#37474F"
+    strokeWidth: 2
+    borderRadius: 10
+  }
+  style.fontColor: "#FFFFFF"
+  |md
+  **⑤ 调试日志**
+  ---
+  - 实时操作日志
+  - 深色终端风格
+  |
+}
+
+sec1 -> sec2 -> sec3 -> sec4
+sec1 -> sec5
+sec2 -> sec5
+sec3 -> sec5
+sec4 -> sec5

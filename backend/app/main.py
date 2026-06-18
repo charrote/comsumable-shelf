@@ -20,6 +20,8 @@ from app.api.users import router as users_router
 from app.api.settings import router as settings_router
 from app.api.customers import router as customers_router
 from app.api.hardware_debug import router as hardware_debug_router
+from app.api.dashboard import router as dashboard_router
+from app.api.shelving import router as shelving_router
 from app.services.led_service import LedService
 from app.services.shelf_service import SlotPollingService
 
@@ -78,7 +80,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="智能物料架管理系统",
+    title=settings.APP_NAME,
     version=settings.APP_VERSION,
     lifespan=lifespan,
 )
@@ -106,6 +108,17 @@ app.include_router(users_router, prefix=settings.API_PREFIX)
 app.include_router(settings_router, prefix=settings.API_PREFIX)
 app.include_router(customers_router, prefix=settings.API_PREFIX)
 app.include_router(hardware_debug_router, prefix=settings.API_PREFIX)
+app.include_router(dashboard_router, prefix=settings.API_PREFIX)
+app.include_router(shelving_router, prefix=settings.API_PREFIX)
+
+
+@app.get(f"{settings.API_PREFIX}/system/info")
+async def get_system_info():
+    """Public endpoint: system info (no auth required)."""
+    return {
+        "app_name": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+    }
 
 
 @app.get("/health")
@@ -114,4 +127,5 @@ async def health_check():
     return {
         "status": "healthy",
         "version": settings.APP_VERSION,
+        "app_name": settings.APP_NAME,
     }

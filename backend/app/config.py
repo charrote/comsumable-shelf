@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    APP_NAME: str = "ConsumableShelf"
+    APP_NAME: str = "智能物料管理系统"
     APP_VERSION: str = "1.0.0"
     API_PREFIX: str = "/api"
 
@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     LABEL_PRINTER_PORT: int = 9100
 
     # FIFO strategy (tail_first | time_fifo | mixed)
+    # Simulation mode (no real hardware needed for testing)
+    HARDWARE_SIMULATION: bool = False
+
     FIFO_STRATEGY: str = "tail_first"
 
     # BOM auto-create materials

@@ -1,0 +1,51 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    pad: 20
+  }
+}
+
+"硬件调试架构": {
+  shape: text
+  near: top-center
+  style: {
+    font-size: 20
+    bold: true
+  }
+}
+
+pc_web: "PC Web 硬件调试页面"
+pc_web: {
+  shape: rectangle
+  style: {
+    fill: "#E3F2FD"
+    stroke: "#1565C0"
+    stroke-width: 2
+    border-radius: 8
+  }
+}
+
+modbus: "Modbus TCP (端口 502)"
+modbus: {
+  shape: rectangle
+  style: {
+    fill: "#FFF9C4"
+    stroke: "#F9A825"
+    stroke-width: 1
+    border-radius: 4
+  }
+}
+
+master: "AMKN8702G 主控板 (站号 200)"
+master: {
+  shape: rectangle
+  style: {
+    fill: "#FFF3E0"
+    stroke: "#E65100"
+    stroke-width: 2
+    border-radius: 8
+  }
+}
+
+pc_web -> modbus: "REST API"
+modbus -> master: "Modbus TCP"

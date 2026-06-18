@@ -7,15 +7,17 @@ import {
   CheckCircleOutlined,
   SmileOutlined,
 } from '@ant-design/icons'
+import { getAppName } from '../store/configStore'
 
 const { Title, Text, Paragraph } = Typography
 
-const APP_VERSION = '1.0.0'
-const BUILD_NUMBER = 'debug-20260617'
+const APP_VERSION = '1.1.0'
+const BUILD_NUMBER = 'debug-20260618'
 const APK_PATH = '/apk/app-debug.apk'
-const APK_SIZE = '19 MB'
+const APK_SIZE = '20 MB'
 
 export function AppDownloadPage() {
+  const appName = getAppName()
   const downloadUrl = `${window.location.origin}${APK_PATH}`
 
   return (
@@ -38,7 +40,7 @@ export function AppDownloadPage() {
           <AndroidOutlined style={{ fontSize: 40, color: '#fff' }} />
         </div>
         <Title level={3} style={{ marginBottom: 4 }}>
-          智能物料架 PDA
+          {appName} PDA
         </Title>
         <Text type="secondary" style={{ fontSize: 16 }}>
           SMT 车间物料管理 — 移动端
@@ -158,7 +160,7 @@ export function AppDownloadPage() {
             {
               title: '登录使用',
               description:
-                '打开 App，输入服务器地址和账号密码即可连接智能物料架系统。',
+                `打开 App，输入服务器地址和账号密码即可连接${appName}。`,
               icon: <SmileOutlined />,
             },
           ]}
@@ -176,6 +178,18 @@ export function AppDownloadPage() {
         style={{ borderRadius: 12 }}
       >
         <Divider orientation="left" plain>
+          v1.1.0 (2026-06-18)
+        </Divider>
+        <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
+          <li>服务端 IP 自动注入：Debug 包自动连本地/远程，Release 包连生产地址，无需手动配置</li>
+          <li>系统名称动态化：APP_NAME 从后端配置文件读取，PDA 首页 + Web 后台统一显示"智能物料管理系统"</li>
+          <li>硬件模拟模式：新增 HARDWARE_SIMULATION 环境变量，无硬件时自动跳过 LED/打印机/料架传感器</li>
+          <li>新增 /api/system/info 接口：前端动态获取系统名称、版本号等信息</li>
+          <li>入库上架自动分配储位：扫码后自动匹配空储位，减少人工操作</li>
+          <li>FIFO 出库策略优化：支持 tail_first 策略，优先取出后入库的物料</li>
+          <li>LED 亮灯指令持久化 + 后台 Worker 自动处理状态流转</li>
+        </ul>
+        <Divider orientation="left" plain>
           v1.0.0 (2026-06-17)
         </Divider>
         <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
@@ -190,7 +204,7 @@ export function AppDownloadPage() {
       {/* 底部 */}
       <div style={{ textAlign: 'center', marginTop: 24, paddingBottom: 16 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          智能物料架管理系统 · PDA 移动端 · Build {BUILD_NUMBER}
+          {appName} · PDA 移动端 · Build {BUILD_NUMBER}
         </Text>
       </div>
     </div>

@@ -2,6 +2,7 @@ import { Form, Input, Button, Card, Typography, Space, Alert } from 'antd'
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { login } from '../store/authStore'
+import { getAppName } from '../store/configStore'
 import { useState } from 'react'
 
 const { Title, Text } = Typography
@@ -10,6 +11,7 @@ export function LoginPage() {
   const navigate = useNavigate()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const appName = getAppName()
 
   const onFinish = async (values: any) => {
     setLoading(true)
@@ -44,7 +46,7 @@ export function LoginPage() {
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
           <div style={{ textAlign: 'center' }}>
             <Title level={3} style={{ margin: 0 }}>
-              智能物料架管理系统
+              {appName}
             </Title>
             <Text type="secondary">Smart Consumable Shelf</Text>
           </div>

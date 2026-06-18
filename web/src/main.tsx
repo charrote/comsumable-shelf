@@ -16,6 +16,9 @@ function bootstrap() {
   const root = document.getElementById('root')
   if (!root) return
 
+  // Load system config (e.g., app_name) from backend — async, doesn't block render
+  import('./store/configStore').then(({ loadAppConfig }) => loadAppConfig())
+
   ReactDOM.createRoot(root).render(
     <ErrorBoundary>
       <ConfigProvider

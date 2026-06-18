@@ -20,6 +20,7 @@ import {
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
+import { getAppName } from '../store/configStore'
 
 const { Header, Sider, Content } = Layout
 const { Title } = Typography
@@ -84,7 +85,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             textOverflow: 'ellipsis',
           }}
         >
-          智能物料架管理系统
+          {getAppName()}
         </div>
         <Menu
           theme="dark"

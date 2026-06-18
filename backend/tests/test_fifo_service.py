@@ -101,12 +101,12 @@ class TestCalculateFifoPallets:
         )
 
         assert result["strategy_used"] == "tail_first"
-        assert len(result["pallets"]) == 3  # 1+3+...7 would exceed 6, so only 1+3=4 + partial 7
+        assert len(result["reels"]) == 3  # 1+3+...7 would exceed 6, so only 1+3=4 + partial 7
         # First two should be the smallest: 1.0, 3.0
-        assert result["pallets"][0]["quantity"] == 1.0
-        assert result["pallets"][1]["quantity"] == 3.0
+        assert result["reels"][0]["quantity"] == 1.0
+        assert result["reels"][1]["quantity"] == 3.0
         # Third pick takes partial from 7.0 (remaining = 6 - 1 - 3 = 2)
-        assert result["pallets"][2]["quantity"] == 2.0
+        assert result["reels"][2]["quantity"] == 2.0
         assert result["total_selected"] == 6.0
         assert result["shortage"] == 0
 
@@ -127,11 +127,11 @@ class TestCalculateFifoPallets:
         )
 
         assert result["strategy_used"] == "time_fifo"
-        assert len(result["pallets"]) == 3
+        assert len(result["reels"]) == 3
         # All 3 pallets picked: 5+5+2 (partial of third)
-        assert result["pallets"][0]["pallet_id"] == pallets[0].id
-        assert result["pallets"][1]["pallet_id"] == pallets[1].id
-        assert result["pallets"][2]["pallet_id"] == pallets[2].id
+        assert result["reels"][0]["reel_id"] == pallets[0].id
+        assert result["reels"][1]["reel_id"] == pallets[1].id
+        assert result["reels"][2]["reel_id"] == pallets[2].id
         assert result["total_selected"] == 12.0
         assert result["shortage"] == 0
 
@@ -173,11 +173,11 @@ class TestCalculateFifoPallets:
         )
 
         assert result["strategy_used"] == "mixed"
-        assert len(result["pallets"]) == 3
+        assert len(result["reels"]) == 3
         # Expected order: p2 (qty=3), p1 (qty=5, time earlier), p3 (qty=5, time later)
-        assert result["pallets"][0]["pallet_id"] == p2.id  # qty=3
-        assert result["pallets"][1]["pallet_id"] == p1.id  # qty=5, earlier
-        assert result["pallets"][2]["pallet_id"] == p3.id  # qty=5, later (partial: 2)
+        assert result["reels"][0]["reel_id"] == p2.id  # qty=3
+        assert result["reels"][1]["reel_id"] == p1.id  # qty=5, earlier
+        assert result["reels"][2]["reel_id"] == p3.id  # qty=5, later (partial: 2)
         assert result["total_selected"] == 10.0
         assert result["shortage"] == 0
 
@@ -201,7 +201,7 @@ class TestCalculateFifoPallets:
         # Should resolve to time_fifo, not tail_first
         assert result["strategy_used"] == "time_fifo"
         # time_fifo picks pallet[0] (earliest) first → partial 3 from 10
-        assert result["pallets"][0]["quantity"] == 3.0
+        assert result["reels"][0]["quantity"] == 3.0
 
     async def test_config_reads_from_db_setting_when_present(
         self, db_session: AsyncSession, sample_material: MaterialMaster,
@@ -232,7 +232,7 @@ class TestCalculateFifoPallets:
         # Should use DB value (time_fifo) not env default (tail_first)
         assert result["strategy_used"] == "time_fifo"
         # time_fifo picks earliest pallet first → partial 3 from 10
-        assert result["pallets"][0]["quantity"] == 3.0
+        assert result["reels"][0]["quantity"] == 3.0
 
     async def test_config_falls_back_to_env_when_db_unset(
         self, db_session: AsyncSession, sample_material: MaterialMaster,
@@ -254,8 +254,8 @@ class TestCalculateFifoPallets:
 
         # mixed sorts by (qty, last_in_time): 5.0 first, 10.0 second
         assert result["strategy_used"] == "mixed"
-        assert result["pallets"][0]["quantity"] == 5.0
-        assert result["pallets"][1]["quantity"] == 3.0  # partial of 10
+        assert result["reels"][0]["quantity"] == 5.0
+        assert result["reels"][1]["quantity"] == 3.0  # partial of 10
 
     # ------------------------------------------------------------------
     #  Shortage scenarios
@@ -275,7 +275,7 @@ class TestCalculateFifoPallets:
 
         assert result["total_selected"] == 7.0  # all stock used
         assert result["shortage"] == 3.0  # 10 - 7 = 3
-        assert len(result["pallets"]) == 2
+        assert len(result["reels"]) == 2
 
     async def test_exact_match_no_shortage(
         self, db_session: AsyncSession, sample_material: MaterialMaster,
@@ -291,7 +291,7 @@ class TestCalculateFifoPallets:
 
         assert result["total_selected"] == 10.0
         assert result["shortage"] == 0
-        assert len(result["pallets"]) == 3
+        assert len(result["reels"]) == 3
 
     # ------------------------------------------------------------------
     #  Empty / edge cases
@@ -307,7 +307,7 @@ class TestCalculateFifoPallets:
             required_qty=5.0, strategy="tail_first",
         )
 
-        assert result["pallets"] == []
+        assert result["reels"] == []
         assert result["total_selected"] == 0
         assert result["shortage"] == 5.0
 
@@ -339,8 +339,8 @@ class TestCalculateFifoPallets:
             required_qty=2.0, strategy="tail_first",
         )
 
-        assert len(result["pallets"]) == 1
-        assert result["pallets"][0]["pallet_id"] == p1.id
+        assert len(result["reels"]) == 1
+        assert result["reels"][0]["reel_id"] == p1.id
 
     async def test_exhausted_pallets_are_ignored(
         self, db_session: AsyncSession, sample_material: MaterialMaster,
@@ -362,7 +362,7 @@ class TestCalculateFifoPallets:
             required_qty=1.0, strategy="tail_first",
         )
 
-        assert result["pallets"] == []
+        assert result["reels"] == []
         assert result["shortage"] == 1.0
 
     async def test_customer_scoped_isolation(
@@ -400,8 +400,8 @@ class TestCalculateFifoPallets:
         )
 
         # Only c1's pallet should be selected
-        assert len(result["pallets"]) == 1
-        assert result["pallets"][0]["pallet_id"] == p_c1.id
+        assert len(result["reels"]) == 1
+        assert result["reels"][0]["reel_id"] == p_c1.id
         assert result["total_selected"] == 5.0
         assert result["shortage"] == 5.0
 

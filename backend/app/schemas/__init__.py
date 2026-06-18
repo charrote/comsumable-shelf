@@ -270,7 +270,7 @@ class ReelSelection(BaseModel):
     reel_id: int
     quantity: float
     last_in_time: datetime
-    shelf_slot_id: int
+    shelf_slot_id: Optional[int] = None
 
 
 class MaterialCalcResult(BaseModel):

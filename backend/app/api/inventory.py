@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, Query, HTTPException
+from pydantic import BaseModel
 from app.schemas import (
     InventoryResponse,
     TrackingReelResponse,
@@ -18,6 +19,73 @@ from app.models import InventoryReel, MaterialMaster, Shelf, ShelfSlot, Transact
 from app.services.inventory_service import direct_out
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
+
+
+class ScanReelRequest(BaseModel):
+    barcode: str
+
+
+class ScanReelResponse(BaseModel):
+    reel_id: int
+    material_code: str
+    material_name: Optional[str] = None
+    quantity: float = 0
+    shelf_code: Optional[str] = None
+    status: str = ""
+
+
+@router.post("/scan-reel", response_model=ScanReelResponse)
+async def scan_reel_for_direct_out(
+    data: ScanReelRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan a reel barcode to get info for direct outbound."""
+    barcode = data.barcode.strip()
+    if not barcode:
+        raise HTTPException(status_code=400, detail="条码不能为空")
+
+    reel_id = None
+    try:
+        reel_id = int(barcode)
+    except ValueError:
+        pass
+
+    query = select(InventoryReel)
+    if reel_id:
+        query = query.where(InventoryReel.id == reel_id)
+    else:
+        query = query.where(InventoryReel.reel_barcode == barcode)
+
+    result = await db.execute(query)
+    reel = result.scalar_one_or_none()
+    if not reel:
+        raise HTTPException(status_code=404, detail="未找到该料盘")
+
+    mat_result = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == reel.material_id)
+    )
+    material = mat_result.scalar_one_or_none()
+
+    shelf_code = None
+    if reel.shelf_slot_id:
+        slot_result = await db.execute(
+            select(Shelf.code)
+            .select_from(ShelfSlot)
+            .join(Shelf, ShelfSlot.shelf_id == Shelf.id)
+            .where(ShelfSlot.id == reel.shelf_slot_id)
+        )
+        sc = slot_result.scalar_one_or_none()
+        if sc:
+            shelf_code = sc
+
+    return ScanReelResponse(
+        reel_id=reel.id,
+        material_code=material.code if material else "",
+        material_name=material.name if material else None,
+        quantity=reel.quantity,
+        shelf_code=shelf_code,
+        status=reel.status,
+    )
 
 
 @router.get("")
@@ -155,7 +223,7 @@ async def update_inventory_pallet(
         occupied = await db.execute(
             select(InventoryReel).where(
                 InventoryReel.shelf_slot_id == data.shelf_slot_id,
-                InventoryReel.id != pallet_id,
+                InventoryReel.id != reel_id,
                 InventoryReel.status == "on_shelf",
             )
         )

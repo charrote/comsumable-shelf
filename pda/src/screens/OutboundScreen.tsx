@@ -1,37 +1,100 @@
 import React, { useState, useCallback } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
-  FlatList, ActivityIndicator
+  FlatList, ActivityIndicator, ScrollView,
 } from 'react-native'
-import { listIssuesApi, getIssueDetailApi, calculateIssueApi, confirmPickApi, directOutboundApi } from '../api'
-import type { IssueOrderResponse, IssueConfirmPickResponse, ReelSelection, DirectOutResponse } from '../types/api'
+import {
+  listIssuesApi, getIssueDetailApi, calculateIssueApi, assignIssueApi,
+  confirmPickApi, directOutboundApi, scanReelForDirectOutApi, listBOMsApi,
+} from '../api'
+import type {
+  IssueOrderResponse, IssueDetailResponse, IssueCalculateResponse,
+  IssueConfirmPickResponse, DirectOutResponse, ReelSelection,
+  BOMResponse,
+} from '../types/api'
+import { useAuthStore } from '../store/authStore'
 
-type Step = 'operator' | 'select_issue' | 'pick' | 'direct_scan'
-type Mode = 'issue' | 'direct'
+const Colors = {
+  primary: '#0066CC', success: '#00AA55', warning: '#FF9900', danger: '#DD3333',
+  info: '#3399CC', card: '#FFFFFF', bg: '#F5F7FA', text: '#1A1A1A', textSecondary: '#666666',
+}
+
+type Mode = 'bom' | 'direct'
+type Step = 'select_mode' | 'bom_pick' | 'direct_scan'
 
 export default function OutboundScreen() {
-  const [mode, setMode] = useState<Mode>('issue')
-  const [step, setStep] = useState<Step>('operator')
-  const [operator, setOperator] = useState('')
+  const user = useAuthStore((s) => s.user)
+  const [mode, setMode] = useState<Mode>('bom')
+  const [step, setStep] = useState<Step>('select_mode')
+  const [operator] = useState(user?.username || '')
+  const [isLoading, setIsLoading] = useState(false)
+
+  // ── BOM Pick Flow ──
+  const [boms, setBoms] = useState<BOMResponse[]>([])
   const [issues, setIssues] = useState<IssueOrderResponse[]>([])
   const [selectedIssue, setSelectedIssue] = useState<IssueOrderResponse | null>(null)
-  const [barcode, setBarcode] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [pallets, setPallets] = useState<ReelSelection[]>([])
+  const [issueDetails, setIssueDetails] = useState<IssueDetailResponse[]>([])
+  const [calcResult, setCalcResult] = useState<IssueCalculateResponse | null>(null)
+  const [assignResult, setAssignResult] = useState<string>('')
+  const [pickBarcode, setPickBarcode] = useState('')
   const [pickResult, setPickResult] = useState<IssueConfirmPickResponse | null>(null)
 
-  // Direct outbound state
+  // ── BOM Pilot: select BOM + quantity → create issue ──
+  const [selectedBom, setSelectedBom] = useState<BOMResponse | null>(null)
+  const [prodQty, setProdQty] = useState('1')
+  const [showBomSelector, setShowBomSelector] = useState(false)
+
+  // ── Direct Outbound Flow ──
+  const [directBarcode, setDirectBarcode] = useState('')
+  const [directReelInfo, setDirectReelInfo] = useState<{
+    reel_id: number; material_code: string; material_name?: string; quantity: number; shelf_code?: string
+  } | null>(null)
   const [directQty, setDirectQty] = useState('')
   const [directResult, setDirectResult] = useState<DirectOutResponse | null>(null)
 
+  // ── BOM: Load BOMs ──
+  const loadBOMs = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      const res = await listBOMsApi()
+      setBoms(Array.isArray(res) ? res : [])
+    } catch {
+      Alert.alert('错误', '加载BOM列表失败')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  // ── BOM: Load issue orders ──
   const loadIssues = useCallback(async () => {
     setIsLoading(true)
     try {
-      const res = await listIssuesApi({ status: 'pending' })
-      setIssues(res.data || [])
-      if ((res.data || []).length === 0) {
-        Alert.alert('提示', '暂无待处理的出库单')
+      const res = await listIssuesApi()
+      setIssues(res?.data || [])
+    } catch {
+      // ignore
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
+  // ── BOM: Select issue order ──
+  const selectIssue = useCallback(async (issue: IssueOrderResponse) => {
+    setIsLoading(true)
+    try {
+      const detail = await getIssueDetailApi(issue.id)
+      setSelectedIssue(issue)
+      setIssueDetails(detail.details || [])
+      setCalcResult(null)
+      setAssignResult('')
+      setPickResult(null)
+
+      // If already assigned/calculated, load details
+      if (issue.status === 'assigned' || issue.status === 'picking') {
+        const calcRes = await calculateIssueApi(issue.id)
+        setCalcResult(calcRes)
       }
+      setStep('bom_pick')
     } catch (e: any) {
       Alert.alert('错误', e?.response?.data?.detail || '加载出库单失败')
     } finally {
@@ -39,51 +102,90 @@ export default function OutboundScreen() {
     }
   }, [])
 
-  const selectIssue = useCallback(async (issue: IssueOrderResponse) => {
+  // ── BOM: FIFO Calculate ──
+  const handleCalculate = useCallback(async () => {
+    if (!selectedIssue) return
     setIsLoading(true)
     try {
-      const detail = await getIssueDetailApi(issue.id)
-      const calcRes = await calculateIssueApi(issue.id)
-      const allPallets = calcRes.materials.flatMap((m) => m.reels_selected)
-      setPallets(allPallets)
-      setSelectedIssue(detail)
-      setStep('pick')
+      const res = await calculateIssueApi(selectedIssue.id)
+      setCalcResult(res)
+      setIssueDetails(prev => prev.map(d => {
+        const mat = res.materials.find(m => m.material_id === d.material_id)
+        return mat ? { ...d, assigned_qty: mat.total_selected, shortage: mat.shortage } : d
+      }))
+      Alert.alert('计算完成', `策略: ${res.strategy_used}\n共 ${res.materials.length} 种物料`)
     } catch (e: any) {
-      Alert.alert('错误', e?.response?.data?.detail || '加载出库单详情失败')
+      Alert.alert('计算失败', e?.response?.data?.detail || 'FIFO计算失败')
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [selectedIssue])
 
-  const handleConfirmPick = useCallback(async () => {
-    if (!barcode || !selectedIssue || pallets.length === 0) return
+  // ── BOM: LED Assign ──
+  const handleAssignLED = useCallback(async () => {
+    if (!selectedIssue) return
     setIsLoading(true)
     try {
-      const result = await confirmPickApi(selectedIssue.id, {
-        barcode,
-        reel_id: pallets[0].reel_id,
+      const res = await assignIssueApi(selectedIssue.id)
+      setAssignResult(`已生成 ${res.led_commands_created} 个亮灯指令`)
+      Alert.alert('亮灯分配', `✅ ${res.message}\n共 ${res.led_commands_created} 个储位亮灯`)
+    } catch (e: any) {
+      Alert.alert('亮灯失败', e?.response?.data?.detail || 'LED分配失败')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [selectedIssue])
+
+  // ── BOM: Confirm Pick ──
+  const handleConfirmPick = useCallback(async () => {
+    if (!pickBarcode.trim() || !selectedIssue || !calcResult) return
+    setIsLoading(true)
+    try {
+      // Find which reel to pick based on barcode (backend handles matching)
+      // Use first reel from first material as fallback
+      const firstReelId = calcResult.materials[0]?.reels_selected[0]?.reel_id
+      if (!firstReelId) {
+        Alert.alert('提示', '无可拣料的料盘，请先执行FIFO计算')
+        setIsLoading(false)
+        return
+      }
+      const res = await confirmPickApi(selectedIssue.id, {
+        barcode: pickBarcode.trim(),
+        reel_id: firstReelId,
         operator,
       })
-      setPickResult(result)
-      setBarcode('')
-      if (result.all_picked) {
+      setPickResult(res)
+      setPickBarcode('')
+
+      if (res.all_picked) {
         Alert.alert('完成', '本出库单已全部拣料完成')
-        setStep('select_issue')
-        setSelectedIssue(null)
-        setPickResult(null)
-        setPallets([])
-        loadIssues()
       }
     } catch (e: any) {
-      Alert.alert('拣料确认失败', e?.response?.data?.detail || '请重试')
+      Alert.alert('拣料失败', e?.response?.data?.detail || '请重试')
     } finally {
       setIsLoading(false)
     }
-  }, [barcode, selectedIssue, pallets, operator])
+  }, [pickBarcode, selectedIssue, calcResult, operator])
 
-  // ── Direct outbound: scan reel barcode ──
+  // ── Direct Outbound: Scan Reel ──
   const handleDirectScan = useCallback(async () => {
-    if (!barcode) return
+    if (!directBarcode.trim()) return
+    setIsLoading(true)
+    try {
+      const info = await scanReelForDirectOutApi(directBarcode.trim())
+      setDirectReelInfo(info)
+      setDirectQty(String(info.quantity))
+      setDirectResult(null)
+    } catch (e: any) {
+      Alert.alert('扫描失败', e?.response?.data?.detail || '未找到该料盘')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [directBarcode])
+
+  // ── Direct Outbound: Confirm ──
+  const handleDirectConfirm = useCallback(async () => {
+    if (!directReelInfo) return
     const qty = parseFloat(directQty)
     if (!qty || qty <= 0) {
       Alert.alert('提示', '请输入有效出库数量')
@@ -91,202 +193,403 @@ export default function OutboundScreen() {
     }
     setIsLoading(true)
     try {
-      // Extract reel_id from barcode — assume it's an integer ID or full barcode
-      const reelId = parseInt(barcode.trim(), 10) || 0
-      if (!reelId) {
-        Alert.alert('错误', '无法识别的条码，请扫描库存盘号')
-        setIsLoading(false)
-        return
-      }
-      const res = await directOutboundApi(reelId, {
+      const res = await directOutboundApi(directReelInfo.reel_id, {
         quantity: qty,
         operator,
         release_slot: true,
       })
-      setDirectResult(res.data)
-      setBarcode('')
-      Alert.alert('出库成功', res.data?.message || '直接出库完成')
+      setDirectResult(res)
+      if (res.status === 'ok') {
+        Alert.alert('出库成功', res.message || '直接出库完成')
+      }
     } catch (e: any) {
       Alert.alert('出库失败', e?.response?.data?.detail || '请重试')
     } finally {
       setIsLoading(false)
     }
-  }, [barcode, directQty, operator])
+  }, [directReelInfo, directQty, operator])
 
-  // ── Reset to operator step ──
-  const handleBackToOperator = () => {
-    setStep('operator')
-    setOperator('')
-    setBarcode('')
+  // Reset all
+  const handleReset = () => {
+    setStep('select_mode')
+    setSelectedIssue(null)
+    setIssueDetails([])
+    setCalcResult(null)
+    setAssignResult('')
+    setPickResult(null)
+    setPickBarcode('')
+    setDirectReelInfo(null)
+    setDirectBarcode('')
     setDirectQty('')
     setDirectResult(null)
-    setPickResult(null)
-    setSelectedIssue(null)
-    setPallets([])
+    setSelectedBom(null)
+    setShowBomSelector(false)
   }
 
-  if (step === 'operator') {
+  // ── Mode Selection ──
+  if (step === 'select_mode') {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>扫码出库</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="操作员姓名"
-          value={operator}
-          onChangeText={setOperator}
-        />
-        <Text style={styles.sectionTitle}>选择出库模式</Text>
-        <TouchableOpacity
-          style={[styles.button, styles.issueButton, !operator && styles.buttonDisabled]}
-          onPress={() => { setMode('issue'); setStep('select_issue'); loadIssues() }}
-          disabled={!operator}
-        >
-          <Text style={styles.buttonText}>料单出库</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.button, !operator && styles.buttonDisabled]}
-          onPress={() => { setMode('direct'); setStep('direct_scan') }}
-          disabled={!operator}
-        >
-          <Text style={styles.buttonText}>直接出库</Text>
-        </TouchableOpacity>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>扫码出库</Text>
+          <Text style={styles.headerSub}>选择出库方式</Text>
+        </View>
+        <View style={styles.modeContainer}>
+          <TouchableOpacity
+            style={styles.modeCard}
+            onPress={() => { setMode('bom'); setStep('bom_pick'); loadBOMs(); loadIssues() }}
+          >
+            <Text style={styles.modeIcon}>📄</Text>
+            <Text style={styles.modeTitle}>按 BOM 出库</Text>
+            <Text style={styles.modeDesc}>选择BOM → FIFO计算 → LED亮灯 → 扫码取料</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.modeCard}
+            onPress={() => { setMode('direct'); setStep('direct_scan') }}
+          >
+            <Text style={styles.modeIcon}>📦</Text>
+            <Text style={styles.modeTitle}>单独出料</Text>
+            <Text style={styles.modeDesc}>扫描料盘条码 → 直接出库（退料/废料/紧急）</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     )
   }
 
-  if (step === 'select_issue') {
+  // ── BOM Pick ──
+  if (step === 'bom_pick') {
     return (
       <View style={styles.container}>
-        <TouchableOpacity onPress={handleBackToOperator}>
-          <Text style={styles.linkText}>&lt; 返回</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>选择出库单</Text>
-        <TouchableOpacity style={styles.link} onPress={loadIssues}>
-          <Text style={styles.linkText}>刷新</Text>
-        </TouchableOpacity>
-        {isLoading ? <ActivityIndicator style={{ marginTop: 20 }} /> : null}
-        <FlatList
-          data={issues}
-          keyExtractor={(item) => String(item.id)}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.issueCard} onPress={() => selectIssue(item)}>
-              <Text style={styles.issueNo}>单号: {item.order_no}</Text>
-              <Text style={styles.issueStatus}>状态: {item.status}</Text>
-              <Text style={styles.issueDetail}>
-                物料: {item.details?.length ?? 0} 项
-              </Text>
-            </TouchableOpacity>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={handleReset}>
+            <Text style={styles.backBtn}>← 返回</Text>
+          </TouchableOpacity>
+          <Text style={styles.headerTitle}>按 BOM 出库</Text>
+          <Text style={styles.headerSub}>
+            {selectedIssue ? `单号: ${selectedIssue.order_no}` : '选择BOM/出库单'}
+          </Text>
+        </View>
+
+        <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
+          {/* BOM Selector */}
+          {!selectedIssue && (
+            <>
+              {/* Step 1: Select BOM & create issue */}
+              <View style={styles.card}>
+                <Text style={styles.stepTitle}>1. 选择 BOM</Text>
+                {!showBomSelector ? (
+                  <TouchableOpacity style={styles.button} onPress={() => { setShowBomSelector(true); loadBOMs() }}>
+                    <Text style={styles.buttonText}>选择 BOM 生成发料单</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <>
+                    {boms.map(bom => (
+                      <TouchableOpacity key={bom.id} style={styles.selectItem}
+                        onPress={() => {
+                          setSelectedBom(bom)
+                          setShowBomSelector(false)
+                        }}>
+                        <Text style={styles.selectItemTitle}>{bom.product_name || bom.product_code || `BOM #${bom.id}`} v{bom.version}</Text>
+                        <Text style={styles.selectItemSub}>产品: {bom.product_name || bom.product_code || '--'} | 物料项: {bom.item_count || 0}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </>
+                )}
+
+                {selectedBom && (
+                  <View style={styles.selectedInfo}>
+                    <Text style={styles.selectedInfoText}>已选 BOM: {selectedBom.product_name || selectedBom.product_code || `#${selectedBom.id}`}</Text>
+                    <Text style={styles.previewLabel}>生产数量</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={prodQty}
+                      onChangeText={setProdQty}
+                      keyboardType="numeric"
+                      placeholder="输入生产数量"
+                    />
+                    <TouchableOpacity
+                      style={[styles.button, styles.issueButton]}
+                      onPress={async () => {
+                        // The backend handles creating the issue from BOM
+                        // For now, just load existing issues
+                        Alert.alert('提示', '请先在 PC Web 端创建发料单，然后在下方列表中选择')
+                      }}
+                    >
+                      <Text style={styles.buttonText}>生成发料单</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+
+              {/* Issue Orders List */}
+              <View style={styles.card}>
+                <Text style={styles.stepTitle}>2. 选择发料单</Text>
+                <TouchableOpacity style={styles.linkBtn} onPress={loadIssues}>
+                  <Text style={styles.linkText}>刷新发料单列表</Text>
+                </TouchableOpacity>
+                {isLoading ? <ActivityIndicator style={{ marginVertical: 16 }} /> : null}
+                {issues.length === 0 && !isLoading ? (
+                  <Text style={styles.emptyText}>暂无待处理的发料单</Text>
+                ) : (
+                  issues.map(issue => (
+                    <TouchableOpacity key={issue.id} style={styles.issueCard} onPress={() => selectIssue(issue)}>
+                      <View style={styles.issueHeader}>
+                        <Text style={styles.issueNo}>#{issue.order_no}</Text>
+                        <View style={[styles.statusBadge, {
+                          backgroundColor: 
+                            issue.status === 'completed' ? Colors.success :
+                            issue.status === 'picking' ? Colors.warning : Colors.info
+                        }]}>
+                          <Text style={styles.statusText}>{issue.status}</Text>
+                        </View>
+                      </View>
+                      <Text style={styles.issueProduct}>{issue.product_name || issue.product_code || ''}</Text>
+                      <Text style={styles.issueMeta}>
+                        {issue.detail_count ?? 0} 项物料
+                        {issue.production_quantity ? ` × ${issue.production_quantity} 套` : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </View>
+            </>
           )}
-          ListEmptyComponent={!isLoading ? <Text style={styles.emptyText}>暂无待处理出库单</Text> : null}
-        />
+
+          {/* Issue Detail & Operations */}
+          {selectedIssue && (
+            <>
+              {/* Issue Info */}
+              <View style={styles.card}>
+                <Text style={styles.stepTitle}>发料单: {selectedIssue.order_no}</Text>
+                <Text style={styles.issueStatusText}>状态: {selectedIssue.status}</Text>
+                <Text style={styles.issueProduct}>{selectedIssue.product_name || ''}</Text>
+
+                {/* Calculate & Assign */}
+                <View style={styles.actionRow}>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: Colors.info }]}
+                    onPress={handleCalculate}
+                    disabled={isLoading}
+                  >
+                    {isLoading && !calcResult ? <ActivityIndicator color="#fff" size="small" /> : null}
+                    <Text style={styles.actionBtnText}>FIFO 计算</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionBtn, { backgroundColor: Colors.warning }]}
+                    onPress={handleAssignLED}
+                    disabled={isLoading || !calcResult}
+                  >
+                    {isLoading && !assignResult ? <ActivityIndicator color="#fff" size="small" /> : null}
+                    <Text style={styles.actionBtnText}>LED 亮灯</Text>
+                  </TouchableOpacity>
+                </View>
+                {assignResult ? <Text style={styles.assignText}>{assignResult}</Text> : null}
+              </View>
+
+              {/* Calculation Results */}
+              {calcResult && (
+                <View style={styles.card}>
+                  <Text style={styles.stepTitle}>FIFO 计算结果</Text>
+                  <Text style={styles.hint}>策略: {calcResult.strategy_used}</Text>
+                  {calcResult.materials.map((mat, i) => (
+                    <View key={i} style={styles.calcItem}>
+                      <View style={styles.calcHeader}>
+                        <Text style={styles.calcCode}>{mat.material_code}</Text>
+                        <Text style={styles.calcName}>{mat.material_name}</Text>
+                      </View>
+                      <View style={styles.calcRow}>
+                        <Text style={styles.calcLabel}>需求: {mat.required_qty}</Text>
+                        <Text style={styles.calcLabel}>可用: {mat.available_qty}</Text>
+                        <Text style={[styles.calcLabel, mat.shortage > 0 && { color: Colors.danger }]}>
+                          {mat.shortage > 0 ? `短缺: ${mat.shortage}` : `已分配: ${mat.total_selected}`}
+                        </Text>
+                      </View>
+                      {mat.reels_selected.map((reel, j) => (
+                        <View key={j} style={styles.reelRow}>
+                          <Text style={styles.reelText}>盘 #{reel.reel_id}</Text>
+                          <Text style={styles.reelText}>取 {reel.quantity}</Text>
+                          <Text style={styles.reelText}>储位 {reel.shelf_slot_id}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Scanning for Pick */}
+              {calcResult && (
+                <View style={styles.card}>
+                  <Text style={styles.stepTitle}>扫码取料</Text>
+                  <Text style={styles.hint}>扫描亮灯储位上的料盘条码</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="扫描料盘条码"
+                    value={pickBarcode}
+                    onChangeText={setPickBarcode}
+                    autoFocus
+                  />
+                  <TouchableOpacity
+                    style={[styles.button, styles.confirmButton, !pickBarcode.trim() && styles.buttonDisabled]}
+                    onPress={handleConfirmPick}
+                    disabled={!pickBarcode.trim() || isLoading}
+                  >
+                    {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认出库</Text>}
+                  </TouchableOpacity>
+
+                  {pickResult && (
+                    <View style={[styles.resultBox, pickResult.all_picked ? styles.resultSuccess : styles.resultInfo]}>
+                      <Text style={styles.resultTitle}>
+                        {pickResult.all_picked ? '✅ 已完成' : '📦 已拣料'}
+                      </Text>
+                      <Text>已拣: {pickResult.picked_qty} / 剩余: {pickResult.remaining_qty}</Text>
+                      {pickResult.cleared_leds.length > 0 && (
+                        <Text>已清除 {pickResult.cleared_leds.length} 个亮灯</Text>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
+            </>
+          )}
+        </ScrollView>
       </View>
     )
   }
 
-  if (step === 'direct_scan') {
-    return (
-      <View style={styles.container}>
-        <TouchableOpacity onPress={handleBackToOperator}>
-          <Text style={styles.linkText}>&lt; 返回</Text>
-        </TouchableOpacity>
-        <Text style={styles.title}>直接出库</Text>
-        <Text style={styles.hint}>扫描料盘条码或输入盘号</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="扫描或输入盘号"
-          value={barcode}
-          onChangeText={setBarcode}
-          autoFocus
-        />
-        <TextInput
-          style={styles.input}
-          placeholder="出库数量"
-          value={directQty}
-          onChangeText={setDirectQty}
-          keyboardType="numeric"
-        />
-        <TouchableOpacity
-          style={[styles.button, (!barcode || !directQty) && styles.buttonDisabled]}
-          onPress={handleDirectScan}
-          disabled={!barcode || !directQty || isLoading}
-        >
-          {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认出库</Text>}
-        </TouchableOpacity>
-
-        {directResult && (
-          <View style={[styles.resultBox, directResult.status === 'error' ? styles.warningBox : styles.successBox]}>
-            <Text style={styles.resultText}>状态: {directResult.status}</Text>
-            <Text>出库前: {directResult.quantity_before} → 出库后: {directResult.quantity_after}</Text>
-            <Text>储位释放: {directResult.slot_released ? '是' : '否'}</Text>
-            <Text>{directResult.message}</Text>
-          </View>
-        )}
-      </View>
-    )
-  }
-
+  // ── Direct Outbound ──
   return (
     <View style={styles.container}>
-      <TouchableOpacity onPress={handleBackToOperator}>
-        <Text style={styles.linkText}>&lt; 返回</Text>
-      </TouchableOpacity>
-      <Text style={styles.title}>拣料确认</Text>
-      <Text style={styles.issueNo}>单号: {selectedIssue?.order_no}</Text>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={handleReset}>
+          <Text style={styles.backBtn}>← 返回</Text>
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>单独出料</Text>
+        <Text style={styles.headerSub}>扫描料盘 → 确认出库</Text>
+      </View>
 
-      <Text style={styles.sectionTitle}>待拣料盘:</Text>
-      {pallets.map((p, i) => (
-        <View key={i} style={styles.reelCard}>
-          <Text>料盘ID: {p.reel_id}</Text>
-          <Text>数量: {p.quantity}</Text>
-          <Text>储位: {p.shelf_slot_id}</Text>
+      <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.card}>
+          <Text style={styles.stepTitle}>扫描料盘</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="扫描料盘条码"
+            value={directBarcode}
+            onChangeText={setDirectBarcode}
+            autoFocus
+            onSubmitEditing={handleDirectScan}
+          />
+          <TouchableOpacity
+            style={[styles.button, !directBarcode.trim() && styles.buttonDisabled]}
+            onPress={handleDirectScan}
+            disabled={!directBarcode.trim() || isLoading}
+          >
+            {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>扫描识别</Text>}
+          </TouchableOpacity>
         </View>
-      ))}
 
-      <TextInput
-        style={styles.input}
-        placeholder="扫描料盘条码"
-        value={barcode}
-        onChangeText={setBarcode}
-        autoFocus
-      />
-      <TouchableOpacity
-        style={[styles.button, !barcode && styles.buttonDisabled]}
-        onPress={handleConfirmPick}
-        disabled={!barcode || isLoading}
-      >
-        {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认出库</Text>}
-      </TouchableOpacity>
+        {directReelInfo && (
+          <View style={styles.card}>
+            <Text style={styles.stepTitle}>料盘信息</Text>
+            <View style={styles.reelInfoCard}>
+              <Text style={styles.reelInfoLabel}>Reel #: {directReelInfo.reel_id}</Text>
+              <Text style={styles.reelInfoText}>物料: {directReelInfo.material_code}</Text>
+              <Text style={styles.reelInfoText}>{directReelInfo.material_name}</Text>
+              <Text style={styles.reelInfoText}>当前数量: {directReelInfo.quantity}</Text>
+              {directReelInfo.shelf_code && (
+                <Text style={styles.reelInfoText}>储位: {directReelInfo.shelf_code}</Text>
+              )}
+            </View>
 
-      {pickResult ? (
-        <View style={[styles.resultBox, pickResult.status === 'ok' ? styles.successBox : styles.warningBox]}>
-          <Text style={styles.resultText}>状态: {pickResult.status}</Text>
-          <Text>已拣: {pickResult.picked_qty} / 剩余: {pickResult.remaining_qty}</Text>
-        </View>
-      ) : null}
+            <Text style={styles.previewLabel}>出库数量</Text>
+            <TextInput
+              style={styles.input}
+              value={directQty}
+              onChangeText={setDirectQty}
+              keyboardType="numeric"
+              placeholder="输入出库数量"
+            />
+            <TouchableOpacity
+              style={[styles.button, styles.confirmButton, !directQty && styles.buttonDisabled]}
+              onPress={handleDirectConfirm}
+              disabled={!directQty || isLoading}
+            >
+              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认出库</Text>}
+            </TouchableOpacity>
+
+            {directResult && (
+              <View style={[styles.resultBox, directResult.status === 'ok' ? styles.resultSuccess : styles.resultError]}>
+                <Text style={styles.resultTitle}>
+                  {directResult.status === 'ok' ? '✅ 出库成功' : '❌ 出库失败'}
+                </Text>
+                <Text>出库前: {directResult.quantity_before} → 出库后: {directResult.quantity_after}</Text>
+                <Text>储位释放: {directResult.slot_released ? '是' : '否'}</Text>
+                <Text>{directResult.message}</Text>
+              </View>
+            )}
+          </View>
+        )}
+      </ScrollView>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, backgroundColor: '#f5f5f5' },
-  title: { fontSize: 22, fontWeight: 'bold', marginBottom: 16, color: '#333' },
-  hint: { fontSize: 14, color: '#999', marginBottom: 8 },
-  input: { backgroundColor: '#fff', padding: 14, borderRadius: 8, marginBottom: 16, fontSize: 18, borderWidth: 1, borderColor: '#ddd' },
-  button: { backgroundColor: '#ff4d4f', padding: 16, borderRadius: 8, alignItems: 'center', marginBottom: 16 },
-  issueButton: { backgroundColor: '#1890ff' },
-  buttonDisabled: { opacity: 0.6 },
+  container: { flex: 1, backgroundColor: Colors.bg },
+  header: { backgroundColor: Colors.primary, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 12 },
+  backBtn: { color: '#fff', fontSize: 16, marginBottom: 4 },
+  headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff' },
+  headerSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
+  modeContainer: { padding: 16, gap: 12 },
+  modeCard: { backgroundColor: Colors.card, borderRadius: 12, padding: 20, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  modeIcon: { fontSize: 36, marginBottom: 8 },
+  modeTitle: { fontSize: 20, fontWeight: 'bold', color: Colors.text },
+  modeDesc: { fontSize: 14, color: Colors.textSecondary, marginTop: 4 },
+  scrollArea: { flex: 1 },
+  scrollContent: { padding: 12, paddingBottom: 40 },
+  card: { backgroundColor: Colors.card, borderRadius: 12, padding: 16, marginBottom: 12, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  stepTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.text, marginBottom: 8 },
+  hint: { fontSize: 14, color: Colors.textSecondary, marginBottom: 8 },
+  input: { backgroundColor: '#fff', padding: 14, borderRadius: 8, marginBottom: 12, fontSize: 18, borderWidth: 1, borderColor: '#ddd' },
+  button: { backgroundColor: Colors.primary, padding: 16, borderRadius: 8, alignItems: 'center', marginBottom: 8 },
+  confirmButton: { backgroundColor: Colors.success },
+  issueButton: { backgroundColor: Colors.info },
+  buttonDisabled: { opacity: 0.5 },
   buttonText: { color: '#fff', fontSize: 18, fontWeight: '600' },
-  link: { marginBottom: 12 },
-  linkText: { color: '#1890ff', fontSize: 16, marginBottom: 8 },
-  issueCard: { backgroundColor: '#fff', padding: 16, borderRadius: 8, marginBottom: 12, borderWidth: 1, borderColor: '#eee' },
-  issueNo: { fontSize: 16, fontWeight: '600', color: '#333' },
-  issueStatus: { fontSize: 14, color: '#666', marginTop: 4 },
-  issueDetail: { fontSize: 14, color: '#999', marginTop: 4 },
-  emptyText: { textAlign: 'center', color: '#999', marginTop: 40, fontSize: 16 },
-  sectionTitle: { fontSize: 16, fontWeight: '600', marginBottom: 8, color: '#333' },
-  reelCard: { backgroundColor: '#fff', padding: 12, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: '#eee' },
-  resultBox: { padding: 12, borderRadius: 8, marginBottom: 16 },
-  successBox: { backgroundColor: '#f6ffed', borderWidth: 1, borderColor: '#b7eb8f' },
-  warningBox: { backgroundColor: '#fffbe6', borderWidth: 1, borderColor: '#ffe58f' },
-  resultText: { fontSize: 16, fontWeight: '600', color: '#333' },
+  linkBtn: { alignItems: 'center', marginVertical: 4 },
+  linkText: { color: Colors.primary, fontSize: 15 },
+  emptyText: { textAlign: 'center', color: Colors.textSecondary, fontSize: 16, marginVertical: 20 },
+  previewLabel: { fontSize: 15, color: Colors.textSecondary, fontWeight: '600', marginBottom: 4, marginTop: 8 },
+  selectItem: { padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#eee', marginBottom: 8 },
+  selectItemTitle: { fontSize: 16, fontWeight: '600', color: Colors.text },
+  selectItemSub: { fontSize: 14, color: Colors.textSecondary, marginTop: 2 },
+  selectedInfo: { backgroundColor: '#f0f5ff', borderRadius: 8, padding: 12, marginTop: 8 },
+  selectedInfoText: { fontSize: 15, color: Colors.primary, fontWeight: '600', textAlign: 'center' },
+  issueCard: { padding: 14, borderRadius: 8, borderWidth: 1, borderColor: '#eee', marginBottom: 8 },
+  issueHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  issueNo: { fontSize: 16, fontWeight: 'bold', color: Colors.text },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
+  statusText: { fontSize: 12, color: '#fff', fontWeight: '600' },
+  issueProduct: { fontSize: 14, color: Colors.textSecondary, marginTop: 4 },
+  issueMeta: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
+  issueStatusText: { fontSize: 14, color: Colors.textSecondary, marginBottom: 8 },
+  actionRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  actionBtn: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
+  actionBtnText: { color: '#fff', fontSize: 15, fontWeight: '600', marginLeft: 4 },
+  assignText: { textAlign: 'center', color: Colors.info, fontSize: 14, marginTop: 6 },
+  calcItem: { borderTopWidth: 1, borderTopColor: '#eee', paddingTop: 8, marginTop: 8 },
+  calcHeader: { marginBottom: 4 },
+  calcCode: { fontSize: 15, fontWeight: 'bold', color: Colors.text },
+  calcName: { fontSize: 13, color: Colors.textSecondary },
+  calcRow: { flexDirection: 'row', gap: 12, marginBottom: 4 },
+  calcLabel: { fontSize: 13, color: Colors.textSecondary },
+  reelRow: { flexDirection: 'row', gap: 8, marginVertical: 2, paddingLeft: 8 },
+  reelText: { fontSize: 13, color: Colors.text },
+  resultBox: { borderRadius: 8, padding: 12, marginTop: 8 },
+  resultSuccess: { backgroundColor: '#f0fff4', borderWidth: 1, borderColor: Colors.success },
+  resultInfo: { backgroundColor: '#e6f0ff', borderWidth: 1, borderColor: Colors.primary },
+  resultError: { backgroundColor: '#fff1f0', borderWidth: 1, borderColor: Colors.danger },
+  resultTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.text, marginBottom: 4 },
+  reelInfoCard: { backgroundColor: '#f0f5ff', borderRadius: 8, padding: 12, marginBottom: 8 },
+  reelInfoLabel: { fontSize: 16, fontWeight: 'bold', color: Colors.text },
+  reelInfoText: { fontSize: 15, color: Colors.textSecondary, marginTop: 2 },
 })

@@ -28,7 +28,7 @@ api.interceptors.response.use(
   }
 )
 
-// ---- Auth ----
+// ──── Auth ────
 export async function loginApi(data: t.LoginRequest): Promise<t.TokenResponse> {
   const res = await api.post('/auth/login', data)
   return res.data
@@ -39,9 +39,32 @@ export async function getMeApi(): Promise<t.UserResponse> {
   return res.data
 }
 
-// ---- Receipts (Inbound) ----
+// ──── Dashboard ────
+export async function getDashboardSummaryApi(): Promise<t.DashboardSummary> {
+  const res = await api.get('/dashboard/summary')
+  return res.data
+}
+
+// ──── BOM ────
+export async function listBOMsApi(params?: {
+  customer_id?: number
+  status?: string
+}): Promise<t.BOMResponse[]> {
+  const res = await api.get('/bom', { params })
+  return res.data
+}
+
+// ──── Receipts (Inbound) ────
 export async function createReceiptApi(data: t.ReceiptCreate): Promise<t.ReceiptDetailResponse> {
   const res = await api.post('/receipts', data)
+  return res.data
+}
+
+export async function scanPreviewApi(
+  receiptId: number,
+  data: t.ReceiptScanRequest
+): Promise<t.BarcodePreviewResponse> {
+  const res = await api.post(`/receipts/${receiptId}/scan-preview`, data)
   return res.data
 }
 
@@ -53,7 +76,20 @@ export async function scanInboundApi(
   return res.data
 }
 
-// ---- Issues (Outbound) ----
+// ──── Shelving ────
+export async function scanShelvingReelApi(barcode: string): Promise<t.ShelvingScanResponse> {
+  const res = await api.post('/shelving/scan', { barcode })
+  return res.data
+}
+
+export async function bindShelvingSlotApi(
+  data: t.ShelvingBindRequest
+): Promise<t.ShelvingBindResponse> {
+  const res = await api.post('/shelving/bind', data)
+  return res.data
+}
+
+// ──── Issues (Outbound) ────
 export async function listIssuesApi(params?: {
   customer_id?: number
   status?: string
@@ -88,7 +124,14 @@ export async function confirmPickApi(
   return res.data
 }
 
-// ---- Direct Outbound ----
+// ──── Direct Outbound ────
+export async function scanReelForDirectOutApi(
+  barcode: string
+): Promise<{ reel_id: number; material_code: string; material_name?: string; quantity: number; shelf_code?: string; status: string }> {
+  const res = await api.post('/inventory/scan-reel', { barcode })
+  return res.data
+}
+
 export async function directOutboundApi(
   reelId: number,
   data: t.DirectOutRequest
@@ -97,7 +140,7 @@ export async function directOutboundApi(
   return res.data
 }
 
-// ---- Inventory ----
+// ──── Inventory ────
 export async function getInventoryApi(params?: {
   customer_id?: number
   material_id?: number
@@ -106,12 +149,12 @@ export async function getInventoryApi(params?: {
   return res.data
 }
 
-export async function getTrackingInventoryApi(): Promise<{ reels: t.TrackingReelResponse[] }> {
+export async function getTrackingInventoryApi(): Promise<{ pallets: t.TrackingReelResponse[] }> {
   const res = await api.get('/inventory/tracking')
   return res.data
 }
 
-// ---- Materials ----
+// ──── Materials ────
 export async function getMaterialsApi(params?: {
   customer_id?: number
   keyword?: string
@@ -121,7 +164,7 @@ export async function getMaterialsApi(params?: {
   return res.data
 }
 
-// ---- Shelves ----
+// ──── Shelves ────
 export async function getShelvesApi(): Promise<t.ShelfResponse[]> {
   const res = await api.get('/shelves')
   return res.data
@@ -129,6 +172,11 @@ export async function getShelvesApi(): Promise<t.ShelfResponse[]> {
 
 export async function getShelfSlotsApi(shelfId: number): Promise<t.ShelfSlotResponse[]> {
   const res = await api.get(`/shelves/${shelfId}/slots`)
+  return res.data
+}
+
+export async function getSlotStatesApi(shelfId: number): Promise<{ shelf_id: number; polling_active: boolean; slots: t.SlotSensorState[] }> {
+  const res = await api.get(`/shelves/${shelfId}/slots/state`)
   return res.data
 }
 

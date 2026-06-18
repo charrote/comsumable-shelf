@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.smes.pda.BuildConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -20,7 +21,7 @@ class SettingsDataStore @Inject constructor(
     companion object {
         private val KEY_API_URL = stringPreferencesKey("api_url")
         private val KEY_AUTH_TOKEN = stringPreferencesKey("auth_token")
-        private const val DEFAULT_API_URL = "http://101.34.63.68/api"
+        private const val DEFAULT_API_URL = BuildConfig.DEFAULT_API_URL
     }
 
     /** Observe API URL changes as a Flow */

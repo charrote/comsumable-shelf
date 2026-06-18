@@ -290,7 +290,10 @@ async def _auto_assign_slot(
             Shelf.active == 1,
             ~ShelfSlot.id.in_(
                 select(InventoryReel.shelf_slot_id)
-                .where(InventoryReel.status == "on_shelf")
+                .where(
+                    InventoryReel.status == "on_shelf",
+                    InventoryReel.shelf_slot_id.isnot(None),
+                )
             ),
         )
         .limit(10)

@@ -44,11 +44,15 @@ class LedService:
 
     async def init(self, master_ip: str = None, port: int = None):
         """Initialize LED controller and start workers."""
-        self.master = Amkn8702g(
-            ip=master_ip or settings.MASTER_IP,
-            port=port or settings.MASTER_PORT,
-        )
-        await self.master.connect()
+        if not settings.HARDWARE_SIMULATION:
+            self.master = Amkn8702g(
+                ip=master_ip or settings.MASTER_IP,
+                port=port or settings.MASTER_PORT,
+            )
+            await self.master.connect()
+        else:
+            logger.info("SIM: LED controller init skipped (no hardware)")
+
         self._queue_worker = asyncio.create_task(self._command_worker())
         self._db_worker = asyncio.create_task(self._db_command_worker())
         logger.info("LED service started with queue + DB workers")
@@ -59,7 +63,7 @@ class LedService:
             self._queue_worker.cancel()
         if self._db_worker:
             self._db_worker.cancel()
-        if self.master:
+        if self.master and not settings.HARDWARE_SIMULATION:
             await self.master.disconnect()
         logger.info("LED service stopped")
 
@@ -114,6 +118,14 @@ class LedService:
 
             for cmd in commands:
                 try:
+                    # ── Simulation mode: skip hardware calls ──
+                    if settings.HARDWARE_SIMULATION:
+                        cmd.status = "sent"
+                        cmd.sent_at = datetime.utcnow()
+                        logger.info("SIM: led_command_sent",
+                                    command_id=cmd.id, slot_id=cmd.slot_id, color=cmd.color)
+                        continue
+
                     # Look up shelf slot for hardware addressing
                     slot_result = await session.execute(
                         select(ShelfSlot).where(ShelfSlot.id == cmd.slot_id)

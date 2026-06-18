@@ -30,6 +30,22 @@ export interface MaterialResponse {
   stock_balance?: number
 }
 
+// BOM
+export interface BOMResponse {
+  id: number
+  customer_id: number
+  customer_name?: string
+  product_material_id: number
+  product_code?: string
+  product_name?: string
+  version: string
+  status: string
+  description?: string
+  item_count?: number
+  created_at?: string
+  updated_at?: string
+}
+
 // Receipts (Inbound)
 export interface MaterialCandidate {
   material_id: number
@@ -76,9 +92,35 @@ export interface ReceiptScanResponse {
   message: string
 }
 
+export interface BarcodePreviewResponse {
+  barcode: string
+  status: string              // ok | pending_review | new_material | error
+  confidence: number
+  material_code: string
+  material_name?: string
+  material_id?: number
+  quantity: number
+  unit: string
+  batch_no?: string
+  date_code?: string
+  spec?: string
+  supplier_code?: string
+  extracted_fields?: BarcodePreviewItem[]
+  candidates?: MaterialCandidate[]
+  message: string
+}
+
+export interface BarcodePreviewItem {
+  field: string
+  label: string
+  value: string
+  editable: boolean
+}
+
 export interface ReceiptCreate {
   type?: string
   operator: string
+  customer_id?: number
 }
 
 export interface ReceiptDetailResponse {
@@ -102,7 +144,44 @@ export interface ReceiptItem {
   label_printed_at?: string
 }
 
+// Shelving
+export interface ShelvingBindRequest {
+  reel_id: number
+  shelf_id: number
+  shelf_slot_id?: number
+  operator: string
+}
+
+export interface ShelvingBindResponse {
+  status: string
+  reel_id: number
+  shelf_id: number
+  shelf_slot_id: number
+  shelf_code?: string
+  slot_code?: string
+  message: string
+}
+
+export interface ShelvingScanResponse {
+  status: string           // ok | already_bound | error
+  reel_id: number
+  material_code: string
+  material_name?: string
+  quantity: number
+  shelf_slot_id?: number
+  shelf_code?: string
+  slot_code?: string
+  message: string
+}
+
 // Issues (Outbound)
+export interface IssueCreateRequest {
+  bom_id: number
+  production_quantity: number
+  customer_id?: number
+  required_date?: string
+}
+
 export interface IssueCalculateRequest {
   strategy?: string
 }
@@ -112,6 +191,16 @@ export interface ReelSelection {
   quantity: number
   last_in_time: string
   shelf_slot_id: number
+}
+
+export interface ReelAssignment {
+  reel_id: number
+  reel_barcode?: string
+  shelf_slot_id?: number
+  slot_code?: string
+  reel_qty: number
+  original_quantity: number
+  pick_quantity: number
 }
 
 export interface MaterialCalcResult {
@@ -133,6 +222,14 @@ export interface IssueCalculateResponse {
   materials: MaterialCalcResult[]
 }
 
+export interface IssueAssignResponse {
+  assigned: boolean
+  led_commands_created: number
+  shelf_id: number
+  commands: { command_id: number; slot_id: number; color: string; status: string }[]
+  message: string
+}
+
 export interface IssueConfirmPickRequest {
   barcode: string
   reel_id: number
@@ -148,20 +245,19 @@ export interface IssueConfirmPickResponse {
   message: string
 }
 
-export interface IssueAssignResponse {
-  assigned: boolean
-  led_commands_created: number
-  shelf_id: number
-  commands: { command_id: number; slot_id: number; color: string; status: string }[]
-  message: string
-}
-
 export interface IssueOrderResponse {
   id: number
   order_no: string
-  customer_id: number
+  bom_id?: number
+  product_code?: string
+  product_name?: string
+  production_quantity?: number
+  customer_id?: number
+  customer_name?: string
   status: string
+  required_date?: string
   created_at?: string
+  detail_count?: number
   details?: IssueDetailResponse[]
 }
 
@@ -170,8 +266,12 @@ export interface IssueDetailResponse {
   material_id: number
   material_code?: string
   material_name?: string
+  material_unit?: string
   required_qty: number
+  assigned_qty?: number
   picked_qty: number
+  reel_assignments?: ReelAssignment[]
+  shortage?: number
   status: string
 }
 
@@ -190,11 +290,11 @@ export interface ReelInfo {
 }
 
 export interface InventoryResponse {
-  reels: ReelInfo[]
+  pallets: ReelInfo[]
   summary?: {
-    total_reels?: number
+    total_pallets?: number
     total_quantity?: number
-    exhausted_reels?: number
+    exhausted_pallets?: number
   }
 }
 
@@ -205,7 +305,7 @@ export interface TrackingReelResponse {
   quantity: number
   last_out_time?: string
   status: string
-  xr_matched: boolean
+  xr_matched?: boolean
 }
 
 // Direct Outbound
@@ -262,4 +362,28 @@ export interface ShelfSlotResponse {
   global_index: number
   modbus_tcp_id: number
   modbus_coil_base: number
+  max_quantity?: number
+  last_event_at?: string
+  last_sensor_state?: number
+}
+
+export interface SlotSensorState {
+  slot_id: number
+  side: string
+  board_address: number
+  slot_on_board: number
+  has_material: boolean
+  last_event_at?: string
+  bound_reel_id?: number
+}
+
+// Dashboard
+export interface DashboardSummary {
+  app_name?: string
+  today_inbound: number
+  today_outbound: number
+  pending_issues: number
+  on_shelf_pallets: number
+  tracking_pallets: number
+  pending_receipts: number
 }

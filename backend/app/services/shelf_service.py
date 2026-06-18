@@ -96,6 +96,12 @@ class SlotPollingService:
 
     async def start(self, shelf_id: int):
         """Initialize Modbus master and start polling for a specific shelf."""
+        if settings.HARDWARE_SIMULATION:
+            self._shelf_id = shelf_id
+            self._running = True
+            logger.info("SIM: SlotPollingService started for shelf %d (no hardware)", shelf_id)
+            return
+
         shelf_result = None
         async with async_session_factory() as db:
             result = await db.execute(select(Shelf).where(Shelf.id == shelf_id))
