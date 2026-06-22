@@ -18,6 +18,27 @@ export const updateMaterialApi = (id: number, data: any) =>
   apiClient.put(`/materials/${id}`, data)
 export const deleteMaterialApi = (id: number) =>
   apiClient.delete(`/materials/${id}`)
+export const uploadMaterialsApi = (file: File, customerCode?: string) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const params: any = {}
+  if (customerCode) params.customer_code = customerCode
+  return apiClient.post('/materials/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    params,
+  })
+}
+export const downloadMaterialTemplateApi = async () => {
+  const res = await apiClient.get('/materials/template', { responseType: 'blob' })
+  const url = window.URL.createObjectURL(new Blob([res.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', '物料主数据导入模板.xlsx')
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
 export const getMappingsApi = (params?: { customer_id?: number }) =>
   apiClient.get('/materials/mappings', { params })
 export const createMappingApi = (data: {
@@ -150,6 +171,28 @@ export const downloadBomTemplateApi = async () => {
   const link = document.createElement('a')
   link.href = url
   link.setAttribute('download', 'BOM导入模板.xlsx')
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
+export const uploadBomQixinApi = (file: File, customerCode?: string, version?: string) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const params: any = {}
+  if (customerCode) params.customer_code = customerCode
+  if (version) params.version = version
+  return apiClient.post('/bom/upload-qixin', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    params,
+  })
+}
+export const downloadBomQixinTemplateApi = async () => {
+  const res = await apiClient.get('/bom/template-qixin', { responseType: 'blob' })
+  const url = window.URL.createObjectURL(new Blob([res.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', '七鑫BOM导入模板.xlsx')
   document.body.appendChild(link)
   link.click()
   link.remove()

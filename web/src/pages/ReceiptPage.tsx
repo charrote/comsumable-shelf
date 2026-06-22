@@ -131,6 +131,8 @@ export function ReceiptPage() {
         barcode,
         operator: 'admin',
         qty: editQty,
+        batch_no: editBatch || undefined,
+        date_code: editDateCode || undefined,
       }
       if (isNewMaterial) {
         payload.is_new_material = true

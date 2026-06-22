@@ -2,6 +2,7 @@
 
 from typing import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -34,7 +35,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db():
-    """Initialize database tables."""
+    """Initialize database tables and apply migrations."""
     from app.models import Base  # noqa: F401
 
     async with engine.begin() as conn:
@@ -43,6 +44,21 @@ async def init_db():
                 sync_session, checkfirst=True
             )
         )
+        # Migration: add batch_no / date_code columns if not exist
+        for table, column, col_type in [
+            ("inventory_reels", "batch_no", "VARCHAR(100)"),
+            ("inventory_reels", "date_code", "VARCHAR(100)"),
+            ("receipt_reels", "batch_no", "VARCHAR(100)"),
+            ("receipt_reels", "date_code", "VARCHAR(100)"),
+        ]:
+            await conn.execute(
+                text(f"""
+                    DO $$ BEGIN
+                        ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {col_type};
+                    EXCEPTION WHEN duplicate_column THEN NULL;
+                    END $$;
+                """)
+            )
 
 
 async def seed_db():

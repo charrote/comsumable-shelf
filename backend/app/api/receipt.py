@@ -501,7 +501,9 @@ async def scan_receipt(
 
     if match.action == "auto_proceed" and match.material_id:
         # High-confidence → auto create reel
+        from app.utils.barcode import extract_supplier_info
         from app.services.receipt_service import finalize_receipt_reel
+        supplier_info = extract_supplier_info(barcode)
         result = await finalize_receipt_reel(
             db=db,
             receipt_id=receipt_id,
@@ -517,6 +519,8 @@ async def scan_receipt(
             auto_assign_slot=True,
             printer_ip=data.printer_ip,
             printer_port=data.printer_port,
+            batch_no=data.batch_no or supplier_info.get("batch_no"),
+            date_code=data.date_code or supplier_info.get("date_code"),
         )
         return ReceiptScanResponse(
             status="ok",
@@ -618,6 +622,10 @@ async def _handle_human_confirmation(
         material_name = material.name
         manual_flag = 1  # manual_intervention = selected existing
 
+    # Extract batch/date info from barcode
+    from app.utils.barcode import extract_supplier_info
+    supplier_info = extract_supplier_info(barcode)
+
     # Create InventoryReel + ReceiptReel
     result = await finalize_receipt_reel(
         db=db,
@@ -634,6 +642,8 @@ async def _handle_human_confirmation(
         auto_assign_slot=True,
         printer_ip=data.printer_ip,
         printer_port=data.printer_port,
+        batch_no=data.batch_no or supplier_info.get("batch_no"),
+        date_code=data.date_code or supplier_info.get("date_code"),
     )
 
     action_label = "new_material" if data.is_new_material else "first_in"

@@ -47,6 +47,13 @@ class MaterialResponse(BaseModel):
     stock_balance: Optional[float] = None
 
 
+class MaterialUploadResponse(BaseModel):
+    total: int = 0
+    imported: int = 0
+    skipped: int = 0
+    categories_created: int = 0
+
+
 # ---------- Customer Material Mapping ----------
 class CustomerMaterialMappingCreate(BaseModel):
     customer_id: int
@@ -117,6 +124,10 @@ class ReceiptScanRequest(BaseModel):
     barcode: str
     operator: str
     qty: Optional[float] = None
+
+    # ── Batch / date code (optional, from barcode or manual entry) ──
+    batch_no: Optional[str] = Field(None, description="批次号（选填）")
+    date_code: Optional[str] = Field(None, description="生产日期/周期代码（选填）")
 
     # ── Human review overrides (used in second-pass or manual selection) ──
     manual_material_id: Optional[int] = Field(

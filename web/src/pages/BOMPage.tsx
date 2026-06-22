@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Card, Upload, Tag, message, Select, Space, Modal, Form, Input, Popconfirm } from 'antd'
+import { Table, Button, Card, Upload, Tag, message, Select, Space, Modal, Form, Input, Popconfirm, Radio } from 'antd'
 import { UploadOutlined, DownloadOutlined, PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import {
   getBomListApi, uploadBomApi, downloadBomTemplateApi,
+  uploadBomQixinApi, downloadBomQixinTemplateApi,
   getCustomersApi, getMaterialsApi, createBomApi, deleteBomApi, updateBomApi,
 } from '../api'
 
@@ -27,6 +28,7 @@ export function BOMPage() {
   const [fileList, setFileList] = useState<UploadFile[]>([])
   const [uploadCustomerCode, setUploadCustomerCode] = useState<string | undefined>(undefined)
   const [uploadVersion, setUploadVersion] = useState('1.0')
+  const [templateType, setTemplateType] = useState<'standard' | 'qixin'>('standard')
   const [createForm] = Form.useForm()
 
   useEffect(() => {
@@ -100,7 +102,8 @@ export function BOMPage() {
     }
     setUploading(true)
     try {
-      const res = await uploadBomApi(fileList[0].originFileObj as File, uploadCustomerCode, uploadVersion)
+      const uploadApi = templateType === 'qixin' ? uploadBomQixinApi : uploadBomApi
+      const res = await uploadApi(fileList[0].originFileObj as File, uploadCustomerCode, uploadVersion)
       message.success(`BOM上传成功，共解析 ${res.data?.total_items || 0} 条明细`)
       setUploadModalVisible(false)
       setFileList([])
@@ -109,6 +112,16 @@ export function BOMPage() {
     } catch (e: any) {
       message.error('BOM上传失败: ' + (e.response?.data?.detail || e.message))
       setUploading(false)
+    }
+  }
+
+  const handleDownloadTemplate = () => {
+    if (templateType === 'qixin') {
+      downloadBomQixinTemplateApi()
+      message.info('已下载七鑫格式BOM模板')
+    } else {
+      downloadBomTemplateApi()
+      message.info('已下载标准BOM模板')
     }
   }
 
@@ -180,7 +193,16 @@ export function BOMPage() {
             onChange={(v) => setSelectedCustomer(v)}
             options={customers.map(c => ({ value: c.id, label: `${c.name} (${c.code})` }))}
           />
-          <Button icon={<DownloadOutlined />} onClick={downloadBomTemplateApi}>下载模板</Button>
+          <Select
+            value={templateType}
+            onChange={setTemplateType}
+            style={{ width: 120 }}
+            options={[
+              { value: 'standard', label: '标准模板' },
+              { value: 'qixin', label: '七鑫模板' },
+            ]}
+          />
+          <Button icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>下载模板</Button>
           <Button icon={<UploadOutlined />} onClick={() => setUploadModalVisible(true)}>Excel导入</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModalVisible(true)}>新建BOM</Button>
         </Space>
@@ -227,13 +249,18 @@ export function BOMPage() {
       </Modal>
 
       <Modal
-        title="Excel导入BOM"
+        title={`Excel导入BOM（${templateType === 'qixin' ? '七鑫格式' : '标准格式'}）`}
         open={uploadModalVisible}
         onCancel={() => { setUploadModalVisible(false); setFileList([]) }}
         onOk={handleUpload}
         confirmLoading={uploading}
       >
         <Form layout="vertical">
+          <Form.Item label="模板格式" help="当前模板格式可在导入前在上方切换">
+            <Tag color={templateType === 'qixin' ? 'blue' : 'green'}>
+              {templateType === 'qixin' ? '七鑫格式' : '标准格式'}
+            </Tag>
+          </Form.Item>
           <Form.Item label="客户" required>
             <Select
               placeholder="选择客户"

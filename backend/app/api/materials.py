@@ -3,18 +3,182 @@
 from typing import Optional, List
 from sqlalchemy import select, or_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi.responses import StreamingResponse
 from app.schemas import (
     MaterialCreate,
     MaterialResponse,
+    MaterialUploadResponse,
     CustomerMaterialMappingCreate,
     CustomerMaterialMappingUpdate,
     CustomerMaterialMappingResponse,
 )
 from app.utils.database import get_db
 from app.models import MaterialMaster, MaterialCategory, CustomerMaterialMapping, Customer
+import openpyxl
+from openpyxl import Workbook
+import io
+import os
+import re
+import xlrd
+import tempfile
+from urllib.parse import quote
 
 router = APIRouter(prefix="/materials", tags=["Material Management"])
+
+
+@router.get("/template")
+async def download_material_template():
+    """Download material master import template (.xlsx)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "物料主数据模板"
+    headers = ["料号", "品名", "规格", "单位", "类别"]
+    ws.append(headers)
+    ws.append(["MAT-001", "贴片电阻", "100Ω,1/16W,J,0402,卷带", "PCS", "贴片电阻"])
+    ws.append(["MAT-002", "贴片电容", "100nF,16V,K,X7R,0402,卷带", "PCS", "贴片电容"])
+    widths = [22, 18, 40, 10, 15]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote('物料主数据导入模板.xlsx')}"},
+    )
+
+
+@router.post("/upload", response_model=MaterialUploadResponse)
+async def upload_materials(
+    file: UploadFile = File(...),
+    customer_code: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload material master data from Excel template.
+    
+    Format (Qixin template): 料号, 品名, 规格, 单位, 类别
+    Duplicate material codes will be skipped (not overwritten).
+    """
+    if not customer_code:
+        raise HTTPException(status_code=400, detail="客户编码不能为空")
+
+    customer_result = await db.execute(select(Customer).where(Customer.code == customer_code))
+    customer = customer_result.scalar_one_or_none()
+    if customer is None:
+        raise HTTPException(status_code=400, detail="客户不存在")
+
+    content = await file.read()
+    filename = file.filename or ""
+
+    # Read rows from .xls or .xlsx
+    rows = []
+    if filename.lower().endswith(".xls"):
+        with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        try:
+            wb = xlrd.open_workbook(tmp_path)
+            ws = wb.sheet_by_index(0)
+            for r in range(ws.nrows):
+                row = []
+                for c in range(ws.ncols):
+                    row.append(ws.cell_value(r, c))
+                rows.append(row)
+        finally:
+            os.unlink(tmp_path)
+    else:
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+        ws = wb.active
+        for row in ws.iter_rows(values_only=True):
+            rows.append(list(row) if row else [])
+
+    if len(rows) < 2:
+        raise HTTPException(status_code=400, detail="模板至少需要标题行和一行数据")
+
+    # Parse: skip header row (index 0)
+    total = 0
+    imported = 0
+    skipped = 0
+    category_cache = {}
+
+    for row in rows[1:]:
+        if len(row) < 3:
+            continue
+        code = str(row[0] or "").strip()
+        name = str(row[1] or "").strip()
+        spec = str(row[2] or "").strip()
+        unit = str(row[3] or "PCS").strip() if len(row) > 3 else "PCS"
+        category_name = str(row[4] or "").strip() if len(row) > 4 else ""
+
+        if not code or not name:
+            continue
+
+        total += 1
+
+        # Skip if material code already exists
+        existing = await db.execute(
+            select(MaterialMaster).where(
+                MaterialMaster.customer_id == customer.id,
+                MaterialMaster.code == code,
+            )
+        )
+        if existing.scalar_one_or_none():
+            skipped += 1
+            continue
+
+        # Resolve category
+        category_id = None
+        if category_name:
+            if category_name in category_cache:
+                category_id = category_cache[category_name]
+            else:
+                cat_result = await db.execute(
+                    select(MaterialCategory).where(
+                        MaterialCategory.customer_id == customer.id,
+                        MaterialCategory.name == category_name,
+                    )
+                )
+                cat = cat_result.scalar_one_or_none()
+                if not cat:
+                    # Auto-create category
+                    cat_code = re.sub(r'[^A-Za-z0-9\u4e00-\u9fff]', '', category_name)[:20]
+                    cat = MaterialCategory(
+                        customer_id=customer.id,
+                        name=category_name,
+                        code=cat_code or "general",
+                    )
+                    db.add(cat)
+                    await db.flush()
+                category_id = cat.id
+                category_cache[category_name] = category_id
+
+        mat = MaterialMaster(
+            customer_id=customer.id,
+            code=code,
+            name=name,
+            spec=spec,
+            unit=unit,
+            category_id=category_id,
+            active=1,
+        )
+        db.add(mat)
+        imported += 1
+
+    await db.commit()
+
+    categories_created = sum(
+        1 for name, cid in category_cache.items()
+        if cid is not None
+    )
+
+    return MaterialUploadResponse(
+        total=total,
+        imported=imported,
+        skipped=skipped,
+        categories_created=categories_created,
+    )
 
 
 @router.get("")

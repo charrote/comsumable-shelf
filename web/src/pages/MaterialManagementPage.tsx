@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Modal, Form, Input, Space, Tag, Popconfirm, Spin, message, Tabs, Select } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined } from '@ant-design/icons'
+import { Table, Button, Modal, Form, Input, Space, Tag, Popconfirm, Spin, message, Tabs, Select, Upload } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons'
+import type { UploadFile } from 'antd'
 import {
   getMaterialsApi, createMaterialApi, updateMaterialApi, deleteMaterialApi,
-  getMappingsApi, createMappingApi, updateMappingApi, deleteMappingApi,
+  getCustomersApi, getMappingsApi, createMappingApi, updateMappingApi, deleteMappingApi,
+  uploadMaterialsApi, downloadMaterialTemplateApi,
 } from '../api'
 
 const { Option } = Select
@@ -16,6 +18,12 @@ export function MaterialManagementPage() {
   const [editingRecord, setEditingRecord] = useState<any | null>(null)
   const [form] = Form.useForm()
 
+  // ── Upload state ──
+  const [uploadModalOpen, setUploadModalOpen] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [uploadFileList, setUploadFileList] = useState<UploadFile[]>([])
+  const [uploadCustomerCode, setUploadCustomerCode] = useState<string | undefined>(undefined)
+
   // ── Mappings state ──
   const [mappings, setMappings] = useState<any[]>([])
   const [mappingLoading, setMappingLoading] = useState(false)
@@ -23,6 +31,9 @@ export function MaterialManagementPage() {
   const [editingMapping, setEditingMapping] = useState<any | null>(null)
   const [mappingForm] = Form.useForm()
   const [materialOptions, setMaterialOptions] = useState<any[]>([])
+
+  // ── Customers ──
+  const [customers, setCustomers] = useState<any[]>([])
 
   // ── Load materials ──
   const loadData = async (keyword?: string) => {
@@ -39,6 +50,7 @@ export function MaterialManagementPage() {
 
   useEffect(() => {
     loadData()
+    getCustomersApi().then(res => setCustomers(Array.isArray(res.data) ? res.data : [])).catch(() => {})
   }, [])
 
   // ── Load mappings ──
@@ -51,6 +63,30 @@ export function MaterialManagementPage() {
       message.error('加载映射数据失败')
     } finally {
       setMappingLoading(false)
+    }
+  }
+
+  const handleUpload = async () => {
+    if (!uploadCustomerCode) {
+      message.error('请选择客户')
+      return
+    }
+    if (uploadFileList.length === 0) {
+      message.error('请选择文件')
+      return
+    }
+    setUploading(true)
+    try {
+      const res = await uploadMaterialsApi(uploadFileList[0].originFileObj as File, uploadCustomerCode)
+      const d = res.data
+      message.success(`导入完成：共 ${d.total} 条，新增 ${d.imported} 条，跳过 ${d.skipped} 条（重复），创建 ${d.categories_created} 个类别`)
+      setUploadModalOpen(false)
+      setUploadFileList([])
+      loadData()
+    } catch (e: any) {
+      message.error('导入失败: ' + (e.response?.data?.detail || e.message))
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -213,6 +249,8 @@ export function MaterialManagementPage() {
                 allowClear
                 onSearch={(value) => loadData(value || undefined)}
               />
+              <Button icon={<DownloadOutlined />} onClick={downloadMaterialTemplateApi}>下载模板</Button>
+              <Button icon={<UploadOutlined />} onClick={() => setUploadModalOpen(true)}>Excel导入</Button>
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
                 新建物料
               </Button>
@@ -280,6 +318,37 @@ export function MaterialManagementPage() {
               <Button type="primary" htmlType="submit">保存</Button>
               <Button onClick={() => { setModalOpen(false); form.resetFields() }}>取消</Button>
             </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* ── Upload Modal ── */}
+      <Modal
+        title="Excel导入物料主数据"
+        open={uploadModalOpen}
+        onCancel={() => { setUploadModalOpen(false); setUploadFileList([]) }}
+        onOk={handleUpload}
+        confirmLoading={uploading}
+      >
+        <Form layout="vertical">
+          <Form.Item label="客户" required>
+            <Select
+              placeholder="选择客户"
+              value={uploadCustomerCode}
+              onChange={setUploadCustomerCode}
+              options={customers.map(c => ({ value: c.code, label: `${c.name} (${c.code})` }))}
+            />
+          </Form.Item>
+          <Form.Item label="Excel文件" required help="支持 .xls 和 .xlsx 格式，重复料号自动跳过">
+            <Upload
+              fileList={uploadFileList}
+              beforeUpload={() => false}
+              onChange={({ fileList }) => setUploadFileList(fileList)}
+              maxCount={1}
+              accept=".xlsx,.xls"
+            >
+              <Button icon={<UploadOutlined />}>选择文件</Button>
+            </Upload>
           </Form.Item>
         </Form>
       </Modal>

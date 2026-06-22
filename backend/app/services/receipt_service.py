@@ -174,6 +174,8 @@ async def finalize_receipt_reel(
     auto_assign_slot: bool = True,
     printer_ip: Optional[str] = None,
     printer_port: Optional[int] = None,
+    batch_no: Optional[str] = None,
+    date_code: Optional[str] = None,
 ) -> dict:
     """Create InventoryReel + ReceiptReel records and optionally print label.
 
@@ -197,6 +199,8 @@ async def finalize_receipt_reel(
         last_in_time=now,
         inbound_type="new",
         customer_id=customer_id,
+        batch_no=batch_no,
+        date_code=date_code,
     )
     db.add(pallet)
     await db.commit()
@@ -213,6 +217,8 @@ async def finalize_receipt_reel(
         manual_intervention=manual_intervention,
         operator=operator,
         reel_id=pallet.id,
+        batch_no=batch_no,
+        date_code=date_code,
     )
     db.add(rp)
     await db.commit()

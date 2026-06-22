@@ -178,6 +178,8 @@ class InventoryReel(Base):
     inbound_xr_count = Column(Float)
     status = Column(String, default="on_shelf")  # on_shelf | in_use | tracking | exhausted
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    batch_no = Column(String, comment="批次号（选填）")
+    date_code = Column(String, comment="生产日期/周期代码（选填）")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -221,6 +223,8 @@ class ReceiptReel(Base):
     reel_id = Column(Integer, ForeignKey("inventory_reels.id"))
     internal_label_printed = Column(Integer, default=0, comment="内部标签是否已打印 0=未打印 1=已打印")
     label_printed_at = Column(DateTime, comment="内部标签打印时间")
+    batch_no = Column(String, comment="批次号（选填）")
+    date_code = Column(String, comment="生产日期/周期代码（选填）")
     is_restock = Column(Integer, default=0)
     restock_match_key = Column(String)
 
