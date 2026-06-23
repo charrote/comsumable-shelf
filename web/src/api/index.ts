@@ -20,6 +20,8 @@ export const deleteMaterialApi = (id: number) =>
   apiClient.delete(`/materials/${id}`)
 export const batchDeleteMaterialsApi = (ids: number[]) =>
   apiClient.post('/materials/batch-delete', { ids })
+export const batchDeleteMaterialsPermanentlyApi = (ids: number[]) =>
+  apiClient.post('/materials/batch-delete-permanently', { ids })
 export const batchUpdateMaterialsApi = (ids: number[], fields: any) =>
   apiClient.put('/materials/batch-update', { ids, fields })
 export const uploadMaterialsApi = (file: File, customerCode?: string) => {

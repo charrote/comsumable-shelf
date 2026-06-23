@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { Table, Button, Modal, Form, Input, Space, Tag, Popconfirm, Spin, message, Tabs, Select, Upload } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined, UploadOutlined, DownloadOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined, UploadOutlined, DownloadOutlined, ExclamationCircleOutlined, WarningOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import {
   getMaterialsApi, createMaterialApi, updateMaterialApi, deleteMaterialApi,
   getCustomersApi, getMappingsApi, createMappingApi, updateMappingApi, deleteMappingApi,
   uploadMaterialsApi, downloadMaterialTemplateApi,
-  batchDeleteMaterialsApi, batchUpdateMaterialsApi,
+  batchDeleteMaterialsApi, batchDeleteMaterialsPermanentlyApi, batchUpdateMaterialsApi,
 } from '../api'
 
 const { Option } = Select
@@ -168,6 +168,44 @@ export function MaterialManagementPage() {
     })
   }
 
+  const handleBatchDeletePermanently = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要永久删除的物料')
+      return
+    }
+    Modal.confirm({
+      title: '⚠️ 永久删除物料（不可恢复）',
+      icon: <WarningOutlined />,
+      width: 500,
+      content: (
+        <div>
+          <p style={{ color: '#ff4d4f', fontWeight: 'bold', fontSize: 16, marginBottom: 12 }}>
+            此操作将永久删除选中的 {selectedRowKeys.length} 个物料！
+          </p>
+          <p>删除条件：</p>
+          <ul style={{ paddingLeft: 20, lineHeight: 1.8 }}>
+            <li>如果物料被 <strong>库存记录、收料单、发料单、BOM、交易记录</strong> 等引用，将跳过该物料</li>
+            <li>仅删除未被任何模块引用的物料</li>
+          </ul>
+          <p style={{ marginTop: 12, color: '#faad14' }}>建议先使用"批量禁用"（软删除），确认无误后再执行永久删除。</p>
+        </div>
+      ),
+      okText: '确认永久删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await batchDeleteMaterialsPermanentlyApi(selectedRowKeys as number[])
+          message.success(res.data.message)
+          setSelectedRowKeys([])
+          loadData()
+        } catch (e: any) {
+          message.error('批量永久删除失败: ' + (e.response?.data?.detail || e.message))
+        }
+      },
+    })
+  }
+
   const handleBatchEdit = () => {
     if (selectedRowKeys.length === 0) {
       message.warning('请先选择要编辑的物料')
@@ -324,6 +362,7 @@ export function MaterialManagementPage() {
                   <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
                   <Button size="small" danger icon={<DeleteOutlined />} onClick={handleBatchDelete}>批量禁用</Button>
                   <Button size="small" icon={<EditOutlined />} onClick={handleBatchEdit}>批量编辑</Button>
+                  <Button size="small" type="primary" danger icon={<WarningOutlined />} onClick={handleBatchDeletePermanently}>永久删除</Button>
                 </Space>
               </div>
             )}

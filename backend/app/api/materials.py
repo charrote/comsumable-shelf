@@ -1,7 +1,7 @@
 """Material management API routes."""
 
 from typing import Optional, List
-from sqlalchemy import select, or_, delete
+from sqlalchemy import select, or_, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
@@ -531,3 +531,76 @@ async def batch_update_materials(
             m.qty_per_pallet = fields["qty_per_pallet"]
     await db.commit()
     return {"status": "ok", "message": f"已批量更新 {len(materials)} 个物料", "count": len(materials)}
+
+
+@router.post("/batch-delete-permanently")
+async def batch_delete_materials_permanently(
+    data: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete materials (hard delete from database).
+
+    Only deletes if the material is not referenced by any existing records
+    (inventory, receipts, transactions, BOMs, etc.).
+    """
+    ids = data.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="物料ID列表不能为空")
+
+    # Check references in child tables
+    ref_tables = [
+        ("inventory_reels", "material_id", "库存记录"),
+        ("receipt_reels", "material_id", "收料记录"),
+        ("issue_detail", "material_id", "发料明细"),
+        ("transactions", "material_id", "交易记录"),
+        ("boms", "product_material_id", "BOM（产品物料）"),
+        ("bom_items", "material_id", "BOM物料项"),
+        ("bom_alternatives", "alternative_material_id", "BOM替代料"),
+        ("customer_material_mappings", "internal_material_id", "客户物料映射"),
+    ]
+
+    deleted_ids = []
+    skipped = []
+
+    for mid in ids:
+        # Check each reference table
+        referenced_by = []
+        for table, fk_column, label in ref_tables:
+            result = await db.execute(
+                text(f"SELECT COUNT(*) FROM {table} WHERE {fk_column} = :mid"),
+                {"mid": mid},
+            )
+            count = result.scalar()
+            if count and count > 0:
+                referenced_by.append(f"{label}({count}条)")
+
+        if referenced_by:
+            # Get material code for better error message
+            mat_result = await db.execute(
+                select(MaterialMaster.code).where(MaterialMaster.id == mid)
+            )
+            mat_code = mat_result.scalar_one_or_none() or f"ID={mid}"
+            skipped.append({"id": mid, "code": mat_code, "references": referenced_by})
+            continue
+
+        # No references → safe to hard delete
+        await db.execute(
+            delete(MaterialMaster).where(MaterialMaster.id == mid)
+        )
+        deleted_ids.append(mid)
+
+    await db.commit()
+
+    msg_parts = []
+    if deleted_ids:
+        msg_parts.append(f"已永久删除 {len(deleted_ids)} 个物料")
+    if skipped:
+        msg_parts.append(f"{len(skipped)} 个物料因存在关联记录被跳过")
+
+    return {
+        "status": "ok",
+        "message": "；".join(msg_parts) if msg_parts else "未执行任何删除操作",
+        "deleted": deleted_ids,
+        "deleted_count": len(deleted_ids),
+        "skipped": skipped,
+    }
