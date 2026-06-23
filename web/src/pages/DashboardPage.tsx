@@ -71,7 +71,7 @@ export function DashboardPage() {
 
       if (results[0].status === 'fulfilled') {
         const d = results[0].value.data
-        materials = Array.isArray(d) ? d : d?.items ?? []
+        materials = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : d?.items ?? [])
       } else {
         errors.push('物料')
       }

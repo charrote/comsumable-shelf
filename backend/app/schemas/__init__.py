@@ -34,6 +34,18 @@ class MaterialCreate(BaseModel):
     category_id: Optional[int] = None
     qty_per_pallet: Optional[float] = None
     barcode_pattern: Optional[str] = None
+    active: Optional[int] = None
+
+
+class MaterialUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    spec: Optional[str] = None
+    unit: Optional[str] = None
+    category_id: Optional[int] = None
+    qty_per_pallet: Optional[float] = None
+    barcode_pattern: Optional[str] = None
+    active: Optional[int] = None
 
 
 class MaterialResponse(BaseModel):
@@ -45,6 +57,7 @@ class MaterialResponse(BaseModel):
     qty_per_pallet: Optional[float] = None
     category: Optional[str] = None
     stock_balance: Optional[float] = None
+    active: int = 1
 
 
 class MaterialUploadResponse(BaseModel):

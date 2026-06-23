@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card, Button, Tree, Modal, Form, Input, InputNumber, Select, Space, message,
@@ -35,6 +35,7 @@ export function BomDetailPage() {
   const [bom, setBom] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [materials, setMaterials] = useState<any[]>([])
+  const [fetching, setFetching] = useState(false)
   const [itemModalVisible, setItemModalVisible] = useState(false)
   const [editingItem, setEditingItem] = useState<BomItem | null>(null)
   const [parentId, setParentId] = useState<number | null>(null)
@@ -43,10 +44,42 @@ export function BomDetailPage() {
   const [itemForm] = Form.useForm()
   const [altForm] = Form.useForm()
 
+  const timerRef = useRef<any>(null)
+
+  const fetchMaterials = async (keyword?: string) => {
+    setFetching(true)
+    try {
+      const res = await getMaterialsApi(keyword ? { keyword } : {})
+      setMaterials(res.data?.data || res.data || [])
+    } catch {
+      message.error('加载物料失败')
+    } finally {
+      setFetching(false)
+    }
+  }
+
+  const handleSearch = (value: string) => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+    }
+    timerRef.current = setTimeout(() => {
+      fetchMaterials(value)
+    }, 500)
+  }
+
+  const handleMaterialChange = (value: number) => {
+    const selectedMat = materials.find((m: any) => m.id === value)
+    if (selectedMat) {
+      itemForm.setFieldsValue({
+        material_unit: selectedMat.unit || '盘'
+      })
+    }
+  }
+
   useEffect(() => {
     if (bomId) {
       fetchBom()
-      getMaterialsApi({}).then(res => setMaterials(res.data?.data || res.data || [])).catch(() => {})
+      fetchMaterials()
     }
   }, [bomId])
 
@@ -78,6 +111,7 @@ export function BomDetailPage() {
       quantity: item.quantity,
       position: item.position,
       remark: item.remark,
+      material_unit: item.material_unit,
     })
     setItemModalVisible(true)
   }
@@ -106,42 +140,18 @@ export function BomDetailPage() {
     }
   }
 
-  const handleDeleteItem = async (itemId: number) => {
-    try {
-      await deleteBomItemApi(Number(bomId), itemId)
-      message.success('明细已删除')
-      fetchBom()
-    } catch (e: any) {
-      message.error(e.response?.data?.detail || '删除失败')
-    }
-  }
-
-  const handleAddAlt = (item: BomItem) => {
-    setEditingAltItem(item)
-    altForm.resetFields()
-    altForm.setFieldsValue({ priority: 1, percentage: 100 })
-    setAltModalVisible(true)
-  }
-
   const handleSaveAlt = async (values: any) => {
     if (!editingAltItem?.id) return
-    const updatedItem: any = {
-      parent_id: editingAltItem.parent_id,
-      material_id: editingAltItem.material_id,
-      quantity: editingAltItem.quantity,
-      position: editingAltItem.position,
-      remark: editingAltItem.remark,
-      alternatives: [
-        ...(editingAltItem.alternatives || []),
-        {
-          alternative_material_id: values.alternative_material_id,
-          priority: values.priority,
-          percentage: values.percentage,
-        },
-      ],
+    const newAlternative = {
+      material_id: values.alternative_material_id,
+      priority: values.priority,
+      percentage: values.percentage,
     }
     try {
-      await updateBomItemApi(Number(bomId), editingAltItem.id, updatedItem)
+      const data = {
+        alternatives: [...(editingAltItem.alternatives || []), newAlternative],
+      }
+      await updateBomItemApi(Number(bomId), editingAltItem.id, data)
       message.success('替代料已添加')
       setAltModalVisible(false)
       fetchBom()
@@ -150,18 +160,10 @@ export function BomDetailPage() {
     }
   }
 
-  const handleDeleteAlt = async (item: BomItem, altId: number) => {
-    const updatedItem: any = {
-      parent_id: item.parent_id,
-      material_id: item.material_id,
-      quantity: item.quantity,
-      position: item.position,
-      remark: item.remark,
-      alternatives: (item.alternatives || []).filter((a: any) => a.id !== altId),
-    }
+  const handleDeleteItem = async (itemId: number) => {
     try {
-      await updateBomItemApi(Number(bomId), item.id!, updatedItem)
-      message.success('替代料已删除')
+      await deleteBomItemApi(Number(bomId), itemId)
+      message.success('明细已删除')
       fetchBom()
     } catch (e: any) {
       message.error(e.response?.data?.detail || '删除失败')
@@ -181,6 +183,13 @@ export function BomDetailPage() {
   }
 
   const buildTreeData = (items: BomItem[]): any[] => {
+    function handleAddAlt(item: BomItem): void {
+      setEditingAltItem(item)
+      altForm.resetFields()
+      altForm.setFieldsValue({ priority: 1, percentage: 100 })
+      setAltModalVisible(true)
+    }
+
     return items.map(item => ({
       key: item.id,
       title: (
@@ -191,35 +200,18 @@ export function BomDetailPage() {
           {item.remark && <Text type="secondary" style={{ fontSize: 12 }}>({item.remark})</Text>}
           {item.alternatives?.length > 0 && (
             <Tag color="orange" style={{ fontSize: 11 }}>
-              <SwapOutlined /> {item.alternatives.length}个替代料
+              <SwapOutlined />
+              {item.alternatives.length}个替代料
             </Tag>
           )}
           <Space size={4} onClick={(e) => e.stopPropagation()}>
-            <Button type="link" size="small" icon={<PlusOutlined />} onClick={() => handleAddItem(item.id!)}>
-              子项
-            </Button>
-            <Button type="link" size="small" icon={<SwapOutlined />} onClick={() => handleAddAlt(item)}>
-              替代
-            </Button>
+            <Button type="link" size="small" icon={<PlusOutlined />} onClick={() => handleAddItem(item.id!)}>子项</Button>
+            <Button type="link" size="small" icon={<SwapOutlined />} onClick={() => handleAddAlt(item)}>替代</Button>
             <Button type="link" size="small" icon={<EditOutlined />} onClick={() => handleEditItem(item)} />
             <Popconfirm title="确定删除？子项也会被删除" onConfirm={() => handleDeleteItem(item.id!)}>
               <Button type="link" size="small" danger icon={<DeleteOutlined />} />
             </Popconfirm>
           </Space>
-          {item.alternatives?.length > 0 && (
-            <div style={{ marginLeft: 16, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {item.alternatives.map((alt: any) => (
-                <Tag
-                  key={alt.id}
-                  color="blue"
-                  closable
-                  onClose={(e: any) => { e.preventDefault(); handleDeleteAlt(item, alt.id) }}
-                >
-                  {alt.alternative_material_code} (优先级:{alt.priority}, {alt.percentage}%)
-                </Tag>
-              ))}
-            </div>
-          )}
         </div>
       ),
       children: item.children?.length ? buildTreeData(item.children) : [],
@@ -285,11 +277,13 @@ export function BomDetailPage() {
         <Form form={itemForm} layout="vertical" onFinish={handleSaveItem}>
           <Form.Item name="material_id" label="物料" rules={[{ required: true, message: '请选择物料' }]}>
             <Select
-              placeholder="选择物料"
               showSearch
               optionFilterProp="label"
               options={materials.map((m: any) => ({ value: m.id, label: `${m.code} - ${m.name} (${m.unit})` }))}
-            />
+              onChange={handleMaterialChange}
+              onSearch={handleSearch}
+              notFoundContent={fetching ? <Spin size="small" /> : <Empty description="无匹配物料" />}>
+            </Select>
           </Form.Item>
           <Form.Item name="quantity" label="数量" rules={[{ required: true, message: '请输入数量' }]}>
             <InputNumber min={0.01} step={1} style={{ width: '100%' }} />
@@ -299,6 +293,9 @@ export function BomDetailPage() {
           </Form.Item>
           <Form.Item name="remark" label="备注">
             <Input placeholder="备注（可选）" />
+          </Form.Item>
+          <Form.Item name="material_unit" label="单位">
+            <Input disabled />
           </Form.Item>
         </Form>
       </Modal>

@@ -284,6 +284,12 @@ async def add_bom_item(
         if not parent or parent.bom_id != bom_id:
             raise HTTPException(status_code=400, detail="父级物料不存在或不属于此BOM")
 
+    if data.material_unit:
+        material = await db.get(MaterialMaster, data.material_id)
+        if material and material.unit != data.material_unit:
+            material.unit = data.material_unit
+            db.add(material)
+
     item = BomItem(
         bom_id=bom_id,
         parent_id=data.parent_id,
@@ -366,6 +372,12 @@ async def update_bom_item(
         if not parent or parent.bom_id != bom_id:
             raise HTTPException(status_code=400, detail="父级物料不存在")
     item.parent_id = data.parent_id
+
+    if data.material_unit:
+        material = await db.get(MaterialMaster, data.material_id)
+        if material and material.unit != data.material_unit:
+            material.unit = data.material_unit
+            db.add(material)
 
     await db.execute(delete(BomAlternative).where(BomAlternative.bom_item_id == item_id))
     for alt in data.alternatives:

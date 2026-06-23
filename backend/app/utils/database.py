@@ -24,14 +24,22 @@ async_session_factory = async_session  # alias for external use
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Yield a database session."""
+    """Yield a database session.
+
+    The handler is responsible for calling commit() on the session.
+    This function only performs a final commit if there is still an
+    active transaction (i.e. the handler did NOT already commit).
+    """
     async with async_session() as session:
         try:
             yield session
-            await session.commit()
         except Exception:
             await session.rollback()
             raise
+        else:
+            # Only commit if the handler hasn't already committed
+            if session.is_active:
+                await session.commit()
 
 
 async def init_db():

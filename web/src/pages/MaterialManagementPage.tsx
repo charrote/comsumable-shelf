@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Modal, Form, Input, Space, Tag, Popconfirm, Spin, message, Tabs, Select, Upload } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined, UploadOutlined, DownloadOutlined, ExclamationCircleOutlined, WarningOutlined } from '@ant-design/icons'
+import { useState, useEffect } from 'react'
+import { Table, Button, Modal, Form, Input, Space, Tag, Popconfirm, Spin, message, Tabs, Select, Upload, Switch } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined, UploadOutlined, DownloadOutlined, ExclamationCircleOutlined, WarningOutlined, EyeOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import {
   getMaterialsApi, createMaterialApi, updateMaterialApi, deleteMaterialApi,
@@ -18,6 +18,7 @@ export function MaterialManagementPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingRecord, setEditingRecord] = useState<any | null>(null)
   const [form] = Form.useForm()
+  const [showDisabled, setShowDisabled] = useState(false)
 
   // ── Upload state ──
   const [uploadModalOpen, setUploadModalOpen] = useState(false)
@@ -41,12 +42,32 @@ export function MaterialManagementPage() {
   // ── Customers ──
   const [customers, setCustomers] = useState<any[]>([])
 
+  // ── Pagination state ──
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [total, setTotal] = useState(0)
+  const [searchKeyword, setSearchKeyword] = useState<string | undefined>(undefined)
+
   // ── Load materials ──
-  const loadData = async (keyword?: string) => {
+  const loadData = async (keyword?: string, page?: number, size?: number) => {
     setLoading(true)
     try {
-      const res = await getMaterialsApi(keyword ? { keyword } : {})
-      setDataList(res.data?.data || res.data || [])
+      const params: any = {}
+      if (keyword !== undefined) params.keyword = keyword
+      else if (searchKeyword) params.keyword = searchKeyword
+      if (showDisabled) params.show_disabled = true
+      // Send pagination params to backend
+      params.page = page ?? currentPage
+      params.page_size = size ?? pageSize
+      const res = await getMaterialsApi(params)
+      const responseData = Array.isArray(res.data?.data) ? res.data.data : (Array.isArray(res.data) ? res.data : [])
+      setDataList(responseData)
+      if (typeof res.data?.total === 'number') {
+        setTotal(res.data.total)
+      }
+      // Sync current page/pageSize if backend returned them
+      if (typeof res.data?.page === 'number') setCurrentPage(res.data.page)
+      if (typeof res.data?.page_size === 'number') setPageSize(res.data.page_size)
     } catch {
       message.error('加载物料数据失败')
     } finally {
@@ -54,8 +75,30 @@ export function MaterialManagementPage() {
     }
   }
 
+  const handlePageChange = (page: number, size: number) => {
+    setCurrentPage(page)
+    setPageSize(size)
+    loadData(undefined, page, size)
+  }
+
+  const handleSearch = (value: string) => {
+    setSearchKeyword(value || undefined)
+    setCurrentPage(1)
+    loadData(value || undefined, 1, pageSize)
+  }
+
+  const toggleShowDisabled = () => {
+    setShowDisabled(prev => !prev)
+  }
+
+  // Reload when showDisabled changes (reset to page 1)
   useEffect(() => {
-    loadData()
+    setCurrentPage(1)
+    loadData(searchKeyword, 1, pageSize)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDisabled])
+
+  useEffect(() => {
     getCustomersApi().then(res => setCustomers(Array.isArray(res.data) ? res.data : [])).catch(() => {})
   }, [])
 
@@ -65,8 +108,19 @@ export function MaterialManagementPage() {
     try {
       const res = await getMappingsApi()
       setMappings(res.data || [])
-    } catch {
-      message.error('加载映射数据失败')
+    } catch (e: any) {
+      console.error('Mapping load error:', e)
+      // Extract error message from Axios response or error object
+      const respData = e.response?.data
+      let detail = ''
+      if (respData) {
+        detail = typeof respData === 'string' ? respData
+          : typeof respData.detail === 'string' ? respData.detail
+          : respData.detail ? JSON.stringify(respData.detail)
+          : JSON.stringify(respData)
+      }
+      const errMsg = detail || e.message || '未知错误'
+      message.error('加载映射数据失败: ' + errMsg)
     } finally {
       setMappingLoading(false)
     }
@@ -114,14 +168,23 @@ export function MaterialManagementPage() {
 
   const openEditModal = (record: any) => {
     setEditingRecord(record)
-    form.setFieldsValue(record)
+    // Convert active from int (1/0) to boolean for Switch
+    form.setFieldsValue({
+      ...record,
+      active: record.active === 1 || record.active === true,
+    })
     setModalOpen(true)
   }
 
   const handleSave = async (values: any) => {
     try {
       if (editingRecord) {
-        await updateMaterialApi(editingRecord.id, values)
+        // Convert active from boolean to int (1/0) for backend
+        const payload = { ...values }
+        if (payload.active !== undefined) {
+          payload.active = payload.active ? 1 : 0
+        }
+        await updateMaterialApi(editingRecord.id, payload)
         message.success('物料更新成功')
       } else {
         await createMaterialApi(values)
@@ -137,11 +200,25 @@ export function MaterialManagementPage() {
 
   const handleDelete = async (id: number) => {
     try {
-      await deleteMaterialApi(id)
-      message.success('物料已禁用')
+      const res = await deleteMaterialApi(id)
+      const data = res.data
+      if (data.cascaded_mappings) {
+        message.success(data.message || '物料已永久删除（关联的客户料号映射已自动清理）')
+      } else {
+        message.success(data.message || '物料已永久删除')
+      }
       loadData()
-    } catch {
-      message.error('禁用物料失败')
+    } catch (e: any) {
+      const detail = e.response?.data?.detail || e.message || '删除失败'
+      if (e.response?.status === 409) {
+        Modal.warning({
+          title: '无法删除物料',
+          content: <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{detail}</pre>,
+          okText: '确定',
+        })
+      } else {
+        message.error('删除物料失败: ' + detail)
+      }
     }
   }
 
@@ -196,7 +273,34 @@ export function MaterialManagementPage() {
       onOk: async () => {
         try {
           const res = await batchDeleteMaterialsPermanentlyApi(selectedRowKeys as number[])
-          message.success(res.data.message)
+          const { deleted_count, skipped = [] } = res.data
+          if (skipped.length > 0) {
+            const skipDetails = skipped.map((s: any) =>
+              `【${s.code || `ID=${s.id}`}】被跳过，原因：${s.references.join('、')}`
+            ).join('\n')
+            Modal.info({
+              title: '批量永久删除结果',
+              width: 600,
+              content: (
+                <div>
+                  <p style={{ color: deleted_count > 0 ? '#52c41a' : '#ff4d4f', fontWeight: 'bold' }}>
+                    {res.data.message}
+                  </p>
+                  {skipDetails && (
+                    <div style={{ marginTop: 16, padding: 12, background: '#fff2f0', borderRadius: 4 }}>
+                      <p style={{ fontWeight: 'bold', color: '#ff4d4f', marginBottom: 8 }}>被跳过的物料详情：</p>
+                      <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: 0, fontSize: 13 }}>
+                        {skipDetails}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              ),
+              okText: '确定',
+            })
+          } else {
+            message.success(res.data.message)
+          }
           setSelectedRowKeys([])
           loadData()
         } catch (e: any) {
@@ -289,7 +393,7 @@ export function MaterialManagementPage() {
     { title: '名称', dataIndex: 'name', key: 'name' },
     { title: '规格', dataIndex: 'spec', key: 'spec', width: 200 },
     { title: '单位', dataIndex: 'unit', key: 'unit', width: 60 },
-    { title: '每盘数量', dataIndex: 'qty_per_pallet', key: 'qty_per_pallet', width: 100 },
+    { title: '单位数量', dataIndex: 'qty_per_pallet', key: 'qty_per_pallet', width: 100 },
     { title: '库存', dataIndex: 'stock_balance', key: 'stock_balance', width: 100 },
     {
       title: '状态', dataIndex: 'active', key: 'active', width: 80,
@@ -301,7 +405,11 @@ export function MaterialManagementPage() {
       render: (_: any, record: any) => (
         <Space>
           <Button type="link" icon={<EditOutlined />} onClick={() => openEditModal(record)} />
-          <Popconfirm title="确认禁用该物料？" onConfirm={() => handleDelete(record.id)}>
+          <Popconfirm
+            title="确认永久删除该物料？"
+            description="此操作不可恢复。如果存在关联的客户料号映射将自动级联删除。"
+            onConfirm={() => handleDelete(record.id)}
+          >
             <Button type="link" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
@@ -345,8 +453,15 @@ export function MaterialManagementPage() {
               <Input.Search
                 placeholder="搜索物料编号/名称"
                 allowClear
-                onSearch={(value) => loadData(value || undefined)}
+                onSearch={handleSearch}
               />
+              <Button
+                icon={<EyeOutlined />}
+                type={showDisabled ? 'primary' : 'default'}
+                onClick={toggleShowDisabled}
+              >
+                {showDisabled ? '仅显示启用' : '显示所有数据'}
+              </Button>
               <Button icon={<DownloadOutlined />} onClick={downloadMaterialTemplateApi}>下载模板</Button>
               <Button icon={<UploadOutlined />} onClick={() => setUploadModalOpen(true)}>Excel导入</Button>
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreateModal}>
@@ -369,8 +484,16 @@ export function MaterialManagementPage() {
             <Table
               columns={materialColumns}
               dataSource={dataList}
-              pagination={{ pageSize: 10 }}
-              rowKey="code"
+              pagination={{
+                current: currentPage,
+                pageSize: pageSize,
+                total: total,
+                showSizeChanger: true,
+                pageSizeOptions: ['10', '20', '50', '100'],
+                showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条`,
+                onChange: handlePageChange,
+              }}
+              rowKey="id"
               rowSelection={{
                 selectedRowKeys,
                 onChange: setSelectedRowKeys,
@@ -394,7 +517,7 @@ export function MaterialManagementPage() {
             </Space>
           </div>
           <Spin spinning={mappingLoading}>
-            <Table columns={mappingColumns} dataSource={mappings} pagination={{ pageSize: 10 }} rowKey="id" />
+            <Table columns={mappingColumns} dataSource={mappings} pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], showTotal: (total, range) => `第 ${range[0]}-${range[1]} 条 / 共 ${total} 条` }} rowKey="id" />
           </Spin>
         </>
       ),
@@ -431,6 +554,14 @@ export function MaterialManagementPage() {
           <Form.Item name="barcode_pattern" label="条码规则">
             <Input placeholder="正则表达式匹配条码" />
           </Form.Item>
+          {editingRecord && (
+            <Form.Item name="active" label="状态" valuePropName="checked">
+              <Switch
+                checkedChildren="启用"
+                unCheckedChildren="禁用"
+              />
+            </Form.Item>
+          )}
           <Form.Item>
             <Space>
               <Button type="primary" htmlType="submit">保存</Button>

@@ -1,12 +1,14 @@
 """Material management API routes."""
 
 from typing import Optional, List
-from sqlalchemy import select, or_, delete, text
+from sqlalchemy import select, or_, delete, text, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
 from app.schemas import (
     MaterialCreate,
+    MaterialUpdate,
     MaterialResponse,
     MaterialUploadResponse,
     CustomerMaterialMappingCreate,
@@ -208,25 +210,56 @@ async def list_materials(
     customer_id: Optional[int] = Query(None),
     keyword: Optional[str] = Query(None),
     category_id: Optional[int] = Query(None),
+    show_disabled: Optional[bool] = Query(False),
+    page: Optional[int] = Query(None, ge=1, description="Page number (omit to disable pagination)"),
+    page_size: int = Query(20, ge=1, le=500, description="Items per page"),
     db: AsyncSession = Depends(get_db),
 ):
-    query = select(MaterialMaster)
+    # Build base query
+    base_query = select(MaterialMaster)
     if customer_id:
-        query = query.where(MaterialMaster.customer_id == customer_id)
+        base_query = base_query.where(MaterialMaster.customer_id == customer_id)
     if category_id:
-        query = query.where(MaterialMaster.category_id == category_id)
+        base_query = base_query.where(MaterialMaster.category_id == category_id)
     if keyword:
         kw = f"%{keyword}%"
-        query = query.where(
-            or_(MaterialMaster.code.ilike(kw), MaterialMaster.name.ilike(kw))
+        base_query = base_query.where(
+            or_(
+                MaterialMaster.code.ilike(kw),
+                MaterialMaster.name.ilike(kw),
+                MaterialMaster.spec.ilike(kw)
+            )
         )
-    query = query.where(MaterialMaster.active == 1).order_by(MaterialMaster.code)
+    if not show_disabled:
+        base_query = base_query.where(MaterialMaster.active == 1)
+    base_query = base_query.order_by(MaterialMaster.code)
+
+    # Get total count
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar()
+
+    # Apply pagination (only if page is specified; otherwise return all)
+    if page is not None:
+        query = base_query.offset((page - 1) * page_size).limit(page_size)
+    else:
+        query = base_query
+
     result = await db.execute(query)
     materials = result.scalars().all()
-    return [MaterialResponse(
-        id=m.id, code=m.code, name=m.name,
-        spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
-    ) for m in materials]
+
+    return {
+        "data": [
+            MaterialResponse(
+                id=m.id, code=m.code, name=m.name,
+                spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
+                active=m.active,
+            ) for m in materials
+        ],
+        "total": total,
+        "page": page if page is not None else 1,
+        "page_size": page_size,
+    }
 
 
 @router.post("")
@@ -253,72 +286,16 @@ async def create_material(
         id=material.id, code=material.code, name=material.name,
         spec=material.spec, unit=material.unit,
         qty_per_pallet=material.qty_per_pallet,
+        active=material.active,
     )
-
-
-@router.get("/{material_id}")
-async def get_material(
-    material_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(
-        select(MaterialMaster).where(MaterialMaster.id == material_id)
-    )
-    m = result.scalar_one_or_none()
-    if not m:
-        raise HTTPException(status_code=404, detail="物料不存在")
-    return MaterialResponse(
-        id=m.id, code=m.code, name=m.name,
-        spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
-    )
-
-
-@router.put("/{material_id}")
-async def update_material(
-    material_id: int,
-    data: MaterialCreate,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(
-        select(MaterialMaster).where(MaterialMaster.id == material_id)
-    )
-    m = result.scalar_one_or_none()
-    if not m:
-        raise HTTPException(status_code=404, detail="物料不存在")
-    m.code = data.code
-    m.name = data.name
-    m.spec = data.spec
-    m.unit = data.unit
-    m.category_id = data.category_id
-    m.qty_per_pallet = data.qty_per_pallet
-    m.barcode_pattern = data.barcode_pattern
-    await db.commit()
-    await db.refresh(m)
-    return MaterialResponse(
-        id=m.id, code=m.code, name=m.name,
-        spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
-    )
-
-
-@router.delete("/{material_id}")
-async def delete_material(
-    material_id: int,
-    db: AsyncSession = Depends(get_db),
-):
-    result = await db.execute(
-        select(MaterialMaster).where(MaterialMaster.id == material_id)
-    )
-    m = result.scalar_one_or_none()
-    if not m:
-        raise HTTPException(status_code=404, detail="物料不存在")
-    m.active = 0
-    await db.commit()
-    return {"status": "ok", "message": "物料已禁用"}
 
 
 # ═══════════════════════════════════════════════
 # Customer Material Mapping
 # ═══════════════════════════════════════════════
+# NOTE: These MUST be defined before /{material_id} routes to avoid
+# FastAPI path conflict — "/mappings" would otherwise be captured
+# as {material_id}=="mappings" and fail validation.
 
 @router.get("/mappings", response_model=List[CustomerMaterialMappingResponse])
 async def list_mappings(
@@ -365,7 +342,6 @@ async def create_mapping(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new customer-material mapping."""
-    # Verify customer exists
     cust_result = await db.execute(
         select(Customer).where(Customer.id == data.customer_id)
     )
@@ -373,7 +349,6 @@ async def create_mapping(
     if not customer:
         raise HTTPException(status_code=404, detail="客户不存在")
 
-    # Verify material exists
     mat_result = await db.execute(
         select(MaterialMaster).where(MaterialMaster.id == data.internal_material_id)
     )
@@ -381,7 +356,6 @@ async def create_mapping(
     if not material:
         raise HTTPException(status_code=404, detail="物料不存在")
 
-    # Check duplicate mapping
     dup = await db.execute(
         select(CustomerMaterialMapping).where(
             CustomerMaterialMapping.customer_id == data.customer_id,
@@ -441,7 +415,6 @@ async def update_mapping(
     await db.commit()
     await db.refresh(mapping)
 
-    # Fetch joined info for response
     mat_result = await db.execute(
         select(MaterialMaster).where(MaterialMaster.id == mapping.internal_material_id)
     )
@@ -479,6 +452,195 @@ async def delete_mapping(
     mapping.active = 0
     await db.commit()
     return {"status": "ok", "message": "映射已禁用"}
+
+
+@router.get("/{material_id}")
+async def get_material(
+    material_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == material_id)
+    )
+    m = result.scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="物料不存在")
+    return MaterialResponse(
+        id=m.id, code=m.code, name=m.name,
+        spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
+        active=m.active,
+    )
+
+
+@router.put("/{material_id}")
+async def update_material(
+    material_id: int,
+    data: MaterialUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == material_id)
+    )
+    m = result.scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="物料不存在")
+    if data.code is not None:
+        m.code = data.code
+    if data.name is not None:
+        m.name = data.name
+    if data.spec is not None:
+        m.spec = data.spec
+    if data.unit is not None:
+        m.unit = data.unit
+    if data.category_id is not None:
+        m.category_id = data.category_id
+    if data.qty_per_pallet is not None:
+        m.qty_per_pallet = data.qty_per_pallet
+    if data.barcode_pattern is not None:
+        m.barcode_pattern = data.barcode_pattern
+    if data.active is not None:
+        m.active = data.active
+    await db.commit()
+    await db.refresh(m)
+    return MaterialResponse(
+        id=m.id, code=m.code, name=m.name,
+        spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
+        active=m.active,
+    )
+
+
+@router.delete("/{material_id}")
+async def delete_material(
+    material_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Permanently delete a material (hard delete).
+
+    - If only customer_material_mappings references exist, auto-deletes them first,
+      then deletes the material.
+    - If other constraints exist (inventory, receipts, issues, BOMs, transactions),
+      returns an error with details.
+    """
+    result = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == material_id)
+    )
+    m = result.scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="物料不存在")
+
+    # Check FK references
+    ref_tables = [
+        ("inventory_reels", "material_id", "库存记录"),
+        ("receipt_reels", "material_id", "收料记录"),
+        ("issue_detail", "material_id", "发料明细"),
+        ("transactions", "material_id", "交易记录"),
+        ("boms", "product_material_id", "BOM（产品物料）"),
+        ("bom_items", "material_id", "BOM物料项"),
+        ("bom_alternatives", "alternative_material_id", "BOM替代料"),
+        ("customer_material_mappings", "internal_material_id", "客户料号映射"),
+    ]
+
+    # Dynamically discover additional FK references from PostgreSQL catalog
+    fk_discovery_sql = text("""
+        SELECT
+            pgc.conrelid::regclass::text AS ref_table,
+            a.attname AS ref_column,
+            pgc.conname AS constraint_name
+        FROM pg_constraint pgc
+        JOIN pg_attribute a
+            ON a.attnum = ANY(pgc.conkey)
+            AND a.attrelid = pgc.conrelid
+        WHERE pgc.contype = 'f'
+          AND pgc.conrelid::regclass::text != 'material_master'
+          AND pgc.confrelid::regclass::text = 'material_master'
+          AND pgc.conkey[1] = a.attnum
+    """)
+    try:
+        fk_result = await db.execute(fk_discovery_sql)
+        fk_rows = fk_result.fetchall()
+        for row in fk_rows:
+            ref_table = row[0]
+            ref_column = row[1]
+            constraint_name = row[2]
+            if not any(r[0] == ref_table for r in ref_tables):
+                ref_tables.append(
+                    (ref_table, ref_column, f"外键约束:{constraint_name}")
+                )
+    except Exception:
+        pass
+
+    referenced_by = []
+    has_mapping_ref = False
+    has_other_ref = False
+
+    for table, fk_column, label in ref_tables:
+        try:
+            count_result = await db.execute(
+                text(f"SELECT COUNT(*) FROM {table} WHERE {fk_column} = :mid"),
+                {"mid": material_id},
+            )
+            count = count_result.scalar()
+            if count and count > 0:
+                ref_info = f"{label}({count}条)"
+                referenced_by.append(ref_info)
+                if table == "customer_material_mappings":
+                    has_mapping_ref = True
+                else:
+                    has_other_ref = True
+        except Exception:
+            pass
+
+    if not referenced_by:
+        # No references → safe to hard delete
+        await db.execute(
+            delete(MaterialMaster).where(MaterialMaster.id == material_id)
+        )
+        await db.commit()
+        return {
+            "status": "ok",
+            "message": f"物料 '{m.code}' 已永久删除",
+            "deleted": True,
+        }
+
+    if not has_other_ref and has_mapping_ref:
+        # Only customer_material_mappings → auto-cascade: delete mappings first
+        try:
+            await db.execute(
+                text(
+                    "DELETE FROM customer_material_mappings "
+                    "WHERE internal_material_id = :mid"
+                ),
+                {"mid": material_id},
+            )
+            await db.execute(
+                delete(MaterialMaster).where(MaterialMaster.id == material_id)
+            )
+            await db.commit()
+            return {
+                "status": "ok",
+                "message": (
+                    f"物料 '{m.code}' 已永久删除"
+                    f"（自动清理 {referenced_by[0]}）"
+                ),
+                "deleted": True,
+                "cascaded_mappings": True,
+            }
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"删除失败（自动级联客户料号时异常）: {type(e).__name__}: {str(e)}",
+            )
+
+    # Has other references → cannot delete
+    ref_detail = "、".join(referenced_by)
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"物料 '{m.code}' 无法删除，已被以下模块引用：{ref_detail}。"
+            f"请先清理相关引用记录后再试。"
+        ),
+    )
 
 
 # ═══════════════════════════════════════════════
@@ -540,14 +702,29 @@ async def batch_delete_materials_permanently(
 ):
     """Permanently delete materials (hard delete from database).
 
-    Only deletes if the material is not referenced by any existing records
-    (inventory, receipts, transactions, BOMs, etc.).
+    Only deletes if the material is not referenced by any existing records.
     """
     ids = data.get("ids", [])
     if not ids:
         raise HTTPException(status_code=400, detail="物料ID列表不能为空")
 
-    # Check references in child tables
+    try:
+        return await _do_batch_delete_permanently(ids, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"批量永久删除异常: {type(e).__name__}: {str(e)}",
+        )
+
+
+async def _do_batch_delete_permanently(
+    ids: list[int],
+    db: AsyncSession,
+) -> dict:
+    """Internal implementation of batch permanent delete."""
     ref_tables = [
         ("inventory_reels", "material_id", "库存记录"),
         ("receipt_reels", "material_id", "收料记录"),
@@ -559,47 +736,122 @@ async def batch_delete_materials_permanently(
         ("customer_material_mappings", "internal_material_id", "客户物料映射"),
     ]
 
+    # Discover additional FK references from PostgreSQL catalog
+    fk_discovery_sql = text("""
+        SELECT
+            pgc.conrelid::regclass::text AS ref_table,
+            a.attname AS ref_column,
+            pgc.conname AS constraint_name
+        FROM pg_constraint pgc
+        JOIN pg_attribute a
+            ON a.attnum = ANY(pgc.conkey)
+            AND a.attrelid = pgc.conrelid
+        WHERE pgc.contype = 'f'
+          AND pgc.conrelid::regclass::text != 'material_master'
+          AND pgc.confrelid::regclass::text = 'material_master'
+          AND pgc.conkey[1] = a.attnum
+    """)
+    try:
+        result = await db.execute(fk_discovery_sql)
+        fk_rows = result.fetchall()
+        for row in fk_rows:
+            ref_table = row[0]
+            ref_column = row[1]
+            constraint_name = row[2]
+            if not any(r[0] == ref_table for r in ref_tables):
+                ref_tables.append(
+                    (ref_table, ref_column, f"外键约束:{constraint_name}")
+                )
+    except Exception:
+        pass
+
     deleted_ids = []
     skipped = []
 
+    # Phase 1: Check references and collect safe-to-delete IDs
+    safe_ids = []
     for mid in ids:
-        # Check each reference table
         referenced_by = []
         for table, fk_column, label in ref_tables:
-            result = await db.execute(
-                text(f"SELECT COUNT(*) FROM {table} WHERE {fk_column} = :mid"),
-                {"mid": mid},
-            )
-            count = result.scalar()
-            if count and count > 0:
-                referenced_by.append(f"{label}({count}条)")
+            try:
+                result = await db.execute(
+                    text(
+                        f"SELECT COUNT(*) FROM {table} WHERE {fk_column} = :mid"
+                    ),
+                    {"mid": mid},
+                )
+                count = result.scalar()
+                if count and count > 0:
+                    referenced_by.append(f"{label}({count}条)")
+            except Exception:
+                pass
 
         if referenced_by:
-            # Get material code for better error message
             mat_result = await db.execute(
                 select(MaterialMaster.code).where(MaterialMaster.id == mid)
             )
             mat_code = mat_result.scalar_one_or_none() or f"ID={mid}"
-            skipped.append({"id": mid, "code": mat_code, "references": referenced_by})
-            continue
+            skipped.append(
+                {"id": mid, "code": mat_code, "references": referenced_by}
+            )
+        else:
+            safe_ids.append(mid)
 
-        # No references → safe to hard delete
-        await db.execute(
-            delete(MaterialMaster).where(MaterialMaster.id == mid)
+    # Phase 2: Delete all safe IDs in one operation
+    if safe_ids:
+        try:
+            await db.execute(
+                delete(MaterialMaster).where(MaterialMaster.id.in_(safe_ids))
+            )
+            deleted_ids.extend(safe_ids)
+        except IntegrityError:
+            await db.rollback()
+            # Fallback: try deleting one by one
+            for mid in safe_ids:
+                try:
+                    await db.execute(
+                        delete(MaterialMaster).where(MaterialMaster.id == mid)
+                    )
+                    deleted_ids.append(mid)
+                except IntegrityError:
+                    await db.rollback()
+                    mat_result = await db.execute(
+                        select(MaterialMaster.code).where(
+                            MaterialMaster.id == mid
+                        )
+                    )
+                    mat_code = (
+                        mat_result.scalar_one_or_none() or f"ID={mid}"
+                    )
+                    skipped.append({
+                        "id": mid,
+                        "code": mat_code,
+                        "references": ["外键约束拦截"],
+                    })
+                except Exception:
+                    await db.rollback()
+
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500, detail="提交删除失败，请检查数据库连接"
         )
-        deleted_ids.append(mid)
-
-    await db.commit()
 
     msg_parts = []
     if deleted_ids:
         msg_parts.append(f"已永久删除 {len(deleted_ids)} 个物料")
     if skipped:
-        msg_parts.append(f"{len(skipped)} 个物料因存在关联记录被跳过")
+        msg_parts.append(
+            f"{len(skipped)} 个物料因存在关联记录被跳过"
+        )
 
     return {
         "status": "ok",
-        "message": "；".join(msg_parts) if msg_parts else "未执行任何删除操作",
+        "message": "；".join(msg_parts)
+        if msg_parts
+        else "未执行任何删除操作",
         "deleted": deleted_ids,
         "deleted_count": len(deleted_ids),
         "skipped": skipped,
