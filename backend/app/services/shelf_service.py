@@ -44,12 +44,12 @@ async def _slot_key_to_db(slot_key: str, shelf_id: int, db: AsyncSession) -> Opt
 
 async def _find_unbound_reel(db: AsyncSession, shelf_id: int) -> Optional[InventoryReel]:
     """Find the most recently created InventoryReel that has no slot
-    assigned and is in on_shelf status. This is the reel being put away."""
+    assigned and is in pending_shelving status. This is the reel being put away."""
     result = await db.execute(
         select(InventoryReel)
         .where(
             InventoryReel.shelf_slot_id.is_(None),
-            InventoryReel.status == "on_shelf",
+            InventoryReel.status == "pending_shelving",
         )
         .order_by(InventoryReel.created_at.desc())
         .limit(1)
@@ -207,6 +207,7 @@ class SlotPollingService:
                     )
                     if not existing.scalar_one_or_none():
                         reel.shelf_slot_id = slot.id
+                        reel.status = "on_shelf"  # pending_shelving → on_shelf
                         bound_reel_id = reel.id
                         logger.info(
                             "Auto-bound reel %d to slot %d (shelf %d)",

@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { Table, Button, Card, Space, Tag, Modal, Form, Input, InputNumber, Select, message, Descriptions, Typography, Spin, Row, Col, Statistic, Popconfirm, Radio } from 'antd'
-import { ScanOutlined, PlusOutlined, PrinterOutlined, CheckCircleOutlined, CloseCircleOutlined, HistoryOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Table, Button, Card, Space, Tag, Modal, Form, Input, InputNumber, Select, Checkbox, message, Descriptions, Typography, Spin, Row, Col, Statistic, Popconfirm, Radio } from 'antd'
+import { ScanOutlined, PlusOutlined, PrinterOutlined, CheckCircleOutlined, CloseCircleOutlined, HistoryOutlined, DeleteOutlined, ReloadOutlined, FormOutlined } from '@ant-design/icons'
 import {
   createReceiptApi, scanReceiptApi, getReceiptListApi, getReceiptApi,
   confirmReceiptApi, reprintLabelApi, getMaterialsApi, scanPreviewApi,
   deleteReceiptApi, batchDeleteReceiptsApi, createMappingApi,
+  manualEntryApi,
 } from '../api'
 
 const { Text, Title } = Typography
@@ -42,6 +43,18 @@ export function ReceiptPage() {
   const [newCode, setNewCode] = useState('')
   const [newName, setNewName] = useState('')
   const [scanBarcode, setScanBarcode] = useState('')
+  const [printLabel, setPrintLabel] = useState(false)
+  const [barcodeFocused, setBarcodeFocused] = useState(false)
+
+  // ── Manual Entry Mode (no-barcode labels) ──
+  const [manualEntryMode, setManualEntryMode] = useState(false)
+  const [manualMaterialCode, setManualMaterialCode] = useState('')
+  const [manualMaterialName, setManualMaterialName] = useState('')
+  const [manualSpec, setManualSpec] = useState('')
+  const [manualQty, setManualQty] = useState<number>(1)
+  const [manualBatch, setManualBatch] = useState('')
+  const [manualDateCode, setManualDateCode] = useState('')
+  const [manualSupplierCode, setManualSupplierCode] = useState('')
 
   const loadReceipts = async () => {
     setLoading(true)
@@ -53,6 +66,16 @@ export function ReceiptPage() {
   }
 
   useEffect(() => { loadReceipts(); loadMaterials() }, [])
+
+  // ── 扫码弹框打开时：确保条码框清空且聚焦 ──
+  useEffect(() => {
+    if (showScanModal) {
+      // 强制清空条码值（防御性：无论之前是什么状态，打开弹框时一定为空）
+      setScanBarcode('')
+      // 在 DOM 渲染完成后聚焦输入框
+      setTimeout(() => barcodeInputRef.current?.focus(), 150)
+    }
+  }, [showScanModal])
 
   const loadMaterials = async () => {
     try {
@@ -81,15 +104,24 @@ export function ReceiptPage() {
     if (id) {
       getReceiptApi(id).then(r => setCurrentReceipt(r.data)).catch(() => {})
     }
-    setShowScanModal(true)
+    // 先清空所有扫描状态，再打开弹框（useEffect 会确保条码框清空 + 聚焦）
+    setScanBarcode('')
+    setPrintLabel(false)
     setPreviewData(null)
     setScannedItems([])
     setSelectedMaterialId(null)
     setEditMaterialCode('')
     setEditMaterialName('')
     setIsNewMaterial(false)
-    setScanBarcode('')
-    setTimeout(() => barcodeInputRef.current?.focus(), 100)
+    setManualEntryMode(false)
+    setManualMaterialCode('')
+    setManualMaterialName('')
+    setManualSpec('')
+    setManualQty(1)
+    setManualBatch('')
+    setManualDateCode('')
+    setManualSupplierCode('')
+    setShowScanModal(true)
   }
 
   const handleBarcodeScan = async (barcode: string) => {
@@ -148,6 +180,7 @@ export function ReceiptPage() {
         qty: editQty,
         batch_no: editBatch || undefined,
         date_code: editDateCode || undefined,
+        print_label: printLabel,
       }
 
       const codeChanged = editMaterialCode && previewData?.material_code &&
@@ -248,10 +281,10 @@ export function ReceiptPage() {
     if (!currentReceipt?.id) return
     try {
       await confirmReceiptApi(currentReceipt.id)
-      message.success('收料单已确认')
-      loadReceiptDetail()
+      message.success('收料单已完成并锁单')
+      setDetailModal(false)
       loadReceipts()
-    } catch (e: any) { message.error(e.response?.data?.detail || '确认失败') }
+    } catch (e: any) { message.error(e.response?.data?.detail || '锁单失败') }
   }
 
   const handleDelete = async (id: number) => {
@@ -280,6 +313,55 @@ export function ReceiptPage() {
       if (res.data?.printed) message.success('标签已重新打印')
       else message.warning(res.data?.message || '打印失败')
     } catch (e: any) { message.error(e.response?.data?.detail || '重打失败') }
+  }
+
+  const handleManualEntry = async () => {
+    if (!currentReceipt?.id) return
+    if (!manualMaterialCode.trim()) {
+      message.warning('请输入物料编码')
+      return
+    }
+    setScanning(true)
+    try {
+      const res = await manualEntryApi(currentReceipt.id, {
+        operator: 'admin',
+        material_code: manualMaterialCode.trim(),
+        material_name: manualMaterialName.trim(),
+        spec: manualSpec.trim() || undefined,
+        quantity: manualQty,
+        batch_no: manualBatch.trim() || undefined,
+        date_code: manualDateCode.trim() || undefined,
+        supplier_code: manualSupplierCode.trim() || undefined,
+        print_label: printLabel,
+      })
+      const data = res.data
+      const reelCode = data.reel_code || `REEL#${data.reel_id}`
+      message.success(`入库成功！${reelCode}`)
+
+      setScannedItems(prev => [{
+        id: data.reel_id,
+        reel_id: data.reel_id,
+        reel_code: reelCode,
+        material_id: data.material_id,
+        material_code: data.material_code || manualMaterialCode,
+        material_name: data.material_name || manualMaterialName,
+        barcode: `[手工] ${manualMaterialCode}`,
+        qty: manualQty,
+        message: data.message,
+      }, ...prev])
+
+      // Reset manual form for next entry
+      setManualMaterialCode('')
+      setManualMaterialName('')
+      setManualSpec('')
+      setManualQty(1)
+      setManualBatch('')
+      setManualDateCode('')
+      setManualSupplierCode('')
+      setTimeout(() => barcodeInputRef.current?.focus(), 200)
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '手工录入失败')
+    } finally { setScanning(false) }
   }
 
   const handleRescan = () => {
@@ -395,8 +477,8 @@ export function ReceiptPage() {
               {currentReceipt.status === 'draft' && (
                 <>
                   <Button icon={<ScanOutlined />} onClick={() => startScan()}>扫码入库</Button>
-                  <Popconfirm title="确认该收料单？确认后不可修改" onConfirm={handleConfirm}>
-                    <Button type="primary" icon={<CheckCircleOutlined />}>确认收料</Button>
+                  <Popconfirm title="锁定该收料单？锁定后将无法继续扫码入库，不可修改" onConfirm={handleConfirm}>
+                    <Button type="primary" icon={<CheckCircleOutlined />}>完成并锁单</Button>
                   </Popconfirm>
                 </>
               )}
@@ -448,18 +530,40 @@ export function ReceiptPage() {
       <Modal
         title={`扫码入库 - ${currentReceipt?.receipt_no || ''}`}
         open={showScanModal}
-        onCancel={() => setShowScanModal(false)}
+        onCancel={() => {
+          setShowScanModal(false)
+          setPreviewData(null)
+          setScanBarcode('')
+          setManualEntryMode(false)
+          setManualMaterialCode('')
+          setManualMaterialName('')
+          setManualSpec('')
+          setManualQty(1)
+          setManualBatch('')
+          setManualDateCode('')
+          setManualSupplierCode('')
+        }}
+        destroyOnClose
         width={720}
         footer={
           previewData ? (
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Button
-                icon={<ReloadOutlined />}
-                onClick={handleRescan}
-                disabled={scanning}
-              >
-                重扫
-              </Button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <Space>
+                <Checkbox
+                  checked={printLabel}
+                  onChange={e => setPrintLabel(e.target.checked)}
+                  disabled={scanning}
+                >
+                  打印标签
+                </Checkbox>
+                <Button
+                  icon={<ReloadOutlined />}
+                  onClick={handleRescan}
+                  disabled={scanning}
+                >
+                  重扫
+                </Button>
+              </Space>
               <Space>
                 <Button onClick={() => setShowScanModal(false)} disabled={scanning}>
                   关闭
@@ -487,38 +591,160 @@ export function ReceiptPage() {
           )
         }
       >
-        {/* ── 扫码输入框（始终固定在头部） ── */}
+        {/* ── 扫码 / 手工录入切换区 ── */}
         <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
           padding: '12px 16px',
-          background: previewData ? '#f6f8fa' : '#e6f7ff',
-          border: previewData ? '1px solid #d9d9d9' : '1px solid #91d5ff',
+          background: !manualEntryMode ? (previewData ? '#f6f8fa' : '#e6f7ff') : '#fff7e6',
+          border: !manualEntryMode ? (previewData ? '1px solid #d9d9d9' : '1px solid #91d5ff') : '1px solid #ffd591',
           borderRadius: 8,
           marginBottom: 12,
-          position: 'sticky',
-          top: 0,
-          zIndex: 1,
         }}>
-          <div style={{ flex: 1 }}>
-            <Input.Search
-              ref={barcodeInputRef}
-              placeholder="扫描供应商条码..."
-              enterButton={<ScanOutlined />}
-              loading={scanning}
-              value={scanBarcode}
-              onChange={e => setScanBarcode(e.target.value)}
-              onSearch={val => {
-                setScanBarcode(val)
-                handleBarcodeScan(val)
+          {/* 模式切换按钮 */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: manualEntryMode ? 12 : 0 }}>
+            <Button
+              type={!manualEntryMode ? 'primary' : 'default'}
+              icon={<ScanOutlined />}
+              size="small"
+              onClick={() => {
+                setManualEntryMode(false)
+                setPreviewData(null)
+                setTimeout(() => barcodeInputRef.current?.focus(), 100)
               }}
-              autoFocus
-              size="large"
-            />
+              style={{ borderRadius: 4 }}
+            >
+              扫码录入
+            </Button>
+            <Button
+              type={manualEntryMode ? 'primary' : 'default'}
+              icon={<FormOutlined />}
+              size="small"
+              onClick={() => {
+                setManualEntryMode(true)
+                setPreviewData(null)
+                setScanBarcode('')
+              }}
+              style={{ borderRadius: 4 }}
+            >
+              手工录入
+            </Button>
+            {!previewData && !manualEntryMode && !scanning && (
+              <Tag color={barcodeFocused ? 'processing' : 'error'} style={{ margin: 0, fontSize: 13, marginLeft: 'auto' }}>
+                {barcodeFocused ? '等待扫描...' : '等待扫描'}
+              </Tag>
+            )}
           </div>
-          {!previewData && !scanning && (
-            <Tag color="processing" style={{ margin: 0, fontSize: 13 }}>等待扫描...</Tag>
+
+          {/* 扫码输入（仅扫码模式） */}
+          {!manualEntryMode && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <Input.Search
+                  key={showScanModal && !manualEntryMode ? 'barcode-input-active' : 'barcode-input-hidden'}
+                  ref={barcodeInputRef}
+                  placeholder="扫描供应商条码..."
+                  enterButton={<ScanOutlined />}
+                  loading={scanning}
+                  value={scanBarcode}
+                  onChange={e => setScanBarcode(e.target.value)}
+                  onSearch={val => {
+                    setScanBarcode(val)
+                    handleBarcodeScan(val)
+                  }}
+                  onFocus={() => setBarcodeFocused(true)}
+                  onBlur={() => setBarcodeFocused(false)}
+                  autoFocus
+                  size="large"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 手工录入表单（仅手工模式） */}
+          {manualEntryMode && (
+            <Row gutter={[12, 8]}>
+              <Col span={12}>
+                <Form.Item label="物料编码" style={{ marginBottom: 0 }}>
+                  <Input
+                    value={manualMaterialCode}
+                    onChange={e => setManualMaterialCode(e.target.value)}
+                    placeholder="必填：输入物料编码"
+                    size="middle"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="物料名称" style={{ marginBottom: 0 }}>
+                  <Input
+                    value={manualMaterialName}
+                    onChange={e => setManualMaterialName(e.target.value)}
+                    placeholder="输入物料名称"
+                    size="middle"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item label="规格" style={{ marginBottom: 0 }}>
+                  <Input
+                    value={manualSpec}
+                    onChange={e => setManualSpec(e.target.value)}
+                    placeholder="如：0805"
+                    size="middle"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item label="数量" style={{ marginBottom: 0 }}>
+                  <InputNumber
+                    min={0.01}
+                    value={manualQty}
+                    onChange={v => setManualQty(v || 1)}
+                    style={{ width: '100%' }}
+                    size="middle"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item label="供应商代码" style={{ marginBottom: 0 }}>
+                  <Input
+                    value={manualSupplierCode}
+                    onChange={e => setManualSupplierCode(e.target.value)}
+                    placeholder="选填"
+                    size="middle"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="批次号" style={{ marginBottom: 0 }}>
+                  <Input
+                    value={manualBatch}
+                    onChange={e => setManualBatch(e.target.value)}
+                    placeholder="选填"
+                    size="middle"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="生产周期" style={{ marginBottom: 0 }}>
+                  <Input
+                    value={manualDateCode}
+                    onChange={e => setManualDateCode(e.target.value)}
+                    placeholder="如：2401"
+                    size="middle"
+                  />
+                </Form.Item>
+              </Col>
+              <Col span={24} style={{ textAlign: 'right', marginTop: 8 }}>
+                <Button
+                  type="primary"
+                  icon={<FormOutlined />}
+                  loading={scanning}
+                  onClick={handleManualEntry}
+                  disabled={!manualMaterialCode.trim()}
+                >
+                  确认手工入库
+                </Button>
+              </Col>
+            </Row>
           )}
         </div>
 

@@ -2,7 +2,7 @@
 
 from typing import Optional, List
 from datetime import datetime
-from sqlalchemy import select, update
+from sqlalchemy import select, update, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
@@ -92,6 +92,8 @@ async def scan_reel_for_direct_out(
 async def get_inventory(
     customer_id: Optional[int] = Query(None),
     material_id: Optional[int] = Query(None),
+    status: Optional[str] = Query(None, description="按状态筛选: pending_shelving / on_shelf / in_use / tracking / exhausted"),
+    keyword: Optional[str] = Query(None, description="搜索关键词（物料编号 / Reel 编码 / Reel ID）"),
     db: AsyncSession = Depends(get_db),
 ):
     """Query inventory pallets."""
@@ -111,6 +113,15 @@ async def get_inventory(
         query = query.where(InventoryReel.customer_id == customer_id)
     if material_id:
         query = query.where(InventoryReel.material_id == material_id)
+    if status:
+        query = query.where(InventoryReel.status == status)
+    if keyword:
+        keyword_like = f"%{keyword}%"
+        query = query.where(
+            MaterialMaster.code.ilike(keyword_like)
+            | InventoryReel.reel_code.ilike(keyword_like)
+            | InventoryReel.id.cast(String).ilike(keyword_like)
+        )
 
     result = await db.execute(query)
     rows = result.all()
@@ -201,7 +212,7 @@ async def update_inventory_pallet(
 
     # 3. Update status (if provided)
     if data.status is not None:
-        valid_statuses = {"on_shelf", "in_use", "tracking", "exhausted"}
+        valid_statuses = {"pending_shelving", "on_shelf", "in_use", "tracking", "exhausted"}
         if data.status not in valid_statuses:
             raise HTTPException(
                 status_code=400,

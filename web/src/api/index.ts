@@ -88,6 +88,20 @@ export const directOutboundApi = (reelId: number, data: {
 // Receipt
 export const createReceiptApi = (data: { type: string; operator: string; customer_id?: number }) =>
   apiClient.post('/receipts', data)
+export const manualEntryApi = (
+  receiptId: number,
+  data: {
+    operator: string
+    material_code: string
+    material_name?: string
+    spec?: string
+    quantity: number
+    batch_no?: string
+    date_code?: string
+    supplier_code?: string
+    print_label?: boolean
+  }
+) => apiClient.post(`/receipts/${receiptId}/manual-entry`, data)
 export const scanReceiptApi = (
   receiptId: number,
   data: {
@@ -100,6 +114,7 @@ export const scanReceiptApi = (
     new_material_name?: string
     printer_ip?: string
     printer_port?: number
+    print_label?: boolean
   }
 ) => apiClient.post(`/receipts/${receiptId}/scan`, data)
 export const scanPreviewApi = (receiptId: number, data: { barcode: string; operator: string; qty?: number }) =>
@@ -336,3 +351,25 @@ export const clearHardwareDebugLogsApi = () =>
 // Mainboard slot states (from controller's cache)
 export const getMainboardSlotsApi = (face: 'A' | 'B', count: number = 700) =>
   apiClient.get('/hardware-debug/mainboard/slots', { params: { face, count } })
+
+// ── Barcode Definition ──
+export const getBarcodeDefinitionsApi = () =>
+  apiClient.get('/barcode-definitions')
+export const getBarcodeDefinitionApi = (id: number) =>
+  apiClient.get(`/barcode-definitions/${id}`)
+export const createBarcodeDefinitionApi = (data: {
+  name: string
+  delimiter: string
+  sample_barcode: string
+  segments: { segment_index: number; segment_sample?: string; field_mapping: string; field_label: string }[]
+}) => apiClient.post('/barcode-definitions', data)
+export const updateBarcodeDefinitionApi = (id: number, data: any) =>
+  apiClient.put(`/barcode-definitions/${id}`, data)
+export const deleteBarcodeDefinitionApi = (id: number) =>
+  apiClient.delete(`/barcode-definitions/${id}`)
+export const previewBarcodeSplitApi = (sampleBarcode: string, delimiter: string) =>
+  apiClient.post('/barcode-definitions/preview', { sample_barcode: sampleBarcode, delimiter })
+export const testBarcodeDefinitionApi = (definitionId: number, barcode: string) =>
+  apiClient.post('/barcode-definitions/test', { definition_id: definitionId, barcode })
+export const getFieldMappingsApi = () =>
+  apiClient.get('/barcode-definitions/field-mappings')

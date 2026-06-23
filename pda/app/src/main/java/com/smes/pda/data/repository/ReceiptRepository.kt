@@ -22,6 +22,20 @@ open class ReceiptRepository @Inject constructor(
         }
     }
 
+    open suspend fun manualEntry(
+        receiptId: Int,
+        request: ManualEntryRequest,
+    ): ApiResult<ReceiptScanResponse> {
+        return try {
+            val response: ReceiptScanResponse = httpService.post("receipts/$receiptId/manual-entry", request)
+            ApiResult.Success(response)
+        } catch (e: HttpException) {
+            ApiResult.Error(e.responseBody, e.statusCode)
+        } catch (e: Exception) {
+            ApiResult.Error(e.message ?: "手工录入失败")
+        }
+    }
+
     open suspend fun scanInbound(
         receiptId: Int,
         barcode: String,

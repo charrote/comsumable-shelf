@@ -22,6 +22,7 @@ from app.api.customers import router as customers_router
 from app.api.hardware_debug import router as hardware_debug_router
 from app.api.dashboard import router as dashboard_router
 from app.api.shelving import router as shelving_router
+from app.api.barcode_definition import router as barcode_definition_router
 from app.services.led_service import LedService
 from app.services.shelf_service import SlotPollingService
 
@@ -110,6 +111,7 @@ app.include_router(customers_router, prefix=settings.API_PREFIX)
 app.include_router(hardware_debug_router, prefix=settings.API_PREFIX)
 app.include_router(dashboard_router, prefix=settings.API_PREFIX)
 app.include_router(shelving_router, prefix=settings.API_PREFIX)
+app.include_router(barcode_definition_router, prefix=settings.API_PREFIX)
 
 
 @app.get(f"{settings.API_PREFIX}/system/info")

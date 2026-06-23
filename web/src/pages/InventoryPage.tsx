@@ -6,15 +6,16 @@ import { getInventoryApi, directOutboundApi } from '../api'
 const { Option } = Select
 
 interface InventoryItem {
-  reelId: number | string
+  reel_id: number
   material_code: string
   quantity: number
   first_in_time: string
-  shelf_slot_id: number | string
+  shelf_slot_id: number | null
   status: string
 }
 
 const statusColors: Record<string, string> = {
+  pending_shelving: 'gold',
   on_shelf: 'green',
   in_use: 'blue',
   tracking: 'orange',
@@ -22,6 +23,7 @@ const statusColors: Record<string, string> = {
 }
 
 const statusLabels: Record<string, string> = {
+  pending_shelving: '待上架',
   on_shelf: '在架',
   in_use: '使用中',
   tracking: '跟踪中',
@@ -32,7 +34,7 @@ export function InventoryPage() {
   const [data, setData] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
-  const [status, setStatus] = useState<string | undefined>(undefined)
+  const [status, setStatus] = useState<string>('')
   const [total, setTotal] = useState(0)
 
   // ── Direct outbound modal ──
@@ -79,7 +81,7 @@ export function InventoryPage() {
     }
     setDirectLoading(true)
     try {
-      const palletId = Number(directTarget.reelId)
+      const palletId = Number(directTarget.reel_id)
       const res = await directOutboundApi(palletId, {
         quantity: directQty,
         operator: 'web',
@@ -97,7 +99,7 @@ export function InventoryPage() {
   }
 
   const columns = [
-    { title: '库存盘号', dataIndex: 'reelId', key: 'reelId', width: 120 },
+    { title: '库存盘号', dataIndex: 'reel_id', key: 'reel_id', width: 120 },
     { title: '物料编号', dataIndex: 'material_code', key: 'material_code' },
     { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 80 },
     { title: '入库时间', dataIndex: 'first_in_time', key: 'first_in_time', width: 160 },
@@ -153,12 +155,12 @@ export function InventoryPage() {
             allowClear
           />
           <Select
-            placeholder="状态筛选"
             style={{ width: 120 }}
             value={status}
             onChange={(val) => setStatus(val)}
-            allowClear
           >
+            <Option value="">全部</Option>
+            <Option value="pending_shelving">待上架</Option>
             <Option value="on_shelf">在架</Option>
             <Option value="in_use">使用中</Option>
             <Option value="tracking">跟踪中</Option>
@@ -168,7 +170,7 @@ export function InventoryPage() {
         <Table
           columns={columns}
           dataSource={data}
-          rowKey={(record) => String(record.reelId)}
+          rowKey={(record) => String(record.reel_id)}
           pagination={{ pageSize: 20, total }}
         />
 
@@ -194,7 +196,7 @@ export function InventoryPage() {
           {directTarget && (
             <Form layout="vertical">
               <p>
-                <strong>盘号：</strong>#{directTarget.reelId}
+                <strong>盘号：</strong>#{directTarget.reel_id}
               </p>
               <p>
                 <strong>物料：</strong>{directTarget.material_code}

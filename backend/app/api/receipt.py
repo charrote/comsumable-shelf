@@ -10,10 +10,12 @@ from app.schemas import (
     ReceiptAssignSlotRequest, ReceiptDetailResponse, MaterialCandidate,
     ReprintLabelRequest, ReprintLabelResponse,
     BarcodePreviewResponse, BarcodePreviewItem,
+    ManualEntryRequest,
 )
 from app.utils.database import get_db
 from app.utils.barcode import parse_barcode, extract_supplier_info
 from app.models import Receipt, ReceiptReel, InventoryReel, MaterialMaster, Shelf, ShelfSlot, Transaction
+from app.api.barcode_definition import parse_barcode_with_definitions
 
 router = APIRouter(prefix="/receipts", tags=["Receipt/Inbound"])
 
@@ -439,16 +441,25 @@ async def scan_preview(
             message="条码不能为空"
         )
 
+    # ── 0) 先尝试用条码定义解析（固定格式条码优先） ──
+    bd_definition, bd_fields = await parse_barcode_with_definitions(db, barcode)
+    bd_material_code = bd_fields.get("material_code", "") if bd_fields else ""
+
     # 1) Parse barcode for material match
     parsed = await parse_barcode(barcode, db)
     supplier_info = extract_supplier_info(barcode)
+
+    # 如果条码定义解析出了物料编码，优先使用
+    if bd_material_code:
+        parsed.material_code = bd_material_code
 
     # 2) Find material candidates (use receipt's customer_id)
     receipt_result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
     receipt = receipt_result.scalar_one_or_none()
     preview_customer_id = receipt.customer_id if receipt else 1
     from app.services.receipt_service import match_material_by_barcode
-    match = await match_material_by_barcode(db, barcode, preview_customer_id)
+    search_code = bd_material_code if bd_material_code else barcode
+    match = await match_material_by_barcode(db, search_code, preview_customer_id)
 
     candidates = []
     if match.candidates:
@@ -464,37 +475,86 @@ async def scan_preview(
         ]
 
     # 3) Determine quantity from barcode or default
+    # 优先使用条码定义解析出的数量/批次/日期
+    bd_batch_no = bd_fields.get("batch_no", "") if bd_fields else ""
+    bd_date_code = bd_fields.get("date_code", "") if bd_fields else ""
+    bd_qty_str = bd_fields.get("quantity", "") if bd_fields else ""
     qty = supplier_info.get("quantity") or data.qty or 1.0
+    if bd_qty_str and qty == 1.0:
+        try:
+            qty = float(bd_qty_str)
+        except (ValueError, TypeError):
+            pass
 
     # 4) Build extracted fields list for display
     extracted_fields = []
-    field_map = [
-        ("material_code", "物料编码", parsed.material_code or barcode),
-        ("quantity", "数量", str(qty)),
-        ("unit", "单位", "盘"),
-        ("batch_no", "批次号", supplier_info.get("batch_no") or ""),
-        ("date_code", "生产日期/周期", supplier_info.get("date_code") or ""),
-        ("spec", "规格", supplier_info.get("spec") or ""),
-        ("supplier_code", "供应商编码", supplier_info.get("supplier_code") or ""),
-    ]
-    for key, label, value in field_map:
-        if value:
-            extracted_fields.append(BarcodePreviewItem(
-                field=key, label=label, value=value, editable=True
-            ))
 
-    # 5) Get material info
-    material_code = parsed.material_code or barcode
-    material_name = ""
-    material_id = parsed.matched_material_id
-    if material_id:
+    # 优先使用条码定义解析出的字段
+    if bd_fields:
+        for key, label in [
+            ("material_code", "物料编码"),
+            ("material_name", "物料名称"),
+            ("spec", "规格型号"),
+            ("unit", "单位"),
+            ("qty_per_pallet", "每盘数量"),
+            ("quantity", "数量"),
+            ("batch_no", "批次号"),
+            ("date_code", "生产日期/周期"),
+            ("customer_material_code", "客户物料编码"),
+        ]:
+            if key in bd_fields and bd_fields[key]:
+                extracted_fields.append(BarcodePreviewItem(
+                    field=key, label=label, value=bd_fields[key], editable=True
+                ))
+
+    # 5) Get material info — 优先使用 match 结果（基于条码定义精准提取的物料编码）
+    material_unit = "盘"
+    material_spec = ""
+    if match.material_id:
+        material_id = match.material_id
+        material_code = match.material_code
+        material_name = match.material_name
+        # 从主数据获取规格和单位
         mat_result = await db.execute(
             select(MaterialMaster).where(MaterialMaster.id == material_id)
         )
         mat = mat_result.scalar_one_or_none()
         if mat:
-            material_code = mat.code
-            material_name = mat.name
+            material_spec = mat.spec or ""
+            material_unit = mat.unit or "盘"
+    else:
+        material_code = parsed.material_code or barcode
+        material_name = ""
+        material_id = parsed.matched_material_id
+        if material_id:
+            mat_result = await db.execute(
+                select(MaterialMaster).where(MaterialMaster.id == material_id)
+            )
+            mat = mat_result.scalar_one_or_none()
+            if mat:
+                material_code = mat.code
+                material_name = mat.name
+                material_spec = mat.spec or ""
+                material_unit = mat.unit or "盘"
+
+    # 补充条码定义未覆盖的字段（此时已拿到物料主数据，优先填充）
+    existing_keys = {item.field for item in extracted_fields}
+    field_map = [
+        ("material_code", "物料编码", parsed.material_code or barcode),
+        ("quantity", "数量", str(qty)),
+        ("batch_no", "批次号", bd_batch_no or supplier_info.get("batch_no") or ""),
+        ("date_code", "生产日期/周期", bd_date_code or supplier_info.get("date_code") or ""),
+        ("spec", "规格型号", material_spec or supplier_info.get("spec") or ""),
+        ("unit", "单位", material_unit),
+        ("supplier_code", "供应商编码", supplier_info.get("supplier_code") or ""),
+    ]
+    # 定义字段已在下拉列表中预先配置，因此定义中的 unit/spec 已在第 4 步写入
+    # 后备字段不再重复写入，但确保关键字段不含空值
+    for key, label, value in field_map:
+        if value and key not in existing_keys:
+            extracted_fields.append(BarcodePreviewItem(
+                field=key, label=label, value=value, editable=True
+            ))
 
     status = "ok" if match.action == "auto_proceed" else "pending_review" if match.candidates else "new_material"
     if match.action == "new_material":
@@ -508,14 +568,128 @@ async def scan_preview(
         material_name=material_name,
         material_id=material_id,
         quantity=qty,
-        unit="盘",
-        batch_no=supplier_info.get("batch_no") or "",
-        date_code=supplier_info.get("date_code") or "",
-        spec=supplier_info.get("spec") or "",
+        unit=material_unit,
+        batch_no=bd_batch_no or supplier_info.get("batch_no") or "",
+        date_code=bd_date_code or supplier_info.get("date_code") or "",
+        spec=material_spec or supplier_info.get("spec") or "",
         supplier_code=supplier_info.get("supplier_code") or "",
         extracted_fields=extracted_fields,
         candidates=candidates,
         message=match.message or f"解析完成，置信度 {parsed.confidence:.0%}",
+    )
+
+
+@router.post("/{receipt_id}/manual-entry", response_model=ReceiptScanResponse)
+async def manual_entry(
+    receipt_id: int,
+    data: ManualEntryRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """手工录入入库 — 针对无条码标签的物料。
+
+    流程：
+      1. 生成虚拟条码 MANUAL-{receipt_id}-{seq}
+      2. 按物料编码查找或自动创建物料
+      3. 创建 InventoryReel + ReceiptReel
+    """
+    from app.services.receipt_service import finalize_receipt_reel, auto_create_material
+
+    # ── Verify receipt exists ──
+    receipt_result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = receipt_result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+    if receipt.status != "draft":
+        raise HTTPException(status_code=400, detail=f"入库单状态为 {receipt.status}，无法入库")
+
+    # ── Generate virtual barcode: MANUAL-{receipt_id}-{seq} ──
+    today_str = datetime.now().strftime("%Y%m%d")
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(ReceiptReel)
+        .where(
+            ReceiptReel.receipt_id == receipt_id,
+            ReceiptReel.barcode.like(f"MANUAL-{receipt_id}-%"),
+        )
+    )
+    seq = (count_result.scalar() or 0) + 1
+    virtual_barcode = f"MANUAL-{receipt_id}-{today_str}-{seq:03d}"
+
+    # ── Resolve printer config ──
+    from app.config import settings as app_settings
+    printer_ip = data.printer_ip or app_settings.LABEL_PRINTER_IP
+    printer_port = data.printer_port or app_settings.LABEL_PRINTER_PORT
+    if not data.print_label:
+        printer_ip = None
+        printer_port = None
+
+    # ── Find or auto-create material by code ──
+    mat_result = await db.execute(
+        select(MaterialMaster).where(
+            MaterialMaster.code == data.material_code.strip(),
+            MaterialMaster.active == 1,
+        )
+    )
+    material = mat_result.scalar_one_or_none()
+
+    if material:
+        material_id = material.id
+        material_code = material.code
+        material_name = material.name
+        manual_flag = 2
+        confidence = 1.0
+    else:
+        # Auto-create new material
+        code = data.material_code.strip()
+        name = data.material_name.strip() or code
+        material = await auto_create_material(
+            db,
+            code=code,
+            name=name,
+            customer_id=receipt.customer_id,
+            customer_material_code=code,
+        )
+        material_id = material.id
+        material_code = material.code
+        material_name = material.name
+        manual_flag = 2
+        confidence = 1.0
+
+    # ── Create InventoryReel + ReceiptReel ──
+    result = await finalize_receipt_reel(
+        db=db,
+        receipt_id=receipt_id,
+        material_id=material_id,
+        barcode=virtual_barcode,
+        quantity=data.quantity,
+        operator=data.operator,
+        customer_id=receipt.customer_id,
+        customer_material_code=data.supplier_code or material_code,
+        customer_barcode=virtual_barcode,
+        ocr_confidence=confidence,
+        manual_intervention=manual_flag,
+        auto_assign_slot=True,
+        printer_ip=printer_ip,
+        printer_port=printer_port,
+        batch_no=data.batch_no,
+        date_code=data.date_code,
+    )
+
+    spec_str = data.spec or ""
+
+    return ReceiptScanResponse(
+        status="ok",
+        action="first_in",
+        reel_id=result["reel_id"],
+        reel_code=result.get("reel_code", ""),
+        assigned_slot=result["assigned_slot"],
+        quantity=result["quantity"],
+        material_id=material_id,
+        material_code=material_code,
+        material_name=material_name,
+        confidence=confidence,
+        label_printed=result.get("label_printed", False),
+        message=f"手工录入入库成功，数量 {data.quantity} 盘（虚拟条码: {virtual_barcode}）",
     )
 
 
@@ -545,11 +719,34 @@ async def scan_receipt(
     if not receipt:
         raise HTTPException(status_code=404, detail="入库单不存在")
 
+    # ── Resolve printer config (print_label flag + system config fallback) ──
+    from app.config import settings as app_settings
+    printer_ip = data.printer_ip
+    printer_port = data.printer_port
+    if data.print_label:
+        printer_ip = printer_ip or app_settings.LABEL_PRINTER_IP
+        printer_port = printer_port or app_settings.LABEL_PRINTER_PORT
+
+    # ── 0) 先尝试用条码定义解析（固定格式条码优先） ──
+    bd_definition, bd_fields = await parse_barcode_with_definitions(db, barcode)
+    bd_material_code = bd_fields.get("material_code", "") if bd_fields else ""
+    bd_batch_no = bd_fields.get("batch_no", "") if bd_fields else ""
+    bd_date_code = bd_fields.get("date_code", "") if bd_fields else ""
+    bd_qty_str = bd_fields.get("quantity", "") if bd_fields else ""
+
+    # 如果条码定义解析出了数量，覆盖默认值
+    if bd_qty_str and qty == 1.0:
+        try:
+            qty = float(bd_qty_str)
+        except (ValueError, TypeError):
+            pass
+
     # ═══════════════════════════════════════════════════════════════════
     # PATH A: Human review confirmation (second pass)
     # ═══════════════════════════════════════════════════════════════════
     if data.manual_material_id is not None or data.is_new_material:
-        return await _handle_human_confirmation(db, receipt_id, data, qty)
+        return await _handle_human_confirmation(db, receipt_id, data, qty, printer_ip, printer_port,
+                                                bd_batch_no=bd_batch_no, bd_date_code=bd_date_code)
 
     # ═══════════════════════════════════════════════════════════════════
     # PATH B: First scan — auto matching
@@ -570,9 +767,10 @@ async def scan_receipt(
     is_duplicate = dup_check.duplicate
     dup_warning = dup_check.warning if is_duplicate else None
 
-    # Match material via intelligent service
+    # Match material via intelligent service (use extracted material_code if available)
     from app.services.receipt_service import match_material_by_barcode
-    match = await match_material_by_barcode(db, barcode, receipt.customer_id)
+    search_code = bd_material_code if bd_material_code else barcode
+    match = await match_material_by_barcode(db, search_code, receipt.customer_id)
 
     if match.action == "auto_proceed" and match.material_id:
         # High-confidence → auto create reel
@@ -592,10 +790,10 @@ async def scan_receipt(
             ocr_confidence=match.confidence,
             manual_intervention=0,
             auto_assign_slot=True,
-            printer_ip=data.printer_ip,
-            printer_port=data.printer_port,
-            batch_no=data.batch_no or supplier_info.get("batch_no"),
-            date_code=data.date_code or supplier_info.get("date_code"),
+            printer_ip=printer_ip,
+            printer_port=printer_port,
+            batch_no=data.batch_no or bd_batch_no or supplier_info.get("batch_no"),
+            date_code=data.date_code or bd_date_code or supplier_info.get("date_code"),
         )
         return ReceiptScanResponse(
             status="ok",
@@ -648,6 +846,10 @@ async def _handle_human_confirmation(
     receipt_id: int,
     data: ReceiptScanRequest,
     qty: float,
+    printer_ip: Optional[str] = None,
+    printer_port: Optional[int] = None,
+    bd_batch_no: str = "",
+    bd_date_code: str = "",
 ) -> ReceiptScanResponse:
     """PATH A: Handle second-pass scan after human review selection.
 
@@ -716,10 +918,10 @@ async def _handle_human_confirmation(
         ocr_confidence=confidence,
         manual_intervention=manual_flag,
         auto_assign_slot=True,
-        printer_ip=data.printer_ip,
-        printer_port=data.printer_port,
-        batch_no=data.batch_no or supplier_info.get("batch_no"),
-        date_code=data.date_code or supplier_info.get("date_code"),
+        printer_ip=printer_ip,
+        printer_port=printer_port,
+        batch_no=data.batch_no or bd_batch_no or supplier_info.get("batch_no"),
+        date_code=data.date_code or bd_date_code or supplier_info.get("date_code"),
     )
 
     action_label = "new_material" if data.is_new_material else "first_in"

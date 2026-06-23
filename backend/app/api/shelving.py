@@ -130,7 +130,7 @@ async def bind_shelving_slot(
     if not reel:
         raise HTTPException(status_code=404, detail="料盘不存在")
 
-    if reel.status != "on_shelf":
+    if reel.status not in ("pending_shelving", "on_shelf"):
         raise HTTPException(status_code=400, detail=f"料盘状态为 {reel.status}，无法上架")
 
     # If shelf_slot_id provided, verify and assign to that slot
@@ -180,6 +180,10 @@ async def bind_shelving_slot(
 
         reel.shelf_slot_id = empty_slot.id
         shelf_slot_id = empty_slot.id
+
+    # If reel was pending shelving, mark as on_shelf now
+    if reel.status == "pending_shelving":
+        reel.status = "on_shelf"
 
     await db.commit()
 

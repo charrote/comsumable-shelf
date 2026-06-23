@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   ActivityIndicator, ScrollView, Modal,
 } from 'react-native'
-import { createReceiptApi, scanPreviewApi, scanInboundApi } from '../api'
+import { createReceiptApi, scanPreviewApi, scanInboundApi, manualEntryApi } from '../api'
 import type { ReceiptScanResponse, BarcodePreviewResponse, MaterialCandidate } from '../types/api'
 import { useAuthStore } from '../store/authStore'
 
@@ -24,6 +24,15 @@ export default function InboundScreen() {
   const [isLoading, setIsLoading] = useState(false)
   const [history, setHistory] = useState<ReceiptScanResponse[]>([])
   const barcodeRef = useRef<TextInput>(null)
+
+  // ── 手工录入模式（无条码标签） ──
+  const [manualMode, setManualMode] = useState(false)
+  const [manualMaterialCode, setManualMaterialCode] = useState('')
+  const [manualMaterialName, setManualMaterialName] = useState('')
+  const [manualSpec, setManualSpec] = useState('')
+  const [manualQty, setManualQty] = useState('1')
+  const [manualBatch, setManualBatch] = useState('')
+  const [manualDateCode, setManualDateCode] = useState('')
 
   // ── 扫码预览结果（来自 scanPreviewApi，仅查询不保存） ──
   const [preview, setPreview] = useState<BarcodePreviewResponse | null>(null)
@@ -46,6 +55,8 @@ export default function InboundScreen() {
       const receipt = await createReceiptApi({ operator: operator.trim() })
       setReceiptId(receipt.id)
       setReceiptNo(receipt.receipt_no)
+      setBarcode('')  // 进入扫码页前清空条码框
+      setManualMode(false)
       setStep('scanning')
       // 自动聚焦扫码输入框
       setTimeout(() => barcodeRef.current?.focus(), 300)
@@ -80,6 +91,8 @@ export default function InboundScreen() {
       setBarcode('')
       // 始终弹出确认框，无论置信度高低（不自动调 scanInboundApi）
     } catch (e: any) {
+      // 扫码失败也要清空条码框，方便下一次扫码
+      setBarcode('')
       Alert.alert('扫描失败', e?.response?.data?.detail || '条码解析失败，请重试')
     } finally {
       setIsLoading(false)
@@ -134,6 +147,46 @@ export default function InboundScreen() {
       setIsLoading(false)
     }
   }, [receiptId, preview, confirmQty, operator, selectedMaterialId, newMaterialCode, newMaterialName])
+
+  // ── 手工录入提交 ──
+  const handleManualSubmit = useCallback(async () => {
+    if (receiptId == null) return
+    const code = manualMaterialCode.trim()
+    if (!code) {
+      Alert.alert('提示', '请输入物料编码')
+      return
+    }
+    const qty = parseFloat(manualQty)
+    if (isNaN(qty) || qty <= 0) {
+      Alert.alert('提示', '请输入有效数量')
+      return
+    }
+    setIsLoading(true)
+    try {
+      const result = await manualEntryApi(receiptId, {
+        operator,
+        material_code: code,
+        material_name: manualMaterialName.trim(),
+        spec: manualSpec.trim() || undefined,
+        quantity: qty,
+        batch_no: manualBatch.trim() || undefined,
+        date_code: manualDateCode.trim() || undefined,
+      })
+      // 成功 → 加入历史记录，清空表单
+      setHistory((prev) => [result, ...prev])
+      setManualMaterialCode('')
+      setManualMaterialName('')
+      setManualSpec('')
+      setManualQty('1')
+      setManualBatch('')
+      setManualDateCode('')
+      Alert.alert('成功', `入库成功！${result.material_code || code} × ${qty} 盘`)
+    } catch (e: any) {
+      Alert.alert('入库失败', e?.response?.data?.detail || '手工录入失败，请重试')
+    } finally {
+      setIsLoading(false)
+    }
+  }, [receiptId, operator, manualMaterialCode, manualMaterialName, manualSpec, manualQty, manualBatch, manualDateCode])
 
   // ── 取消确认 ──
   const handleCancelConfirm = useCallback(() => {
@@ -192,25 +245,103 @@ export default function InboundScreen() {
       </View>
 
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-        {/* 扫码输入 */}
-        <View style={styles.scanSection}>
-          <TextInput
-            ref={barcodeRef}
-            style={styles.input}
-            placeholder="扫描客户条码"
-            value={barcode}
-            onChangeText={setBarcode}
-            autoFocus
-            onSubmitEditing={handleBarcodeSubmit}
-          />
+        {/* ── 模式切换：扫码 / 手工 ── */}
+        <View style={styles.modeToggle}>
           <TouchableOpacity
-            style={[styles.button, !barcode.trim() && styles.buttonDisabled]}
-            onPress={handleBarcodeSubmit}
-            disabled={!barcode.trim() || isLoading}
+            style={[styles.modeButton, !manualMode && styles.modeButtonActive]}
+            onPress={() => { setManualMode(false); setTimeout(() => barcodeRef.current?.focus(), 200) }}
           >
-            {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>扫描识别</Text>}
+            <Text style={[styles.modeButtonText, !manualMode && styles.modeButtonTextActive]}>📷 扫码</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modeButton, manualMode && styles.modeButtonActive]}
+            onPress={() => { setManualMode(true); setBarcode('') }}
+          >
+            <Text style={[styles.modeButtonText, manualMode && styles.modeButtonTextActive]}>✏️ 手工</Text>
           </TouchableOpacity>
         </View>
+
+        {/* ── 扫码模式 ── */}
+        {!manualMode && (
+          <View style={styles.scanSection}>
+            <TextInput
+              ref={barcodeRef}
+              style={styles.input}
+              placeholder="扫描客户条码"
+              value={barcode}
+              onChangeText={setBarcode}
+              autoFocus
+              onSubmitEditing={handleBarcodeSubmit}
+            />
+            <TouchableOpacity
+              style={[styles.button, !barcode.trim() && styles.buttonDisabled]}
+              onPress={handleBarcodeSubmit}
+              disabled={!barcode.trim() || isLoading}
+            >
+              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>扫描识别</Text>}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ── 手工录入模式 ── */}
+        {manualMode && (
+          <View style={styles.scanSection}>
+            <Text style={styles.sectionLabel}>物料编码 *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="输入物料编码"
+              value={manualMaterialCode}
+              onChangeText={setManualMaterialCode}
+            />
+            <Text style={styles.sectionLabel}>物料名称</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="输入物料名称"
+              value={manualMaterialName}
+              onChangeText={setManualMaterialName}
+            />
+            <Text style={styles.sectionLabel}>规格</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="如：0805"
+              value={manualSpec}
+              onChangeText={setManualSpec}
+            />
+            <View style={styles.qtyRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sectionLabel}>数量 *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="1"
+                  value={manualQty}
+                  onChangeText={setManualQty}
+                  keyboardType="numeric"
+                />
+              </View>
+            </View>
+            <Text style={styles.sectionLabel}>批次号</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="选填"
+              value={manualBatch}
+              onChangeText={setManualBatch}
+            />
+            <Text style={styles.sectionLabel}>生产周期</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="如：2401"
+              value={manualDateCode}
+              onChangeText={setManualDateCode}
+            />
+            <TouchableOpacity
+              style={[styles.button, !manualMaterialCode.trim() && styles.buttonDisabled]}
+              onPress={handleManualSubmit}
+              disabled={!manualMaterialCode.trim() || isLoading}
+            >
+              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认手工入库</Text>}
+            </TouchableOpacity>
+          </View>
+        )}
 
         {/* 历史记录 */}
         {history.length > 0 && (
@@ -453,6 +584,14 @@ const styles = StyleSheet.create({
   historyCode: { fontSize: 15, fontWeight: '600', color: Colors.text },
   historyMsg: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
   historySlot: { fontSize: 13, color: Colors.primary, marginTop: 2 },
+
+  // ── 模式切换 ──
+  modeToggle: { flexDirection: 'row', backgroundColor: Colors.card, borderRadius: 8, margin: 12, marginBottom: 0, padding: 4, borderWidth: 1, borderColor: '#ddd' },
+  modeButton: { flex: 1, paddingVertical: 10, borderRadius: 6, alignItems: 'center' },
+  modeButtonActive: { backgroundColor: Colors.primary },
+  modeButtonText: { fontSize: 15, fontWeight: '600', color: Colors.textSecondary },
+  modeButtonTextActive: { color: '#fff' },
+  sectionLabel: { fontSize: 14, color: Colors.textSecondary, fontWeight: '600', marginBottom: 4, marginTop: 4 },
 
   // ── Modal ──
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },

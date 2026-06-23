@@ -80,6 +80,21 @@ class CustomerMaterialMappingResponse(BaseModel):
 
 
 # ---------- Receipt ----------
+class ManualEntryRequest(BaseModel):
+    """手工录入请求 — 无条码标签的手工入库。"""
+    operator: str = Field(..., min_length=1)
+    material_code: str = Field(..., min_length=1, description="物料编码")
+    material_name: str = Field("", description="物料名称（留空则用编码）")
+    spec: Optional[str] = Field(None, description="规格型号")
+    quantity: float = Field(1.0, gt=0, description="入库数量")
+    batch_no: Optional[str] = Field(None, description="批次号")
+    date_code: Optional[str] = Field(None, description="生产日期/周期")
+    supplier_code: Optional[str] = Field(None, description="供应商代码")
+    print_label: Optional[bool] = Field(False, description="是否打印标签")
+    printer_ip: Optional[str] = Field(None, description="标签打印机 IP")
+    printer_port: Optional[int] = Field(None, description="标签打印机端口")
+
+
 class BarcodePreviewItem(BaseModel):
     field: str
     label: str
@@ -143,9 +158,12 @@ class ReceiptScanRequest(BaseModel):
         None, description="新物料名称（is_new_material 时使用）"
     )
 
-    # ── Printer configuration (from browser/PDA config, not saved) ──
-    printer_ip: Optional[str] = Field(None, description="标签打印机 IP")
+    # ── Printer configuration ──
+    printer_ip: Optional[str] = Field(None, description="标签打印机 IP（指定时使用此地址）")
     printer_port: Optional[int] = Field(None, description="标签打印机端口")
+    print_label: Optional[bool] = Field(
+        False, description="是否打印标签（为 true 时使用系统配置的打印机地址）"
+    )
 
 
 class ReceiptScanResponse(BaseModel):
@@ -331,7 +349,7 @@ class IssueConfirmPickResponse(BaseModel):
 class InventoryUpdateRequest(BaseModel):
     """Update inventory pallet fields (partial update)."""
     quantity: Optional[float] = Field(None, ge=0, description="盘数量（>=0）")
-    status: Optional[str] = Field(None, pattern=r"^(on_shelf|in_use|tracking|exhausted)$")
+    status: Optional[str] = Field(None, pattern=r"^(pending_shelving|on_shelf|in_use|tracking|exhausted)$")
     shelf_slot_id: Optional[int] = Field(None, description="储位 ID（null 表示解除绑定）")
     note: Optional[str] = Field(None, max_length=500, description="变更备注")
 
@@ -614,6 +632,90 @@ class DirectOutResponse(BaseModel):
     reel_status: str
     slot_released: bool = False
     message: str
+
+
+# ---------- Barcode Definition ----------
+class BarcodeDefinitionSegmentSchema(BaseModel):
+    """条码定义段 — 单个段的字段映射。"""
+    segment_index: int = Field(..., ge=0, description="段索引（从0开始）")
+    segment_sample: Optional[str] = Field(None, description="该段的样例值")
+    field_mapping: Optional[str] = Field("", description="映射字段名（如 material_code, batch_no，为空表示忽略该段）")
+    field_label: Optional[str] = Field("", description="字段显示名称，空表示不映射")
+
+
+class BarcodeDefinitionCreate(BaseModel):
+    """创建条码定义请求。"""
+    name: str = Field(..., min_length=1, max_length=100, description="条码定义名称")
+    delimiter: str = Field(..., min_length=1, max_length=10, description="分隔符")
+    sample_barcode: str = Field(..., min_length=1, description="样例条码")
+    barcode_length: Optional[int] = Field(None, ge=1, description="条码字符长度（不传则自动取样例长度）")
+    segments: List[BarcodeDefinitionSegmentSchema] = Field(..., min_length=1, description="段定义列表")
+
+
+class BarcodeDefinitionUpdate(BaseModel):
+    """更新条码定义请求。"""
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    delimiter: Optional[str] = Field(None, min_length=1, max_length=10)
+    sample_barcode: Optional[str] = Field(None, min_length=1)
+    barcode_length: Optional[int] = Field(None, ge=1, description="条码字符长度（不传则自动取样例长度）")
+    is_active: Optional[int] = Field(None, ge=0, le=1)
+    segments: Optional[List[BarcodeDefinitionSegmentSchema]] = Field(None, min_length=1)
+
+
+class BarcodeDefinitionResponse(BaseModel):
+    """条码定义响应。"""
+    id: int
+    name: str
+    delimiter: str
+    sample_barcode: str
+    barcode_length: int = 0
+    is_active: int = 1
+    segments: List[BarcodeDefinitionSegmentSchema] = []
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class BarcodePreviewRequest(BaseModel):
+    """条码预览请求 — 输入条码和分隔符预览拆分结果。"""
+    sample_barcode: str = Field(..., min_length=1, description="样例条码")
+    delimiter: str = Field(..., min_length=1, max_length=10, description="分隔符")
+
+
+class BarcodePreviewSegment(BaseModel):
+    """条码预览 — 单个段的拆分结果。"""
+    segment_index: int
+    value: str
+
+
+class BarcodeDefPreviewResponse(BaseModel):
+    """条码定义预览响应（分割预览）。"""
+    segments: List[BarcodePreviewSegment] = []
+    segment_count: int = 0
+
+
+class BarcodeTestRequest(BaseModel):
+    """条码测试请求 — 用条码定义解析实际条码。"""
+    definition_id: int = Field(..., description="条码定义ID")
+    barcode: str = Field(..., min_length=1, description="待解析的条码")
+
+
+class BarcodeTestSegmentResult(BaseModel):
+    """条码测试 — 单个段的解析结果。"""
+    segment_index: int
+    value: str
+    field_mapping: Optional[str] = ""
+    field_label: Optional[str] = ""
+
+
+class BarcodeTestResponse(BaseModel):
+    """条码测试响应。"""
+    definition_id: int
+    definition_name: str
+    delimiter: str
+    barcode: str
+    matched: bool
+    segments: List[BarcodeTestSegmentResult] = []
+    message: str = ""
 
 
 # ---------- General ----------

@@ -69,6 +69,21 @@ data class MaterialCandidateDto(
 )
 
 @Serializable
+data class ManualEntryRequest(
+    val operator: String,
+    @SerialName("material_code") val materialCode: String,
+    @SerialName("material_name") val materialName: String = "",
+    val spec: String? = null,
+    val quantity: Double = 1.0,
+    @SerialName("batch_no") val batchNo: String? = null,
+    @SerialName("date_code") val dateCode: String? = null,
+    @SerialName("supplier_code") val supplierCode: String? = null,
+    @SerialName("print_label") val printLabel: Boolean? = null,
+    @SerialName("printer_ip") val printerIp: String? = null,
+    @SerialName("printer_port") val printerPort: Int? = null,
+)
+
+@Serializable
 data class ScanRequest(
     val barcode: String,
     val operator: String,

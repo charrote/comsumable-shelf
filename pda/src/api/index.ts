@@ -76,6 +76,14 @@ export async function scanInboundApi(
   return res.data
 }
 
+export async function manualEntryApi(
+  receiptId: number,
+  data: t.ManualEntryRequest
+): Promise<t.ReceiptScanResponse> {
+  const res = await api.post(`/receipts/${receiptId}/manual-entry`, data)
+  return res.data
+}
+
 // ──── Shelving ────
 export async function scanShelvingReelApi(barcode: string): Promise<t.ShelvingScanResponse> {
   const res = await api.post('/shelving/scan', { barcode })

@@ -35,6 +35,12 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     var barcodeInput by remember { mutableStateOf("") }
     var quantityInput by remember { mutableStateOf("") }
+    var manualCode by remember { mutableStateOf("") }
+    var manualName by remember { mutableStateOf("") }
+    var manualSpec by remember { mutableStateOf("") }
+    var manualQty by remember { mutableStateOf("1") }
+    var manualBatch by remember { mutableStateOf("") }
+    var manualDateCode by remember { mutableStateOf("") }
 
     // ── 弹框是否可见：有条码等待确认 ──
     val showConfirmDialog = uiState.lastBarcode.isNotEmpty()
@@ -67,18 +73,59 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
                 if (uiState.activeReceiptId == null) {
                     item { OperatorSection(onConfirm = { op -> viewModel.initReceipt(op) }) }
                 } else {
+                    // ── 模式切换 ──
                     item {
-                        ScanArea(
-                            barcode = barcodeInput,
-                            onBarcodeChange = { barcodeInput = it },
-                            onScan = {
-                                if (barcodeInput.isNotBlank()) {
-                                    viewModel.scanBarcode(barcodeInput)
-                                    barcodeInput = ""
-                                }
-                            },
-                            isLoading = false // scanBarcode 不调 API，无需 loading
+                        ModeToggle(
+                            manualMode = uiState.manualMode,
+                            onToggle = { viewModel.toggleManualMode(it) }
                         )
+                    }
+
+                    if (!uiState.manualMode) {
+                        // ── 扫码模式 ──
+                        item {
+                            ScanArea(
+                                barcode = barcodeInput,
+                                onBarcodeChange = { barcodeInput = it },
+                                onScan = {
+                                    if (barcodeInput.isNotBlank()) {
+                                        viewModel.scanBarcode(barcodeInput)
+                                        barcodeInput = ""
+                                    }
+                                },
+                                isLoading = false
+                            )
+                        }
+                    } else {
+                        // ── 手工录入模式 ──
+                        item {
+                            ManualEntryArea(
+                                materialCode = manualCode,
+                                materialName = manualName,
+                                spec = manualSpec,
+                                qty = manualQty,
+                                batch = manualBatch,
+                                dateCode = manualDateCode,
+                                onCodeChange = { manualCode = it },
+                                onNameChange = { manualName = it },
+                                onSpecChange = { manualSpec = it },
+                                onQtyChange = { manualQty = it },
+                                onBatchChange = { manualBatch = it },
+                                onDateCodeChange = { manualDateCode = it },
+                                onSubmit = {
+                                    viewModel.updateManualField(
+                                        materialCode = manualCode.trim(),
+                                        materialName = manualName.trim(),
+                                        spec = manualSpec.trim().ifBlank { null },
+                                        qty = manualQty,
+                                        batch = manualBatch.trim().ifBlank { null },
+                                        dateCode = manualDateCode.trim().ifBlank { null },
+                                    )
+                                    viewModel.submitManualEntry()
+                                },
+                                isLoading = uiState.isLoading
+                            )
+                        }
                     }
 
                     if (uiState.scanHistory.isNotEmpty()) {
@@ -121,6 +168,204 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
             }
         )
     }
+}
+
+@Composable
+private fun ModeToggle(manualMode: Boolean, onToggle: (Boolean) -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            // 扫码按钮
+            Button(
+                onClick = { onToggle(false) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(6.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (!manualMode) Primary else Color(0xFFE8ECF0),
+                    contentColor = if (!manualMode) Color.White else TextSecondary,
+                ),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                Text(
+                    text = "\uD83D\uDCF7 扫码",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            // 手工按钮
+            Button(
+                onClick = { onToggle(true) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(6.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (manualMode) Primary else Color(0xFFE8ECF0),
+                    contentColor = if (manualMode) Color.White else TextSecondary,
+                ),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                Text(
+                    text = "\u270F\uFE0F 手工",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ManualEntryArea(
+    materialCode: String,
+    materialName: String,
+    spec: String,
+    qty: String,
+    batch: String,
+    dateCode: String,
+    onCodeChange: (String) -> Unit,
+    onNameChange: (String) -> Unit,
+    onSpecChange: (String) -> Unit,
+    onQtyChange: (String) -> Unit,
+    onBatchChange: (String) -> Unit,
+    onDateCodeChange: (String) -> Unit,
+    onSubmit: () -> Unit,
+    isLoading: Boolean
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "\u270F\uFE0F 手工录入",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            // 物料编码（必填）
+            FormField(
+                label = "物料编码 *",
+                value = materialCode,
+                onValueChange = onCodeChange,
+                placeholder = "必填：输入物料编码"
+            )
+
+            // 物料名称
+            FormField(
+                label = "物料名称",
+                value = materialName,
+                onValueChange = onNameChange,
+                placeholder = "输入物料名称"
+            )
+
+            // 规格
+            FormField(
+                label = "规格",
+                value = spec,
+                onValueChange = onSpecChange,
+                placeholder = "如：0805"
+            )
+
+            // 数量（必填）
+            FormField(
+                label = "数量 *",
+                value = qty,
+                onValueChange = onQtyChange,
+                placeholder = "1",
+                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+            )
+
+            // 批次号
+            FormField(
+                label = "批次号",
+                value = batch,
+                onValueChange = onBatchChange,
+                placeholder = "选填"
+            )
+
+            // 生产周期
+            FormField(
+                label = "生产周期",
+                value = dateCode,
+                onValueChange = onDateCodeChange,
+                placeholder = "如：2401"
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Button(
+                onClick = onSubmit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp),
+                enabled = materialCode.isNotBlank() && !isLoading,
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Success)
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 3.dp,
+                        color = Color.White
+                    )
+                } else {
+                    Text(
+                        text = "确认手工入库",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FormField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    keyboardType: androidx.compose.ui.text.input.KeyboardType = androidx.compose.ui.text.input.KeyboardType.Text,
+) {
+    Text(
+        text = label,
+        fontSize = 14.sp,
+        color = TextSecondary,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp, bottom = 2.dp)
+    )
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp),
+        placeholder = {
+            Text(placeholder, fontSize = 15.sp, color = TextSecondary)
+        },
+        singleLine = true,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = keyboardType),
+        textStyle = LocalTextStyle.current.copy(fontSize = 16.sp, color = TextPrimary),
+        shape = RoundedCornerShape(8.dp)
+    )
 }
 
 @Composable

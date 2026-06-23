@@ -16,6 +16,7 @@ import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { UserManagementPage } from './pages/UserManagementPage'
 import { AppDownloadPage } from './pages/AppDownloadPage'
 import { HardwareDebugPage } from './pages/HardwareDebugPage'
+import { BarcodeDefinitionPage } from './pages/BarcodeDefinitionPage'
 import { useAuthStore } from './store/authStore'
 
 export default function App() {
@@ -43,6 +44,7 @@ export default function App() {
                 <Route path="customers" element={<CustomerPage />} />
                 <Route path="report" element={<ReportPage />} />
                 <Route path="settings" element={<SystemSettingsPage />} />
+                <Route path="barcode-definitions" element={<BarcodeDefinitionPage />} />
                 <Route path="users" element={<UserManagementPage />} />
                 <Route path="app-download" element={<AppDownloadPage />} />
                 <Route path="hardware-debug" element={<HardwareDebugPage />} />

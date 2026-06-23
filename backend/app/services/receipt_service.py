@@ -198,7 +198,7 @@ async def finalize_receipt_reel(
     seq = (count_result.scalar() or 0) + 1
     reel_code = f"REEL-{date_prefix}-{seq:04d}"
 
-    # ── 1. Create InventoryReel ──
+    # ── 1. Create InventoryReel (pending shelving) ──
     pallet = InventoryReel(
         reel_code=reel_code,
         material_id=material_id,
@@ -214,6 +214,7 @@ async def finalize_receipt_reel(
         customer_id=customer_id,
         batch_no=batch_no,
         date_code=date_code,
+        status="pending_shelving",
     )
     db.add(pallet)
     await db.commit()
@@ -240,6 +241,10 @@ async def finalize_receipt_reel(
     assigned_slot = None
     if auto_assign_slot:
         assigned_slot = await _auto_assign_slot(db, pallet, quantity)
+        # If slot assigned successfully, mark as on_shelf
+        if assigned_slot is not None:
+            pallet.status = "on_shelf"
+            await db.commit()
 
     # ── 4. Print internal label (optional) ──
     printed = False

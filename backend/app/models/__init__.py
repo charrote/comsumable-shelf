@@ -177,7 +177,7 @@ class InventoryReel(Base):
     inbound_type = Column(String, default="new")  # new | restock
     inbound_receipt_id = Column(Integer)
     inbound_xr_count = Column(Float)
-    status = Column(String, default="on_shelf")  # on_shelf | in_use | tracking | exhausted
+    status = Column(String, default="pending_shelving")  # pending_shelving | on_shelf | in_use | tracking | exhausted
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     batch_no = Column(String, comment="批次号（选填）")
     date_code = Column(String, comment="生产日期/周期代码（选填）")
@@ -433,6 +433,45 @@ class CustomerMaterialMapping(Base):
     __table_args__ = (
         UniqueConstraint("customer_id", "customer_material_code", name="uq_cust_mat_code"),
         Index("idx_cust_mat_map", "customer_id", "customer_material_code"),
+    )
+
+
+class BarcodeDefinition(Base):
+    """条码定义 — 固定格式条码的分段解析规则。"""
+    __tablename__ = "barcode_definitions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, comment="条码定义名称")
+    delimiter = Column(String, nullable=False, comment="分隔符")
+    sample_barcode = Column(String, nullable=False, comment="样例条码")
+    barcode_length = Column(Integer, nullable=False, comment="条码字符长度（匹配用）")
+    is_active = Column(Integer, default=1, comment="是否启用")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    segments = relationship(
+        "BarcodeDefinitionSegment",
+        back_populates="definition",
+        cascade="all, delete-orphan",
+        order_by="BarcodeDefinitionSegment.segment_index",
+    )
+
+
+class BarcodeDefinitionSegment(Base):
+    """条码定义段 — 每一段对应的字段映射。"""
+    __tablename__ = "barcode_definition_segments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    definition_id = Column(Integer, ForeignKey("barcode_definitions.id"), nullable=False)
+    segment_index = Column(Integer, nullable=False, comment="段索引（从0开始）")
+    segment_sample = Column(String, comment="该段的样例值")
+    field_mapping = Column(String, nullable=True, comment="映射字段名（为空表示忽略该段）")
+    field_label = Column(String, nullable=True, comment="字段显示名称")
+
+    definition = relationship("BarcodeDefinition", back_populates="segments")
+
+    __table_args__ = (
+        UniqueConstraint("definition_id", "segment_index", name="uq_bd_segment_index"),
     )
 
 

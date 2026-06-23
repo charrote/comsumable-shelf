@@ -74,6 +74,49 @@ async def init_db():
             """)
         )
 
+        # Migration: add barcode_length column to barcode_definitions
+        # (if table already exists without this column)
+        await conn.execute(
+            text("""
+                DO $$ BEGIN
+                    ALTER TABLE barcode_definitions ADD COLUMN IF NOT EXISTS barcode_length INTEGER NOT NULL DEFAULT 0;
+                EXCEPTION
+                    WHEN duplicate_column THEN NULL;
+                END $$;
+            """)
+        )
+        # Backfill barcode_length for existing rows where it's still 0
+        await conn.execute(
+            text("""
+                UPDATE barcode_definitions
+                SET barcode_length = LENGTH(sample_barcode)
+                WHERE barcode_length = 0 OR barcode_length IS NULL;
+            """)
+        )
+
+        # Migration: ensure barcode_definition_segments columns are nullable
+        # (handle case where table was created with nullable=False in an earlier version)
+        column_nullable_migrations = [
+            ("barcode_definition_segments", "field_mapping"),
+            ("barcode_definition_segments", "field_label"),
+        ]
+        for table, column in column_nullable_migrations:
+            await conn.execute(
+                text(f"""
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1 FROM information_schema.columns
+                            WHERE table_name = '{table}'
+                              AND column_name = '{column}'
+                              AND is_nullable = 'NO'
+                        ) THEN
+                            EXECUTE 'ALTER TABLE {table} ALTER COLUMN {column} DROP NOT NULL';
+                        END IF;
+                    END $$;
+                """)
+            )
+
 
 async def seed_db():
     """Seed default data (admin user, default customer, SMT materials, BOMs, system settings)."""

@@ -68,8 +68,8 @@ def _extract_material_code(barcode: str) -> str:
             cleaned = cleaned[:-len(suffix)]
             break
 
-    # Extract alphanumeric core
-    match = re.search(r'([A-Z0-9]+(?:-[A-Z0-9]+)*)', cleaned)
+    # Extract alphanumeric core (support dots as separators, e.g. Y.R.R1002JBKS4020)
+    match = re.search(r'([A-Z0-9]+(?:\.[A-Z0-9]+)*(?:-[A-Z0-9]+)*)', cleaned)
     if match:
         return match.group(1).strip('-')
     return cleaned

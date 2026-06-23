@@ -367,7 +367,7 @@ class TestFinalizeReceiptReel:
         assert reel.material_id == sample_material.id
         assert reel.quantity == 50.0
         assert reel.original_quantity == 50.0
-        assert reel.reel_barcode == "FINALIZE-001"
+        assert reel.reel_barcode == reel.reel_code  # reel_barcode is set to auto-generated reel_code
 
     async def test_creates_receipt_reel(
         self, db_session: AsyncSession, sample_material: MaterialMaster,

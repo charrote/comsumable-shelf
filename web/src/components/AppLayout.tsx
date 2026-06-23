@@ -41,6 +41,7 @@ const menuItems = [
     label: '系统管理',
     children: [
       { key: '/settings', label: '系统设置' },
+      { key: '/barcode-definitions', label: '条码定义' },
       { key: '/users', label: '用户管理' },
       { key: '/customers', label: '客户管理' },
       { key: '/app-download', icon: <DownloadOutlined />, label: 'PDA下载' },

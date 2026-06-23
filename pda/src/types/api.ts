@@ -47,6 +47,20 @@ export interface BOMResponse {
 }
 
 // Receipts (Inbound)
+export interface ManualEntryRequest {
+  operator: string
+  material_code: string
+  material_name?: string
+  spec?: string
+  quantity: number
+  batch_no?: string
+  date_code?: string
+  supplier_code?: string
+  print_label?: boolean
+  printer_ip?: string
+  printer_port?: number
+}
+
 export interface MaterialCandidate {
   material_id: number
   code: string
