@@ -5,7 +5,7 @@ import {
   createReceiptApi, scanReceiptApi, getReceiptListApi, getReceiptApi,
   confirmReceiptApi, reprintLabelApi, getMaterialsApi, scanPreviewApi,
   deleteReceiptApi, batchDeleteReceiptsApi, createMappingApi,
-  manualEntryApi,
+  manualEntryApi, cancelReceiptItemsApi,
 } from '../api'
 
 const { Text, Title } = Typography
@@ -25,6 +25,10 @@ export function ReceiptPage() {
   const [materials, setMaterials] = useState<any[]>([])
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([])
   const [scannedItems, setScannedItems] = useState<any[]>([])
+  const [selectedDetailRowKeys, setSelectedDetailRowKeys] = useState<number[]>([])
+
+  // ── Search ──
+  const [searchKeyword, setSearchKeyword] = useState('')
 
   // ── Scan Preview Flow ──
   const barcodeInputRef = useRef<any>(null)
@@ -56,10 +60,12 @@ export function ReceiptPage() {
   const [manualDateCode, setManualDateCode] = useState('')
   const [manualSupplierCode, setManualSupplierCode] = useState('')
 
-  const loadReceipts = async () => {
+  const loadReceipts = async (keyword?: string) => {
     setLoading(true)
     try {
-      const res = await getReceiptListApi()
+      const params: any = {}
+      if (keyword) params.keyword = keyword
+      const res = await getReceiptListApi(params)
       setReceipts(res.data?.data || res.data || [])
     } catch { message.error('加载收料单失败') }
     finally { setLoading(false) }
@@ -86,7 +92,7 @@ export function ReceiptPage() {
 
   const handleCreate = async (values: any) => {
     try {
-      const res = await createReceiptApi({ type: 'normal', operator: values.operator, customer_id: 1 })
+      const res = await createReceiptApi({ type: 'normal', operator: values.operator, customer_id: 1, purchase_order_no: values.purchase_order_no })
       message.success(`收料单 ${res.data.receipt_no} 创建成功`)
       setCreateModal(false)
       createForm.resetFields()
@@ -165,8 +171,12 @@ export function ReceiptPage() {
       setNewName(data.material_name || '')
       setSelectedMaterialId(data.candidates?.[0]?.material_id || null)
       setIsNewMaterial(data.status === 'new_material')
+      setScanBarcode('')
+      setTimeout(() => barcodeInputRef.current?.focus(), 200)
     } catch (e: any) {
       message.error(e.response?.data?.detail || '扫码失败')
+      setScanBarcode('')
+      setTimeout(() => barcodeInputRef.current?.focus(), 200)
     } finally { setScanning(false) }
   }
 
@@ -306,6 +316,16 @@ export function ReceiptPage() {
     } catch (e: any) { message.error(e.response?.data?.detail || '批量删除失败') }
   }
 
+  const handleCancelItems = async () => {
+    if (!currentReceipt?.id || selectedDetailRowKeys.length === 0) return
+    try {
+      await cancelReceiptItemsApi(currentReceipt.id, selectedDetailRowKeys)
+      message.success(`已取消 ${selectedDetailRowKeys.length} 项入库`)
+      setSelectedDetailRowKeys([])
+      loadReceiptDetail()
+    } catch (e: any) { message.error(e.response?.data?.detail || '取消入库失败') }
+  }
+
   const handleReprint = async (receiptReelId: number) => {
     if (!currentReceipt?.id) return
     try {
@@ -387,6 +407,9 @@ export function ReceiptPage() {
 
   const columns = [
     { title: '收料单号', dataIndex: 'receipt_no', key: 'receipt_no', width: 180 },
+    { title: '采购单号', dataIndex: 'purchase_order_no', key: 'purchase_order_no', width: 150,
+      render: (v: string) => v || '-',
+    },
     { title: '操作员', dataIndex: 'operator', key: 'operator', width: 100 },
     { title: '类型', dataIndex: 'type', key: 'type', width: 80 },
     { title: '物料数', key: 'items_count', width: 80,
@@ -417,9 +440,18 @@ export function ReceiptPage() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <h2 style={{ margin: 0 }}>收料管理</h2>
-        <Space>
+        <Space wrap>
+          <Input.Search
+            placeholder="搜索收料单号、采购单号"
+            allowClear
+            value={searchKeyword}
+            onChange={e => setSearchKeyword(e.target.value)}
+            onSearch={val => loadReceipts(val || undefined)}
+            onPressEnter={() => loadReceipts(searchKeyword || undefined)}
+            style={{ width: 260 }}
+          />
           {selectedRowKeys.length > 0 && (
             <Popconfirm
               title={`确定批量删除 ${selectedRowKeys.length} 张入库单？`}
@@ -440,6 +472,9 @@ export function ReceiptPage() {
           <Form.Item name="operator" label="操作员" rules={[{ required: true }]}>
             <Input placeholder="操作员姓名" />
           </Form.Item>
+          <Form.Item name="purchase_order_no" label="采购单号">
+            <Input placeholder="输入采购单号" />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -450,10 +485,15 @@ export function ReceiptPage() {
               <Descriptions.Item label="状态"><Tag color={statusColors[currentReceipt.status]}>{statusLabels[currentReceipt.status]}</Tag></Descriptions.Item>
               <Descriptions.Item label="类型">{currentReceipt.type}</Descriptions.Item>
               <Descriptions.Item label="操作员">{currentReceipt.operator}</Descriptions.Item>
+              <Descriptions.Item label="采购单号">{currentReceipt.purchase_order_no || '-'}</Descriptions.Item>
               <Descriptions.Item label="创建时间">{currentReceipt.created_at ? new Date(currentReceipt.created_at).toLocaleString() : '-'}</Descriptions.Item>
             </Descriptions>
             <Table
               dataSource={currentReceipt.items || []} rowKey="id" size="small" pagination={false}
+              rowSelection={currentReceipt.status === 'draft' ? {
+                selectedRowKeys: selectedDetailRowKeys,
+                onChange: (keys: React.Key[]) => setSelectedDetailRowKeys(keys as number[]),
+              } : undefined}
               columns={[
                 { title: '物料', dataIndex: 'material_code', key: 'material_code' },
                 { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 80,
@@ -476,6 +516,17 @@ export function ReceiptPage() {
             <Space style={{ marginTop: 16 }}>
               {currentReceipt.status === 'draft' && (
                 <>
+                  <Popconfirm
+                    title={`确定取消所选 ${selectedDetailRowKeys.length} 项的入库？`}
+                    onConfirm={handleCancelItems}
+                    disabled={selectedDetailRowKeys.length === 0}
+                  >
+                    <Button
+                      danger
+                      icon={<CloseCircleOutlined />}
+                      disabled={selectedDetailRowKeys.length === 0}
+                    >取消入库</Button>
+                  </Popconfirm>
                   <Button icon={<ScanOutlined />} onClick={() => startScan()}>扫码入库</Button>
                   <Popconfirm title="锁定该收料单？锁定后将无法继续扫码入库，不可修改" onConfirm={handleConfirm}>
                     <Button type="primary" icon={<CheckCircleOutlined />}>完成并锁单</Button>

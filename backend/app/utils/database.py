@@ -102,6 +102,16 @@ async def init_db():
             """)
         )
 
+        # Migration: add purchase_order_no to receipt table
+        await conn.execute(
+            text("""
+                DO $$ BEGIN
+                    ALTER TABLE receipt ADD COLUMN IF NOT EXISTS purchase_order_no VARCHAR(200);
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            """)
+        )
+
         # Migration: ensure barcode_definition_segments columns are nullable
         # (handle case where table was created with nullable=False in an earlier version)
         column_nullable_migrations = [

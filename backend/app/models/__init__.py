@@ -201,6 +201,7 @@ class Receipt(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     receipt_no = Column(String, unique=True, nullable=False, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    purchase_order_no = Column(String, comment="采购单号")
     created_at = Column(DateTime, default=datetime.utcnow)
     created_by = Column(String)
     type = Column(String, default="normal")  # normal | restock

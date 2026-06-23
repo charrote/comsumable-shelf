@@ -23,12 +23,18 @@ router = APIRouter(prefix="/receipts", tags=["Receipt/Inbound"])
 @router.get("")
 async def list_receipts(
     status: Optional[str] = Query(None),
+    keyword: Optional[str] = Query(None, description="模糊搜索：收料单号、采购单号"),
     db: AsyncSession = Depends(get_db),
 ):
     """List receipt orders."""
     query = select(Receipt).order_by(Receipt.created_at.desc())
     if status:
         query = query.where(Receipt.status == status)
+    if keyword:
+        query = query.where(
+            Receipt.receipt_no.ilike(f"%{keyword}%")
+            | Receipt.purchase_order_no.ilike(f"%{keyword}%")
+        )
     result = await db.execute(query)
     receipts = result.scalars().all()
     return {
@@ -36,6 +42,7 @@ async def list_receipts(
             {
                 "id": r.id,
                 "receipt_no": r.receipt_no,
+                "purchase_order_no": r.purchase_order_no or "",
                 "customer_id": r.customer_id,
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "operator": r.created_by or "",
@@ -85,6 +92,7 @@ async def get_receipt(
     return ReceiptDetailResponse(
         id=receipt.id,
         receipt_no=receipt.receipt_no,
+        purchase_order_no=receipt.purchase_order_no or "",
         customer_id=receipt.customer_id,
         created_at=receipt.created_at,
         operator=receipt.created_by or "",
@@ -358,6 +366,7 @@ async def create_receipt(
         type=data.type,
         customer_id=data.customer_id,
         created_by=data.operator,
+        purchase_order_no=data.purchase_order_no,
         status="draft",
     )
     db.add(receipt)
@@ -367,6 +376,7 @@ async def create_receipt(
     return ReceiptDetailResponse(
         id=receipt.id,
         receipt_no=receipt.receipt_no,
+        purchase_order_no=receipt.purchase_order_no or "",
         customer_id=receipt.customer_id,
         created_at=receipt.created_at,
         operator=data.operator,
@@ -421,6 +431,60 @@ async def batch_delete_receipts(
         await db.execute(sa_delete(Receipt).where(Receipt.id == r.id))
     await db.commit()
     return {"status": "ok", "message": f"已删除 {len(ids)} 张入库单", "deleted_ids": ids}
+
+
+@router.post("/{receipt_id}/items/cancel")
+async def cancel_receipt_items(
+    receipt_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel specific receipt reel items (remove from receipt and delete inventory reels).
+    Only allowed for draft receipts."""
+    receipt_reel_ids: List[int] = data.get("receipt_reel_ids", [])
+    if not receipt_reel_ids:
+        raise HTTPException(status_code=400, detail="请选择要取消的明细")
+
+    result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+    if receipt.status != "draft":
+        raise HTTPException(status_code=400, detail=f"仅草稿状态可取消入库（当前: {receipt.status}）")
+
+    # Get the ReceiptReel records to find associated InventoryReel IDs
+    items_result = await db.execute(
+        select(ReceiptReel).where(
+            ReceiptReel.id.in_(receipt_reel_ids),
+            ReceiptReel.receipt_id == receipt_id,
+        )
+    )
+    items = items_result.scalars().all()
+    if not items:
+        raise HTTPException(status_code=404, detail="未找到要取消的明细")
+
+    reel_ids = [item.reel_id for item in items if item.reel_id]
+
+    # Delete ReceiptReel records
+    await db.execute(
+        sa_delete(ReceiptReel).where(
+            ReceiptReel.id.in_(receipt_reel_ids),
+            ReceiptReel.receipt_id == receipt_id,
+        )
+    )
+
+    # Delete associated InventoryReel records
+    if reel_ids:
+        await db.execute(
+            sa_delete(InventoryReel).where(InventoryReel.id.in_(reel_ids))
+        )
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "message": f"已取消 {len(items)} 项入库",
+        "cancelled_ids": receipt_reel_ids,
+    }
 
 
 @router.post("/{receipt_id}/scan-preview", response_model=BarcodePreviewResponse)

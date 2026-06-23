@@ -119,6 +119,7 @@ class ReceiptCreate(BaseModel):
     type: str = "normal"
     operator: str
     customer_id: int = 1
+    purchase_order_no: Optional[str] = None
 
 
 class MaterialCandidate(BaseModel):
@@ -236,6 +237,7 @@ class ReprintLabelResponse(BaseModel):
 class ReceiptDetailResponse(BaseModel):
     id: int
     receipt_no: str
+    purchase_order_no: Optional[str] = None
     customer_id: int
     created_at: datetime
     operator: str

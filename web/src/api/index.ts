@@ -86,7 +86,7 @@ export const directOutboundApi = (reelId: number, data: {
 }) => apiClient.post(`/inventory/reels/${reelId}/direct-out`, data)
 
 // Receipt
-export const createReceiptApi = (data: { type: string; operator: string; customer_id?: number }) =>
+export const createReceiptApi = (data: { type: string; operator: string; customer_id?: number; purchase_order_no?: string }) =>
   apiClient.post('/receipts', data)
 export const manualEntryApi = (
   receiptId: number,
@@ -137,6 +137,8 @@ export const deleteReceiptApi = (id: number) =>
   apiClient.delete(`/receipts/${id}`)
 export const batchDeleteReceiptsApi = (ids: number[]) =>
   apiClient.post('/receipts/batch-delete', { ids })
+export const cancelReceiptItemsApi = (receiptId: number, receiptReelIds: number[]) =>
+  apiClient.post(`/receipts/${receiptId}/items/cancel`, { receipt_reel_ids: receiptReelIds })
 
 // Issue
 export const getIssueListApi = (params: any) =>
