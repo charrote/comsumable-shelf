@@ -84,6 +84,20 @@ export const directOutboundApi = (reelId: number, data: {
   note?: string
   release_slot?: boolean
 }) => apiClient.post(`/inventory/reels/${reelId}/direct-out`, data)
+export const exportInventoryApi = async (params: any) => {
+  const res = await apiClient.get('/inventory/export', { params, responseType: 'blob' })
+  const disposition = res.headers['content-disposition'] || ''
+  const match = disposition.match(/filename\*=UTF-8''(.+)/)
+  const filename = match ? decodeURIComponent(match[1]) : `库存列表.xlsx`
+  const url = window.URL.createObjectURL(new Blob([res.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', filename)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
 
 // Receipt
 export const createReceiptApi = (data: { type: string; operator: string; customer_id?: number; purchase_order_no?: string }) =>
@@ -179,12 +193,14 @@ export const updateBomItemApi = (bomId: number, itemId: number, data: any) =>
   apiClient.put(`/bom/${bomId}/items/${itemId}`, data)
 export const deleteBomItemApi = (bomId: number, itemId: number) =>
   apiClient.delete(`/bom/${bomId}/items/${itemId}`)
-export const uploadBomApi = (file: File, customerCode?: string, version?: string) => {
+export const uploadBomApi = (file: File, customerCode?: string, version?: string, productCode?: string, productName?: string) => {
   const formData = new FormData()
   formData.append('file', file)
   const params: any = {}
   if (customerCode) params.customer_code = customerCode
   if (version) params.version = version
+  if (productCode) params.product_code = productCode
+  if (productName) params.product_name = productName
   return apiClient.post('/bom/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     params,
@@ -217,12 +233,14 @@ export const downloadBomTemplateApi = async () => {
   link.remove()
   window.URL.revokeObjectURL(url)
 }
-export const uploadBomQixinApi = (file: File, customerCode?: string, version?: string) => {
+export const uploadBomQixinApi = (file: File, customerCode?: string, version?: string, productCode?: string, productName?: string) => {
   const formData = new FormData()
   formData.append('file', file)
   const params: any = {}
   if (customerCode) params.customer_code = customerCode
   if (version) params.version = version
+  if (productCode) params.product_code = productCode
+  if (productName) params.product_name = productName
   return apiClient.post('/bom/upload-qixin', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     params,

@@ -29,7 +29,7 @@ async def direct_out(
     if not pallet:
         return {
             "status": "error",
-            "reel_id": pallet_id,
+            "reel_id": reel_id,
             "quantity_before": 0,
             "quantity_after": 0,
             "reel_status": "",

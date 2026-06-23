@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import select, update, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app.schemas import (
     InventoryResponse,
@@ -15,8 +16,12 @@ from app.schemas import (
     DirectOutResponse,
 )
 from app.utils.database import get_db
-from app.models import InventoryReel, MaterialMaster, Shelf, ShelfSlot, Transaction
+from app.models import InventoryReel, MaterialMaster, Shelf, ShelfSlot, Transaction, Customer
 from app.services.inventory_service import direct_out
+import openpyxl
+from openpyxl.styles import Font, PatternFill
+from urllib.parse import quote
+import io
 
 router = APIRouter(prefix="/inventory", tags=["Inventory"])
 
@@ -90,9 +95,11 @@ async def scan_reel_for_direct_out(
 
 @router.get("")
 async def get_inventory(
-    customer_id: Optional[int] = Query(None),
+    customer_id: Optional[int] = Query(None, description="（已废弃，请使用 customer_ids）"),
+    customer_ids: Optional[List[int]] = Query(None, description="按客户ID筛选（可多选）"),
     material_id: Optional[int] = Query(None),
-    status: Optional[str] = Query(None, description="按状态筛选: pending_shelving / on_shelf / in_use / tracking / exhausted"),
+    status: Optional[str] = Query(None, description="（已废弃，请使用 statuses）"),
+    statuses: Optional[List[str]] = Query(None, description="按状态筛选（可多选）: pending_shelving / on_shelf / in_use / tracking / exhausted"),
     keyword: Optional[str] = Query(None, description="搜索关键词（物料编号 / Reel 编码 / Reel ID）"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -101,20 +108,32 @@ async def get_inventory(
         InventoryReel,
         MaterialMaster.code.label("material_code"),
         Shelf.code.label("shelf_code"),
+        Customer.name.label("customer_name"),
+        Customer.code.label("customer_code"),
     ).join(
         MaterialMaster, InventoryReel.material_id == MaterialMaster.id
+    ).join(
+        Customer, InventoryReel.customer_id == Customer.id
     ).outerjoin(
         ShelfSlot, InventoryReel.shelf_slot_id == ShelfSlot.id
     ).outerjoin(
         Shelf, ShelfSlot.shelf_id == Shelf.id
     )
 
-    if customer_id:
+    # Support both old single-value and new multi-value filters
+    if customer_ids:
+        query = query.where(InventoryReel.customer_id.in_(customer_ids))
+    elif customer_id:
         query = query.where(InventoryReel.customer_id == customer_id)
+
     if material_id:
         query = query.where(InventoryReel.material_id == material_id)
-    if status:
+
+    if statuses:
+        query = query.where(InventoryReel.status.in_(statuses))
+    elif status:
         query = query.where(InventoryReel.status == status)
+
     if keyword:
         keyword_like = f"%{keyword}%"
         query = query.where(
@@ -142,6 +161,9 @@ async def get_inventory(
             "original_quantity": pallet.original_quantity,
             "shelf_slot_id": pallet.shelf_slot_id,
             "shelf_code": row[2],
+            "customer_name": row[3],
+            "customer_code": row[4],
+            "customer_id": pallet.customer_id,
             "first_in_time": pallet.first_in_time,
             "last_in_time": pallet.last_in_time,
             "status": pallet.status,
@@ -273,6 +295,101 @@ async def update_inventory_pallet(
         reel_id=pallet_id,
         updated_fields=updated_fields,
         message=f"库存托盘 #{reel_id} 已更新: {', '.join(updated_fields) if updated_fields else '无变更'}",
+    )
+
+
+@router.get("/export")
+async def export_inventory(
+    customer_ids: Optional[List[int]] = Query(None, description="按客户ID筛选（可多选）"),
+    statuses: Optional[List[str]] = Query(None, description="按状态筛选（可多选）"),
+    keyword: Optional[str] = Query(None, description="搜索关键词"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export inventory to Excel (.xlsx)."""
+    query = select(
+        InventoryReel,
+        MaterialMaster.code.label("material_code"),
+        MaterialMaster.name.label("material_name"),
+        Shelf.code.label("shelf_code"),
+        Customer.name.label("customer_name"),
+        Customer.code.label("customer_code"),
+    ).join(
+        MaterialMaster, InventoryReel.material_id == MaterialMaster.id
+    ).join(
+        Customer, InventoryReel.customer_id == Customer.id
+    ).outerjoin(
+        ShelfSlot, InventoryReel.shelf_slot_id == ShelfSlot.id
+    ).outerjoin(
+        Shelf, ShelfSlot.shelf_id == Shelf.id
+    )
+
+    if customer_ids:
+        query = query.where(InventoryReel.customer_id.in_(customer_ids))
+    if statuses:
+        query = query.where(InventoryReel.status.in_(statuses))
+    if keyword:
+        keyword_like = f"%{keyword}%"
+        query = query.where(
+            MaterialMaster.code.ilike(keyword_like)
+            | InventoryReel.reel_code.ilike(keyword_like)
+            | InventoryReel.id.cast(String).ilike(keyword_like)
+        )
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "库存列表"
+
+    # Headers
+    headers = [
+        "库存盘号", "物料编号", "物料名称", "数量", "原始数量",
+        "客户名称", "客户编码", "储位编号", "储架编码",
+        "状态", "首次入库时间", "最近入库时间"
+    ]
+    ws.append(headers)
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+    status_labels = {
+        "pending_shelving": "待上架", "on_shelf": "在架",
+        "in_use": "使用中", "tracking": "跟踪中", "exhausted": "已耗尽",
+    }
+
+    for row in rows:
+        pallet = row[0]
+        ws.append([
+            pallet.id,
+            row[1],  # material_code
+            row[2],  # material_name
+            pallet.quantity,
+            pallet.original_quantity,
+            row[4],  # customer_name
+            row[5],  # customer_code
+            pallet.shelf_slot_id or "",
+            row[3] or "",  # shelf_code
+            status_labels.get(pallet.status, pallet.status),
+            pallet.first_in_time.strftime("%Y-%m-%d %H:%M:%S") if pallet.first_in_time else "",
+            pallet.last_in_time.strftime("%Y-%m-%d %H:%M:%S") if pallet.last_in_time else "",
+        ])
+
+    # Column widths
+    widths = [14, 22, 30, 10, 12, 20, 16, 14, 14, 12, 20, 20]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    filename = f"库存列表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
     )
 
 

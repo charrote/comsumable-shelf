@@ -497,6 +497,7 @@ class BomDetailResponse(BaseModel):
 class BomUploadResponse(BaseModel):
     bom_id: int
     product_code: str
+    product_name: Optional[str] = None
     version: str
     parsed: bool
     total_items: int

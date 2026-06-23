@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Table, Input, Space, Tag, Select, Spin, message, Button, Modal, Form, InputNumber } from 'antd'
 import { SearchOutlined, ExportOutlined } from '@ant-design/icons'
-import { getInventoryApi, directOutboundApi } from '../api'
+import { getInventoryApi, directOutboundApi, getCustomersApi, exportInventoryApi } from '../api'
 
 const { Option } = Select
 
@@ -12,6 +12,9 @@ interface InventoryItem {
   first_in_time: string
   shelf_slot_id: number | null
   status: string
+  customer_name?: string
+  customer_code?: string
+  customer_id?: number
 }
 
 const statusColors: Record<string, string> = {
@@ -30,12 +33,20 @@ const statusLabels: Record<string, string> = {
   exhausted: '已耗尽',
 }
 
+const allStatusOptions = Object.keys(statusLabels).map(key => ({
+  value: key,
+  label: statusLabels[key],
+}))
+
 export function InventoryPage() {
   const [data, setData] = useState<InventoryItem[]>([])
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
-  const [status, setStatus] = useState<string>('')
+  const [selectedCustomers, setSelectedCustomers] = useState<number[]>([])
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
+  const [customers, setCustomers] = useState<any[]>([])
   const [total, setTotal] = useState(0)
+  const [exporting, setExporting] = useState(false)
 
   // ── Direct outbound modal ──
   const [directModalVisible, setDirectModalVisible] = useState(false)
@@ -43,12 +54,17 @@ export function InventoryPage() {
   const [directQty, setDirectQty] = useState<number>(1)
   const [directLoading, setDirectLoading] = useState(false)
 
+  useEffect(() => {
+    getCustomersApi().then(res => setCustomers(Array.isArray(res.data) ? res.data : [])).catch(() => {})
+  }, [])
+
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const params: Record<string, string> = {}
+      const params: Record<string, any> = {}
       if (keyword) params.keyword = keyword
-      if (status) params.status = status
+      if (selectedCustomers.length > 0) params.customer_ids = selectedCustomers
+      if (selectedStatuses.length > 0) params.statuses = selectedStatuses
       const res = await getInventoryApi(params)
       const body = res.data
       const items: InventoryItem[] = body?.pallets ?? (Array.isArray(body) ? body : [])
@@ -59,11 +75,28 @@ export function InventoryPage() {
     } finally {
       setLoading(false)
     }
-  }, [keyword, status])
+  }, [keyword, selectedCustomers, selectedStatuses])
 
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // ── Export inventory to Excel ──
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const params: Record<string, any> = {}
+      if (keyword) params.keyword = keyword
+      if (selectedCustomers.length > 0) params.customer_ids = selectedCustomers
+      if (selectedStatuses.length > 0) params.statuses = selectedStatuses
+      await exportInventoryApi(params)
+      message.success('库存列表已导出')
+    } catch (err: any) {
+      message.error('导出失败: ' + (err.response?.data?.detail || err.message))
+    } finally {
+      setExporting(false)
+    }
+  }
 
   // ── Open direct outbound modal ──
   const handleOpenDirect = (item: InventoryItem) => {
@@ -99,21 +132,28 @@ export function InventoryPage() {
   }
 
   const columns = [
-    { title: '库存盘号', dataIndex: 'reel_id', key: 'reel_id', width: 120 },
-    { title: '物料编号', dataIndex: 'material_code', key: 'material_code' },
-    { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 80 },
-    { title: '入库时间', dataIndex: 'first_in_time', key: 'first_in_time', width: 160 },
+    { title: '库存盘号', dataIndex: 'reel_id', key: 'reel_id', width: 100 },
+    { title: '物料编号', dataIndex: 'material_code', key: 'material_code', width: 140 },
+    { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 70 },
+    {
+      title: '客户',
+      key: 'customer',
+      width: 140,
+      render: (_: any, record: InventoryItem) =>
+        record.customer_name ? `${record.customer_name}${record.customer_code ? ` (${record.customer_code})` : ''}` : '-',
+    },
+    { title: '入库时间', dataIndex: 'first_in_time', key: 'first_in_time', width: 155 },
     {
       title: '储位',
       dataIndex: 'shelf_slot_id',
       key: 'shelf_slot_id',
-      width: 100,
+      width: 80,
       render: (val: any) => (val ? `Slot #${val}` : '-'),
     },
     {
       title: '状态',
       key: 'status',
-      width: 100,
+      width: 90,
       render: (_: any, record: InventoryItem) => (
         <Tag color={statusColors[record.status] || 'default'}>
           {statusLabels[record.status] || record.status}
@@ -123,15 +163,16 @@ export function InventoryPage() {
     {
       title: '操作',
       key: 'action',
-      width: 120,
+      width: 110,
       render: (_: any, record: InventoryItem) =>
         record.status !== 'exhausted' ? (
           <Button
             type="link"
+            size="small"
             icon={<ExportOutlined />}
             onClick={() => handleOpenDirect(record)}
           >
-            直接出库
+            出库
           </Button>
         ) : (
           <Tag color="default">已耗尽</Tag>
@@ -149,23 +190,40 @@ export function InventoryPage() {
           <Input
             placeholder="搜索物料编号或库存盘号"
             prefix={<SearchOutlined />}
-            style={{ width: 300 }}
+            style={{ width: 280 }}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             allowClear
           />
           <Select
-            style={{ width: 120 }}
-            value={status}
-            onChange={(val) => setStatus(val)}
+            mode="multiple"
+            placeholder="筛选客户（可多选）"
+            style={{ minWidth: 200, maxWidth: 320 }}
+            value={selectedCustomers}
+            onChange={(vals) => setSelectedCustomers(vals)}
+            allowClear
+            maxTagCount={2}
           >
-            <Option value="">全部</Option>
-            <Option value="pending_shelving">待上架</Option>
-            <Option value="on_shelf">在架</Option>
-            <Option value="in_use">使用中</Option>
-            <Option value="tracking">跟踪中</Option>
-            <Option value="exhausted">已耗尽</Option>
+            {customers.map(c => (
+              <Option key={c.id} value={c.id}>{c.name} ({c.code})</Option>
+            ))}
           </Select>
+          <Select
+            mode="multiple"
+            placeholder="筛选状态（可多选）"
+            style={{ minWidth: 180, maxWidth: 300 }}
+            value={selectedStatuses}
+            onChange={(vals) => setSelectedStatuses(vals)}
+            allowClear
+            maxTagCount={2}
+          >
+            {allStatusOptions.map(opt => (
+              <Option key={opt.value} value={opt.value}>{opt.label}</Option>
+            ))}
+          </Select>
+          <Button icon={<ExportOutlined />} loading={exporting} onClick={handleExport}>
+            导出Excel
+          </Button>
         </Space>
         <Table
           columns={columns}

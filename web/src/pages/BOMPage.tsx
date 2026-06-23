@@ -29,6 +29,8 @@ export function BOMPage() {
   const [fileList, setFileList] = useState<UploadFile[]>([])
   const [uploadCustomerCode, setUploadCustomerCode] = useState<string | undefined>(undefined)
   const [uploadVersion, setUploadVersion] = useState('1.0')
+  const [uploadProductCode, setUploadProductCode] = useState('')
+  const [uploadProductName, setUploadProductName] = useState('')
   const [templateType, setTemplateType] = useState<'standard' | 'qixin'>('standard')
   const [createForm] = Form.useForm()
 
@@ -104,10 +106,18 @@ export function BOMPage() {
     setUploading(true)
     try {
       const uploadApi = templateType === 'qixin' ? uploadBomQixinApi : uploadBomApi
-      const res = await uploadApi(fileList[0].originFileObj as File, uploadCustomerCode, uploadVersion)
+      const res = await uploadApi(
+        fileList[0].originFileObj as File,
+        uploadCustomerCode,
+        uploadVersion,
+        uploadProductCode || undefined,
+        uploadProductName || undefined,
+      )
       message.success(`BOM上传成功，共解析 ${res.data?.total_items || 0} 条明细`)
       setUploadModalVisible(false)
       setFileList([])
+      setUploadProductCode('')
+      setUploadProductName('')
       setUploading(false)
       fetchBomList()
     } catch (e: any) {
@@ -256,7 +266,7 @@ export function BOMPage() {
       <Modal
         title={`Excel导入BOM（${templateType === 'qixin' ? '七鑫格式' : '标准格式'}）`}
         open={uploadModalVisible}
-        onCancel={() => { setUploadModalVisible(false); setFileList([]) }}
+        onCancel={() => { setUploadModalVisible(false); setFileList([]); setUploadProductCode(''); setUploadProductName('') }}
         onOk={handleUpload}
         confirmLoading={uploading}
       >
@@ -276,6 +286,12 @@ export function BOMPage() {
           </Form.Item>
           <Form.Item label="版本号">
             <Input value={uploadVersion} onChange={e => setUploadVersion(e.target.value)} placeholder="如：1.0" />
+          </Form.Item>
+          <Form.Item label="产品编码" help="留空则使用Excel中的产品编码">
+            <Input value={uploadProductCode} onChange={e => setUploadProductCode(e.target.value)} placeholder="覆盖Excel中的产品编码（可选）" />
+          </Form.Item>
+          <Form.Item label="产品名称" help="留空则使用物料主数据中的名称">
+            <Input value={uploadProductName} onChange={e => setUploadProductName(e.target.value)} placeholder="指定产品名称（可选）" />
           </Form.Item>
           <Form.Item label="Excel文件" required>
             <Upload

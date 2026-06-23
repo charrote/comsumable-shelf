@@ -5,7 +5,7 @@ from typing import Optional, List
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from app.schemas import (
     BomCreateRequest, BomUpdateRequest, BomListItem, BomDetailResponse,
     BomItemSchema, BomAlternativeSchema, BomUploadResponse, BomGenerateIssueRequest,
@@ -411,6 +411,8 @@ async def upload_bom(
     file: UploadFile = File(...),
     customer_code: str = None,
     version: str = "1.0",
+    product_code: Optional[str] = Query(None, description="产品编码（覆盖Excel中的产品编码）"),
+    product_name: Optional[str] = Query(None, description="产品名称"),
     db: AsyncSession = Depends(get_db),
 ):
     if not customer_code:
@@ -439,7 +441,7 @@ async def upload_bom(
     for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         if not row or len(row) < 3:
             continue
-        product_code = str(row[0] or "").strip()
+        excel_product_code = str(row[0] or "").strip()
         material_code = str(row[1] or "").strip()
         quantity = float(row[2] or 0)
         unit = str(row[3] or "盘").strip() if len(row) > 3 else "盘"
@@ -448,17 +450,21 @@ async def upload_bom(
         alt_priority = int(row[6] or 1) if len(row) > 6 else 1
         alt_percentage = float(row[7] or 100) if len(row) > 7 else 100.0
 
-        if not product_code or not material_code or quantity <= 0:
+        # If product_code override is provided, use it instead of Excel value
+        if product_code:
+            excel_product_code = product_code
+
+        if not excel_product_code or not material_code or quantity <= 0:
             continue
 
-        product_codes.add(product_code)
+        product_codes.add(excel_product_code)
         material_codes.add(material_code)
         if alt_code:
             alternates_found += 1
             material_codes.add(alt_code)
 
         rows_data.append({
-            "product_code": product_code,
+            "product_code": excel_product_code,
             "material_code": material_code,
             "quantity": quantity,
             "unit": unit,
@@ -503,6 +509,14 @@ async def upload_bom(
 
     created_boms = {}
     item_code_to_id = {}
+
+    # If product_name provided, update product material name
+    if product_name:
+        for pc in product_codes:
+            product_mat = material_cache.get(pc)
+            if product_mat:
+                product_mat.name = product_name
+                db.add(product_mat)
 
     for product_code in product_codes:
         product_mat = material_cache.get(product_code)
@@ -568,9 +582,12 @@ async def upload_bom(
     first_product = next(iter(product_codes), "")
     first_bom = created_boms.get(first_product)
 
+    first_product_mat = material_cache.get(first_product) if first_product else None
+
     return BomUploadResponse(
         bom_id=first_bom.id if first_bom else 0,
         product_code=first_product,
+        product_name=first_product_mat.name if first_product_mat else product_name,
         version=version,
         parsed=True,
         total_items=len(rows_data),
@@ -585,6 +602,8 @@ async def upload_bom_qixin(
     file: UploadFile = File(...),
     customer_code: str = None,
     version: str = "1.0",
+    product_code: Optional[str] = Query(None, description="产品编码（覆盖模板中的产品编码）"),
+    product_name: Optional[str] = Query(None, description="产品名称"),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload BOM using Qixin-format template.
@@ -638,11 +657,15 @@ async def upload_bom_qixin(
 
     # Row 1: product description → extract product code
     product_desc = str(rows[0][0] or "").strip()
-    product_code_match = re.match(r"^(\S+)", product_desc)
-    product_code = product_code_match.group(1) if product_code_match else product_desc
-    if not product_code or product_code in ("替代关系",):
-        # Fallback: use a generated code based on content
-        product_code = f"PROD-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    if product_code:
+        # Use override product_code from query param
+        pass
+    else:
+        product_code_match = re.match(r"^(\S+)", product_desc)
+        product_code = product_code_match.group(1) if product_code_match else product_desc
+        if not product_code or product_code in ("替代关系",):
+            # Fallback: use a generated code based on content
+            product_code = f"PROD-{datetime.now().strftime('%Y%m%d%H%M%S')}"
 
     # Row 2: headers (skip)
 
@@ -731,7 +754,7 @@ async def upload_bom_qixin(
         product_mat = MaterialMaster(
             customer_id=customer.id,
             code=product_code,
-            name=product_desc or product_code,
+            name=product_name or product_desc or product_code,
             unit="PCS",
             active=1,
         )
@@ -739,6 +762,10 @@ async def upload_bom_qixin(
         await db.flush()
         material_cache[product_code] = product_mat
         auto_created += 1
+    elif product_name:
+        # Update product name if override provided
+        product_mat.name = product_name
+        db.add(product_mat)
 
     # Create BOM
     existing_bom = await db.execute(
@@ -795,9 +822,12 @@ async def upload_bom_qixin(
 
     await db.commit()
 
+    product_mat_name = product_mat.name if product_mat else product_name
+
     return BomUploadResponse(
         bom_id=bom.id,
         product_code=product_code,
+        product_name=product_mat_name or product_name,
         version=version,
         parsed=True,
         total_items=item_count,
