@@ -26,8 +26,14 @@ async def list_receipts(
     keyword: Optional[str] = Query(None, description="模糊搜索：收料单号、采购单号"),
     db: AsyncSession = Depends(get_db),
 ):
-    """List receipt orders."""
-    query = select(Receipt).order_by(Receipt.created_at.desc())
+    """List receipt orders with item count."""
+    query = select(
+        Receipt,
+        func.count(ReceiptReel.id).label("items_count"),
+    ).outerjoin(
+        ReceiptReel, ReceiptReel.receipt_id == Receipt.id
+    ).group_by(Receipt.id).order_by(Receipt.created_at.desc())
+
     if status:
         query = query.where(Receipt.status == status)
     if keyword:
@@ -36,20 +42,21 @@ async def list_receipts(
             | Receipt.purchase_order_no.ilike(f"%{keyword}%")
         )
     result = await db.execute(query)
-    receipts = result.scalars().all()
+    rows = result.all()
     return {
         "data": [
             {
-                "id": r.id,
-                "receipt_no": r.receipt_no,
-                "purchase_order_no": r.purchase_order_no or "",
-                "customer_id": r.customer_id,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-                "operator": r.created_by or "",
-                "status": r.status,
-                "type": r.type,
+                "id": r.Receipt.id,
+                "receipt_no": r.Receipt.receipt_no,
+                "purchase_order_no": r.Receipt.purchase_order_no or "",
+                "customer_id": r.Receipt.customer_id,
+                "created_at": r.Receipt.created_at.isoformat() if r.Receipt.created_at else None,
+                "operator": r.Receipt.created_by or "",
+                "status": r.Receipt.status,
+                "type": r.Receipt.type,
+                "items_count": r.items_count,
             }
-            for r in receipts
+            for r in rows
         ]
     }
 
@@ -77,17 +84,22 @@ async def get_receipt(
     )
     rows = items_result.all()
 
-    # Get reel_code for each item
+    # Get inventory info for each item: reel_code + customer_barcode (original raw barcode)
     reel_ids = [row.ReceiptReel.reel_id for row in rows if row.ReceiptReel.reel_id]
-    reel_code_map = {}
+    inv_map = {}  # inv_id -> {reel_code, customer_barcode}
     if reel_ids:
         inv_result = await db.execute(
-            select(InventoryReel.id, InventoryReel.reel_code).where(
-                InventoryReel.id.in_(reel_ids)
-            )
+            select(
+                InventoryReel.id,
+                InventoryReel.reel_code,
+                InventoryReel.customer_barcode,
+            ).where(InventoryReel.id.in_(reel_ids))
         )
         for inv_row in inv_result.all():
-            reel_code_map[inv_row[0]] = inv_row[1] or ""
+            inv_map[inv_row[0]] = {
+                "reel_code": inv_row[1] or "",
+                "customer_barcode": inv_row[2] or "",
+            }
 
     return ReceiptDetailResponse(
         id=receipt.id,
@@ -106,9 +118,10 @@ async def get_receipt(
                 "material_unit": row[3] or "盘",
                 "quantity": row.ReceiptReel.quantity,
                 "barcode": row.ReceiptReel.barcode,
+                "customer_barcode": inv_map.get(row.ReceiptReel.reel_id, {}).get("customer_barcode", ""),
                 "customer_material_code": row.ReceiptReel.customer_material_code,
                 "reel_id": row.ReceiptReel.reel_id,
-                "reel_code": reel_code_map.get(row.ReceiptReel.reel_id, ""),
+                "reel_code": inv_map.get(row.ReceiptReel.reel_id, {}).get("reel_code", ""),
                 "internal_label_printed": row.ReceiptReel.internal_label_printed == 1,
                 "label_printed_at": row.ReceiptReel.label_printed_at.isoformat() if row.ReceiptReel.label_printed_at else None,
             }

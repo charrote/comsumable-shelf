@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import MaterialMaster, InventoryReel, ReceiptReel, Receipt, Shelf, ShelfSlot, CustomerMaterialMapping
+from app.models import MaterialMaster, InventoryReel, ReceiptReel, Receipt, Shelf, ShelfSlot, CustomerMaterialMapping, Transaction
 from app.utils.barcode import parse_barcode, find_material_candidates
 from app.hal.printer import print_label
 
@@ -235,6 +235,33 @@ async def finalize_receipt_reel(
         date_code=date_code,
     )
     db.add(rp)
+    await db.commit()
+
+    # ── 2.5 Create Transaction record for operation history ──
+    # Calculate balance_after: total quantity of this material in inventory
+    all_pallets = await db.execute(
+        select(func.sum(InventoryReel.quantity)).where(
+            InventoryReel.material_id == material_id,
+            InventoryReel.customer_id == customer_id,
+            InventoryReel.status != "exhausted",
+        )
+    )
+    total_qty = all_pallets.scalar() or 0
+
+    txn = Transaction(
+        customer_id=customer_id,
+        material_id=material_id,
+        type="in",
+        quantity=quantity,
+        balance_after=total_qty,
+        reel_id=pallet.id,
+        source_type="receipt",
+        source_id=receipt_id,
+        operator=operator,
+        note=f"入库收料 #{receipt_id}",
+        created_at=now,
+    )
+    db.add(txn)
     await db.commit()
 
     # ── 3. Auto-assign empty slot (optional) ──

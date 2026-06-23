@@ -9,7 +9,7 @@ import {
   FileTextOutlined,
   InboxOutlined,
 } from '@ant-design/icons'
-import { getMaterialsApi, getShelvesApi, getInventoryApi, getDailyReportApi, getReceiptListApi, getIssueListApi } from '../api'
+import { getMaterialsApi, getShelvesApi, getInventoryApi, getRecentTransactionsApi, getReceiptListApi, getIssueListApi } from '../api'
 
 interface DashboardData {
   totalMaterials: number
@@ -20,12 +20,21 @@ interface DashboardData {
   pendingIssues: number
 }
 
+const typeMap: Record<string, string> = {
+  in: '入库',
+  out: '出库',
+  restock: '补库',
+  reverse: '退料',
+}
+
 interface Transaction {
   key: string
   time: string
   type: string
   material: string
+  materialName: string
   quantity: number
+  operator: string
   status: string
 }
 
@@ -44,7 +53,6 @@ export function DashboardPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   useEffect(() => {
     const slowTimer = setTimeout(() => setSlow(true), 5000)
-    const today = new Date().toISOString().slice(0, 10)
 
     const fetchData = async () => {
       setLoading(true)
@@ -54,7 +62,7 @@ export function DashboardPage() {
         getMaterialsApi({}),
         getShelvesApi(),
         getInventoryApi({}),
-        getDailyReportApi(today),
+        getRecentTransactionsApi(20),
         getReceiptListApi({ status: 'draft' }),
         getIssueListApi({ status: 'pending' }),
       ])
@@ -65,7 +73,7 @@ export function DashboardPage() {
       let materials: any[] = []
       let shelves: any[] = []
       let pallets: any[] = []
-      let reportDetails: any[] = []
+      let recentTxns: any[] = []
       let pendingReceiptsCount = 0
       let pendingIssuesCount = 0
 
@@ -92,7 +100,9 @@ export function DashboardPage() {
 
       if (results[3].status === 'fulfilled') {
         const d = results[3].value.data
-        reportDetails = d?.details ?? []
+        recentTxns = Array.isArray(d) ? d : []
+      } else {
+        errors.push('操作履历')
       }
 
       if (results[4].status === 'fulfilled') {
@@ -122,13 +132,15 @@ export function DashboardPage() {
       })
 
       setTransactions(
-        reportDetails.map((op: any, i: number) => ({
+        recentTxns.map((op: any, i: number) => ({
           key: String(i),
-          time: today,
-          type: Number(op.in_qty || 0) > 0 ? '入库' : '出库',
+          time: op.time ?? '',
+          type: typeMap[op.type] ?? op.type,
           material: op.material_code ?? '',
-          quantity: Number(op.in_qty || 0) + Number(op.out_qty || 0),
-          status: '成功',
+          materialName: op.material_name ?? '',
+          quantity: op.quantity ?? 0,
+          operator: op.operator ?? '',
+          status: op.status ?? '成功',
         })),
       )
 
@@ -223,10 +235,26 @@ export function DashboardPage() {
                 <Table
                   dataSource={transactions}
                   columns={[
-                    { title: '时间', dataIndex: 'time', key: 'time' },
+                    {
+                      title: '时间',
+                      dataIndex: 'time',
+                      key: 'time',
+                      render: (val: string) => {
+                        if (!val) return '-'
+                        // ISO → "MM-DD HH:mm"
+                        const d = new Date(val)
+                        if (isNaN(d.getTime())) return val
+                        const mm = String(d.getMonth() + 1).padStart(2, '0')
+                        const dd = String(d.getDate()).padStart(2, '0')
+                        const hh = String(d.getHours()).padStart(2, '0')
+                        const mi = String(d.getMinutes()).padStart(2, '0')
+                        return `${mm}-${dd} ${hh}:${mi}`
+                      },
+                    },
                     { title: '类型', dataIndex: 'type', key: 'type' },
-                    { title: '物料', dataIndex: 'material', key: 'material' },
+                    { title: '物料编码', dataIndex: 'material', key: 'material' },
                     { title: '数量', dataIndex: 'quantity', key: 'quantity' },
+                    { title: '操作人', dataIndex: 'operator', key: 'operator' },
                     {
                       title: '状态',
                       dataIndex: 'status',

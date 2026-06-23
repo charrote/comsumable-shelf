@@ -29,9 +29,13 @@ async def get_daily_report(
 
     try:
         # Base query: all transactions for the given date
+        next_date = report_date + timedelta(days=1)
         txn_query = (
             select(Transaction)
-            .where(func.date(Transaction.created_at) == date)
+            .where(
+                Transaction.created_at >= report_date,
+                Transaction.created_at < next_date,
+            )
         )
         if customer_id:
             txn_query = txn_query.where(Transaction.customer_id == customer_id)
@@ -88,21 +92,7 @@ async def get_daily_report(
             material_code = mat_row.code
             material_name = mat_row.name
 
-            # --- Opening balance: sum of all transactions BEFORE the report date ---
-            opening_result = await db.execute(
-                select(func.coalesce(func.sum(
-                    func.case(
-                        (Transaction.type.in_(["in", "restock", "reverse_in"]), Transaction.quantity),
-                        else_=0 - Transaction.quantity,
-                    )
-                ), 0))
-                .where(
-                    Transaction.material_id == mat_id,
-                    Transaction.created_at < datetime.combine(report_date, datetime.min.time()),
-                )
-            )
-            # Actually, let's do a simpler approach:
-            # opening = sum(in) - sum(out) for all transactions before report date
+            # --- Opening balance: sum(in) - sum(out) for all transactions before report date ---
             opening_in_result = await db.execute(
                 select(func.coalesce(func.sum(Transaction.quantity), 0))
                 .where(

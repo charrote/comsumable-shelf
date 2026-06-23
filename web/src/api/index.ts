@@ -261,6 +261,8 @@ export const downloadBomQixinTemplateApi = async () => {
 // Report
 export const getDailyReportApi = (date: string, customerId?: number) =>
   apiClient.get('/reports/daily', { params: { date, customer_id: customerId } })
+export const getRecentTransactionsApi = (limit = 20) =>
+  apiClient.get('/transactions/recent', { params: { limit } })
 export const getCustomerSummaryApi = (params: any) =>
   apiClient.get('/reports/customer-summary', { params })
 

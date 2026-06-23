@@ -188,6 +188,7 @@ class InventoryReel(Base):
 
     __table_args__ = (
         Index("idx_inv_material", "customer_id", "material_id", "status"),
+        Index("idx_inv_barcode", "customer_barcode", mysql_length=255),
         Index("idx_inv_fifo", "customer_id", "material_id", "last_in_time", "quantity",
               sqlite_where=status == "on_shelf"),
         Index("idx_inv_tracking", "customer_id", "status", "last_out_time",
@@ -229,6 +230,9 @@ class ReceiptReel(Base):
     date_code = Column(String, comment="生产日期/周期代码（选填）")
     is_restock = Column(Integer, default=0)
     restock_match_key = Column(String)
+
+
+Index("idx_receipt_reel_barcode", ReceiptReel.barcode, mysql_length=255)
 
 
 class IssueOrder(Base):

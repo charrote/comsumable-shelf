@@ -131,9 +131,36 @@ async def init_db():
                         ) THEN
                             EXECUTE 'ALTER TABLE {table} ALTER COLUMN {column} DROP NOT NULL';
                         END IF;
-                    END $$;
-                """)
+                END $$;
+            """)
             )
+
+        # Migration: add index on inventory_reels.customer_barcode (for duplicate scan check)
+        await conn.execute(
+            text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_indexes
+                        WHERE tablename = 'inventory_reels' AND indexname = 'idx_inv_barcode'
+                    ) THEN
+                        CREATE INDEX idx_inv_barcode ON inventory_reels (customer_barcode);
+                    END IF;
+                END $$;
+            """)
+        )
+        # Migration: add index on receipt_reels.barcode (for duplicate scan check)
+        await conn.execute(
+            text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_indexes
+                        WHERE tablename = 'receipt_reels' AND indexname = 'idx_receipt_reel_barcode'
+                    ) THEN
+                        CREATE INDEX idx_receipt_reel_barcode ON receipt_reels (barcode);
+                    END IF;
+                END $$;
+            """)
+        )
 
 
 async def seed_db():

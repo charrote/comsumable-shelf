@@ -547,6 +547,18 @@ class CustomerSummaryResponse(BaseModel):
     by_category: List[dict]
 
 
+class TransactionRecord(BaseModel):
+    """单条操作履历记录，用于仪表盘最近操作展示。"""
+    id: int
+    time: str
+    type: str          # in | out | restock | reverse
+    material_code: str
+    material_name: str
+    quantity: float
+    operator: str
+    status: str = "成功"
+
+
 # ---------- Shelf ----------
 class ShelfCreate(BaseModel):
     code: str

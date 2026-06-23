@@ -1,5 +1,10 @@
 """Duplicate scan detection with configurable behavior.
 
+**IMPORTANT**: The original supplier barcode is stored in
+``InventoryReel.customer_barcode``, NOT in ``reel_barcode`` (which holds an
+internal reel code like ``REEL-YYYYMMDD-XXXX``).  This module always queries
+``customer_barcode`` for duplicate detection.
+
 System Setting: ``duplicate_scan_behavior``
 
     - ``block`` (default) — Reject duplicate scans with ``status="duplicate"``
@@ -19,7 +24,7 @@ Usage::
 from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.models import SystemSetting, InventoryReel
+from app.models import SystemSetting, InventoryReel, ReceiptReel
 
 
 # ── Setting key & valid values ──────────────────────────────────────────────
@@ -60,12 +65,17 @@ async def check_duplicate_scan(
 ) -> DuplicateCheckResult:
     """Check whether *barcode* is a duplicate scan and return the configured action.
 
+    Queries BOTH ``InventoryReel.customer_barcode`` AND ``ReceiptReel.barcode``
+    so that a barcode scanned into any receipt (draft/confirmed/completed) or
+    already present in inventory is rejected on subsequent scans.
+
     Steps:
         1. Read ``duplicate_scan_behavior`` from system settings (cached per-call).
         2. If ``force`` → skip DB lookup; return ``allow`` immediately.
-        3. Otherwise query ``InventoryReel`` for the same barcode + active statuses.
-        4. If no duplicate found → return ``allow``.
-        5. If duplicate found → return ``block`` or ``warn`` according to setting.
+        3. Query ``InventoryReel.customer_barcode`` for *any* status (even exhausted).
+        4. Query ``ReceiptReel.barcode`` for *any* receipt.
+        5. If no duplicate found → return ``allow``.
+        6. If duplicate found → return ``block`` or ``warn`` according to setting.
     """
     behavior = await _read_behavior(db)
 
@@ -74,24 +84,35 @@ async def check_duplicate_scan(
         return DuplicateCheckResult(duplicate=False, action="allow")
 
     # ── block / warn: perform DB lookup ──
-    result = await db.execute(
-        select(InventoryReel).where(
-            InventoryReel.reel_barcode == barcode,
-            InventoryReel.status.in_(["on_shelf", "tracking"]),
-        )
+    # Look in InventoryReel.customer_barcode (supplier original barcode)
+    inv_result = await db.execute(
+        select(InventoryReel.id).where(
+            InventoryReel.customer_barcode == barcode,
+        ).limit(1)
     )
-    dup = result.scalar_one_or_none()
+    dup_inv = inv_result.scalar_one_or_none()
 
-    if dup is None:
+    # Also look in ReceiptReel.barcode (for items in draft receipts)
+    rr_result = await db.execute(
+        select(ReceiptReel.id).where(
+            ReceiptReel.barcode == barcode,
+        ).limit(1)
+    )
+    dup_rr = rr_result.scalar_one_or_none()
+
+    if dup_inv is None and dup_rr is None:
         return DuplicateCheckResult(duplicate=False, action="allow")
 
     # ── Duplicate found ──
+    existing_id = dup_inv or dup_rr
+    source = "库存" if dup_inv else "收料单"
+
     if behavior == "warn":
         return DuplicateCheckResult(
             duplicate=True,
             action="warn",
-            existing_reel_id=dup.id,
-            warning=f"条码 {barcode} 已在库存中（盘 #{dup.id}）",
+            existing_reel_id=existing_id,
+            warning=f"条码 {barcode} 已在{source}中（ID {existing_id}）",
             message="该条码已存在，允许通过（警告模式）",
         )
 
@@ -99,8 +120,8 @@ async def check_duplicate_scan(
     return DuplicateCheckResult(
         duplicate=True,
         action="block",
-        existing_reel_id=dup.id,
-        warning=f"条码 {barcode} 已在库存中（盘 #{dup.id}）",
+        existing_reel_id=existing_id,
+        warning=f"条码 {barcode} 已在{source}中（ID {existing_id}）",
         message="该条码已存在，已拦截",
     )
 
