@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Table, Button, Modal, Form, Input, Space, Tag, Popconfirm, Spin, message, Tabs, Select, Upload } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined, UploadOutlined, DownloadOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, LinkOutlined, UploadOutlined, DownloadOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import {
   getMaterialsApi, createMaterialApi, updateMaterialApi, deleteMaterialApi,
   getCustomersApi, getMappingsApi, createMappingApi, updateMappingApi, deleteMappingApi,
   uploadMaterialsApi, downloadMaterialTemplateApi,
+  batchDeleteMaterialsApi, batchUpdateMaterialsApi,
 } from '../api'
 
 const { Option } = Select
@@ -31,6 +32,11 @@ export function MaterialManagementPage() {
   const [editingMapping, setEditingMapping] = useState<any | null>(null)
   const [mappingForm] = Form.useForm()
   const [materialOptions, setMaterialOptions] = useState<any[]>([])
+
+  // ── Batch operation state ──
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [batchEditModalOpen, setBatchEditModalOpen] = useState(false)
+  const [batchEditForm] = Form.useForm()
 
   // ── Customers ──
   const [customers, setCustomers] = useState<any[]>([])
@@ -139,6 +145,59 @@ export function MaterialManagementPage() {
     }
   }
 
+  // ── Batch operations ──
+  const handleBatchDelete = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要禁用的物料')
+      return
+    }
+    Modal.confirm({
+      title: '批量禁用物料',
+      icon: <ExclamationCircleOutlined />,
+      content: `确定要禁用选中的 ${selectedRowKeys.length} 个物料吗？`,
+      onOk: async () => {
+        try {
+          await batchDeleteMaterialsApi(selectedRowKeys as number[])
+          message.success(`已批量禁用 ${selectedRowKeys.length} 个物料`)
+          setSelectedRowKeys([])
+          loadData()
+        } catch (e: any) {
+          message.error('批量禁用失败: ' + (e.response?.data?.detail || e.message))
+        }
+      },
+    })
+  }
+
+  const handleBatchEdit = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('请先选择要编辑的物料')
+      return
+    }
+    batchEditForm.resetFields()
+    setBatchEditModalOpen(true)
+  }
+
+  const handleBatchEditSave = async (values: any) => {
+    try {
+      const fields: any = {}
+      if (values.name) fields.name = values.name
+      if (values.spec) fields.spec = values.spec
+      if (values.unit) fields.unit = values.unit
+      if (values.category_id) fields.category_id = values.category_id
+      if (Object.keys(fields).length === 0) {
+        message.warning('请填写至少一个要更新的字段')
+        return
+      }
+      await batchUpdateMaterialsApi(selectedRowKeys as number[], fields)
+      message.success(`已批量更新 ${selectedRowKeys.length} 个物料`)
+      setBatchEditModalOpen(false)
+      setSelectedRowKeys([])
+      loadData()
+    } catch (e: any) {
+      message.error('批量更新失败: ' + (e.response?.data?.detail || e.message))
+    }
+  }
+
   // ── Mapping CRUD ──
   const openCreateMapping = () => {
     setEditingMapping(null)
@@ -187,6 +246,7 @@ export function MaterialManagementPage() {
 
   // ── Material table columns ──
   const materialColumns = [
+    { title: '序号', key: 'index', width: 60, render: (_: any, __: any, index: number) => index + 1 },
     { title: '编号', dataIndex: 'code', key: 'code', width: 120 },
     { title: '名称', dataIndex: 'name', key: 'name' },
     { title: '规格', dataIndex: 'spec', key: 'spec', width: 200 },
@@ -257,7 +317,26 @@ export function MaterialManagementPage() {
             </Space>
           </div>
           <Spin spinning={loading}>
-            <Table columns={materialColumns} dataSource={dataList} pagination={{ pageSize: 10 }} rowKey="code" />
+            {selectedRowKeys.length > 0 && (
+              <div style={{ marginBottom: 8, padding: '8px 12px', background: '#e6f7ff', borderRadius: 4 }}>
+                <Space>
+                  <span>已选 {selectedRowKeys.length} 项</span>
+                  <Button size="small" onClick={() => setSelectedRowKeys([])}>取消选择</Button>
+                  <Button size="small" danger icon={<DeleteOutlined />} onClick={handleBatchDelete}>批量禁用</Button>
+                  <Button size="small" icon={<EditOutlined />} onClick={handleBatchEdit}>批量编辑</Button>
+                </Space>
+              </div>
+            )}
+            <Table
+              columns={materialColumns}
+              dataSource={dataList}
+              pagination={{ pageSize: 10 }}
+              rowKey="code"
+              rowSelection={{
+                selectedRowKeys,
+                onChange: setSelectedRowKeys,
+              }}
+            />
           </Spin>
         </>
       ),
@@ -387,6 +466,29 @@ export function MaterialManagementPage() {
               <Button type="primary" htmlType="submit">保存</Button>
               <Button onClick={() => { setMappingModalOpen(false); mappingForm.resetFields() }}>取消</Button>
             </Space>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* ── Batch Edit Modal ── */}
+      <Modal
+        title={`批量编辑物料（${selectedRowKeys.length} 项）`}
+        open={batchEditModalOpen}
+        onCancel={() => { setBatchEditModalOpen(false); batchEditForm.resetFields() }}
+        onOk={() => batchEditForm.submit()}
+      >
+        <Form form={batchEditForm} layout="vertical" onFinish={handleBatchEditSave}>
+          <Form.Item name="name" label="物料名称">
+            <Input placeholder="留空则不更新此项" />
+          </Form.Item>
+          <Form.Item name="spec" label="规格型号">
+            <Input placeholder="留空则不更新此项" />
+          </Form.Item>
+          <Form.Item name="unit" label="单位">
+            <Input placeholder="留空则不更新此项" />
+          </Form.Item>
+          <Form.Item name="category_id" label="类别ID">
+            <Input type="number" placeholder="留空则不更新此项" />
           </Form.Item>
         </Form>
       </Modal>

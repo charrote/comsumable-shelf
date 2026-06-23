@@ -57,9 +57,16 @@ async def get_receipt(
         raise HTTPException(status_code=404, detail="入库单不存在")
 
     items_result = await db.execute(
-        select(ReceiptReel).where(ReceiptReel.receipt_id == receipt_id)
+        select(
+            ReceiptReel,
+            MaterialMaster.code,
+            MaterialMaster.name,
+            MaterialMaster.unit,
+        )
+        .join(MaterialMaster, ReceiptReel.material_id == MaterialMaster.id, isouter=True)
+        .where(ReceiptReel.receipt_id == receipt_id)
     )
-    items = items_result.scalars().all()
+    rows = items_result.all()
 
     return ReceiptDetailResponse(
         id=receipt.id,
@@ -70,16 +77,19 @@ async def get_receipt(
         status=receipt.status,
         items=[
             {
-                "id": item.id,
-                "material_id": item.material_id,
-                "quantity": item.quantity,
-                "barcode": item.barcode,
-                "customer_material_code": item.customer_material_code,
-                "reel_id": item.reel_id,
-                "internal_label_printed": item.internal_label_printed == 1,
-                "label_printed_at": item.label_printed_at.isoformat() if item.label_printed_at else None,
+                "id": row.ReceiptReel.id,
+                "material_id": row.ReceiptReel.material_id,
+                "material_code": row[1] or "",
+                "material_name": row[2] or "",
+                "material_unit": row[3] or "盘",
+                "quantity": row.ReceiptReel.quantity,
+                "barcode": row.ReceiptReel.barcode,
+                "customer_material_code": row.ReceiptReel.customer_material_code,
+                "reel_id": row.ReceiptReel.reel_id,
+                "internal_label_printed": row.ReceiptReel.internal_label_printed == 1,
+                "label_printed_at": row.ReceiptReel.label_printed_at.isoformat() if row.ReceiptReel.label_printed_at else None,
             }
-            for item in items
+            for row in rows
         ],
     )
 
@@ -371,9 +381,12 @@ async def scan_preview(
     parsed = await parse_barcode(barcode, db)
     supplier_info = extract_supplier_info(barcode)
 
-    # 2) Find material candidates
+    # 2) Find material candidates (use receipt's customer_id)
+    receipt_result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = receipt_result.scalar_one_or_none()
+    preview_customer_id = receipt.customer_id if receipt else 1
     from app.services.receipt_service import match_material_by_barcode
-    match = await match_material_by_barcode(db, barcode, 1)
+    match = await match_material_by_barcode(db, barcode, preview_customer_id)
 
     candidates = []
     if match.candidates:

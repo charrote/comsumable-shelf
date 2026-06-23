@@ -18,6 +18,10 @@ export const updateMaterialApi = (id: number, data: any) =>
   apiClient.put(`/materials/${id}`, data)
 export const deleteMaterialApi = (id: number) =>
   apiClient.delete(`/materials/${id}`)
+export const batchDeleteMaterialsApi = (ids: number[]) =>
+  apiClient.post('/materials/batch-delete', { ids })
+export const batchUpdateMaterialsApi = (ids: number[], fields: any) =>
+  apiClient.put('/materials/batch-update', { ids, fields })
 export const uploadMaterialsApi = (file: File, customerCode?: string) => {
   const formData = new FormData()
   formData.append('file', file)
@@ -165,6 +169,20 @@ export const uploadBomApi = (file: File, customerCode?: string, version?: string
 }
 export const generateIssueFromBomApi = (bomId: number, data: any) =>
   apiClient.post(`/bom/${bomId}/generate-issue`, data)
+export const exportBomApi = async (bomId: number) => {
+  const res = await apiClient.get(`/bom/${bomId}/export`, { responseType: 'blob' })
+  const disposition = res.headers['content-disposition'] || ''
+  const match = disposition.match(/filename\*=UTF-8''(.+)/)
+  const filename = match ? decodeURIComponent(match[1]) : `BOM-${bomId}.xlsx`
+  const url = window.URL.createObjectURL(new Blob([res.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', filename)
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
 export const downloadBomTemplateApi = async () => {
   const res = await apiClient.get('/bom/template', { responseType: 'blob' })
   const url = window.URL.createObjectURL(new Blob([res.data]))

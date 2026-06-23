@@ -57,6 +57,8 @@ export function ReceiptPage() {
       message.success(`收料单 ${res.data.receipt_no} 创建成功`)
       setCreateModal(false)
       createForm.resetFields()
+      // Set currentReceipt so that scan flow can access the receipt id
+      setCurrentReceipt(res.data)
       loadReceipts()
       startScan(res.data.id)
     } catch (e: any) { message.error(e.response?.data?.detail || '创建失败') }
@@ -73,7 +75,11 @@ export function ReceiptPage() {
   }
 
   const handleBarcodeScan = async (barcode: string) => {
-    if (!barcode || !currentReceipt?.id) return
+    if (!barcode) return
+    if (!currentReceipt?.id) {
+      message.error('请先选择收料单')
+      return
+    }
     setScanning(true)
     try {
       // Step 1: Preview scan — parse barcode and return candidates + extracted fields
@@ -91,6 +97,7 @@ export function ReceiptPage() {
         if (confirmData.status === 'ok') {
           message.success(`入库成功！Reel#${confirmData.reel_id} ${confirmData.message || ''}`)
           loadReceiptDetail()
+          loadReceipts()
           setShowScanModal(false)
         } else {
           message.warning(confirmData.message || '入库结果异常')
@@ -149,6 +156,7 @@ export function ReceiptPage() {
       if (data.status === 'ok') {
         message.success(`入库成功！Reel#${data.reel_id} ${data.message || ''}`)
         loadReceiptDetail()
+        loadReceipts()
         setShowScanModal(false)
       } else {
         message.warning(data.message || '入库结果异常')

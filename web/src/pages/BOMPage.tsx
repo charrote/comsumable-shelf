@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
 import { Table, Button, Card, Upload, Tag, message, Select, Space, Modal, Form, Input, Popconfirm, Radio } from 'antd'
-import { UploadOutlined, DownloadOutlined, PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons'
+import { UploadOutlined, DownloadOutlined, PlusOutlined, DeleteOutlined, EditOutlined, ExportOutlined } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import {
   getBomListApi, uploadBomApi, downloadBomTemplateApi,
   uploadBomQixinApi, downloadBomQixinTemplateApi,
   getCustomersApi, getMaterialsApi, createBomApi, deleteBomApi, updateBomApi,
+  exportBomApi,
 } from '../api'
 
 const statusMap: Record<string, { color: string; label: string }> = {
@@ -126,6 +127,7 @@ export function BOMPage() {
   }
 
   const columns = [
+    { title: '序号', key: 'index', width: 55, render: (_: any, __: any, index: number) => index + 1 },
     {
       title: '产品编码', dataIndex: 'product_code', key: 'product_code', width: 150,
     },
@@ -173,6 +175,9 @@ export function BOMPage() {
               { value: 'obsolete', label: '废弃' },
             ]}
           />
+          <Button type="link" size="small" icon={<ExportOutlined />} onClick={() => exportBomApi(record.id)}>
+            导出
+          </Button>
           <Popconfirm title="确定删除此BOM？" onConfirm={() => handleDelete(record.id)}>
             <Button type="link" size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>

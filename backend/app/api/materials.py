@@ -3,7 +3,7 @@
 from typing import Optional, List
 from sqlalchemy import select, or_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Body
 from fastapi.responses import StreamingResponse
 from app.schemas import (
     MaterialCreate,
@@ -103,30 +103,52 @@ async def upload_materials(
     skipped = 0
     category_cache = {}
 
+    # Customer prefix for material codes
+    customer_prefix = customer.code + "-"
+
     for row in rows[1:]:
         if len(row) < 3:
             continue
-        code = str(row[0] or "").strip()
+        raw_code = str(row[0] or "").strip()
         name = str(row[1] or "").strip()
         spec = str(row[2] or "").strip()
         unit = str(row[3] or "PCS").strip() if len(row) > 3 else "PCS"
         category_name = str(row[4] or "").strip() if len(row) > 4 else ""
 
-        if not code or not name:
+        if not raw_code or not name:
             continue
+
+        # Auto-prepend customer prefix (avoid double prefix)
+        if not raw_code.startswith(customer_prefix):
+            code = customer_prefix + raw_code
+        else:
+            code = raw_code
 
         total += 1
 
-        # Skip if material code already exists
+        # Check if material code already exists
         existing = await db.execute(
             select(MaterialMaster).where(
                 MaterialMaster.customer_id == customer.id,
                 MaterialMaster.code == code,
             )
         )
-        if existing.scalar_one_or_none():
-            skipped += 1
-            continue
+        existing_mat = existing.scalar_one_or_none()
+        if existing_mat:
+            if existing_mat.active == 1:
+                # Active duplicate → skip
+                skipped += 1
+                continue
+            else:
+                # Soft-deleted → reactivate and update
+                existing_mat.active = 1
+                existing_mat.name = name
+                existing_mat.spec = spec
+                existing_mat.unit = unit
+                if category_id is not None:
+                    existing_mat.category_id = category_id
+                imported += 1
+                continue
 
         # Resolve category
         category_id = None
@@ -457,3 +479,55 @@ async def delete_mapping(
     mapping.active = 0
     await db.commit()
     return {"status": "ok", "message": "映射已禁用"}
+
+
+# ═══════════════════════════════════════════════
+# Batch operations
+# ═══════════════════════════════════════════════
+
+@router.post("/batch-delete")
+async def batch_delete_materials(
+    data: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch soft-delete materials."""
+    ids = data.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="物料ID列表不能为空")
+    result = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id.in_(ids))
+    )
+    materials = result.scalars().all()
+    for m in materials:
+        m.active = 0
+    await db.commit()
+    return {"status": "ok", "message": f"已批量禁用 {len(materials)} 个物料", "count": len(materials)}
+
+
+@router.put("/batch-update")
+async def batch_update_materials(
+    data: dict = Body(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch update materials (e.g., change category for multiple materials)."""
+    ids = data.get("ids", [])
+    fields = data.get("fields", {})
+    if not ids:
+        raise HTTPException(status_code=400, detail="物料ID列表不能为空")
+    result = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id.in_(ids))
+    )
+    materials = result.scalars().all()
+    for m in materials:
+        if "name" in fields:
+            m.name = fields["name"]
+        if "spec" in fields:
+            m.spec = fields["spec"]
+        if "unit" in fields:
+            m.unit = fields["unit"]
+        if "category_id" in fields:
+            m.category_id = fields["category_id"]
+        if "qty_per_pallet" in fields:
+            m.qty_per_pallet = fields["qty_per_pallet"]
+    await db.commit()
+    return {"status": "ok", "message": f"已批量更新 {len(materials)} 个物料", "count": len(materials)}

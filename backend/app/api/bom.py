@@ -15,6 +15,7 @@ from app.models import Bom, BomItem, BomAlternative, MaterialMaster, Customer
 from app.config import settings
 import openpyxl
 from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 from fastapi.responses import StreamingResponse
 import os
 import io
@@ -252,6 +253,18 @@ async def delete_bom(bom_id: int, db: AsyncSession = Depends(get_db)):
     bom = await db.get(Bom, bom_id)
     if not bom:
         raise HTTPException(status_code=404, detail="BOM不存在")
+
+    # Check if any IssueOrder references this BOM
+    from app.models import IssueOrder
+    issue_check = await db.execute(
+        select(IssueOrder).where(IssueOrder.bom_id == bom_id).limit(1)
+    )
+    if issue_check.scalar_one_or_none():
+        raise HTTPException(
+            status_code=400,
+            detail=f"此BOM已被发料单引用，无法删除。请先删除相关的发料单（IssueOrder）后再试。"
+        )
+
     await db.delete(bom)
     await db.commit()
     return {"message": "BOM已删除"}
@@ -792,3 +805,69 @@ async def generate_issue_from_bom(
     if not bom:
         raise HTTPException(status_code=404, detail="BOM不存在")
     return {"message": "功能开发中", "bom_id": bom_id}
+
+
+@router.get("/{bom_id}/export")
+async def export_bom(
+    bom_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Export BOM structure to Excel (.xlsx)."""
+    detail = await _get_bom_detail(db, bom_id)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"BOM-{detail.product_code}"
+
+    # Title row
+    ws.merge_cells("A1:G1")
+    ws["A1"] = f"{detail.product_code} ({detail.product_name or ''})    版本: {detail.version}    状态: {detail.status}"
+    ws["A1"].font = Font(bold=True, size=12)
+
+    # Header row
+    headers = ["层级", "物料编码", "物料名称", "数量", "单位", "位置/备注", "替代料"]
+    ws.append(headers)
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=2, column=col_idx)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color="E0E0E0", end_color="E0E0E0", fill_type="solid")
+
+    # Data rows - flatten tree
+    def flatten_items(items: list, level: int = 0):
+        rows = []
+        for item in items:
+            alt_str = "; ".join([
+                f"{a.alternative_material_code}(优先级:{a.priority},{a.percentage}%)"
+                for a in item.alternatives
+            ]) if item.alternatives else ""
+            rows.append([
+                level,  # 层级
+                item.material_code or "",
+                item.material_name or "",
+                item.quantity,
+                item.material_unit or "",
+                item.remark or "",
+                alt_str,
+            ])
+            if item.children:
+                rows.extend(flatten_items(item.children, level + 1))
+        return rows
+
+    data_rows = flatten_items(detail.items)
+    for row in data_rows:
+        ws.append(row)
+
+    # Column widths
+    widths = [8, 22, 30, 10, 8, 30, 50]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"BOM-{detail.product_code}-{detail.version}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
