@@ -14,16 +14,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.smes.pda.data.model.ReceiptScanResponse
 import com.smes.pda.ui.viewmodel.InboundViewModel
 
 private val Primary = Color(0xFF0066CC)
 private val Success = Color(0xFF00AA55)
-private val Warning = Color(0xFFFF9900)
 private val Danger = Color(0xFFDD3333)
 private val CardBg = Color(0xFFFFFFFF)
 private val PageBg = Color(0xFFF5F7FA)
@@ -36,13 +35,14 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsState()
     var barcodeInput by remember { mutableStateOf("") }
     var quantityInput by remember { mutableStateOf("") }
-    var showDuplicateWarning by remember { mutableStateOf(false) }
 
-    LaunchedEffect(uiState.lastScanResult) {
-        uiState.lastScanResult?.let { result ->
-            if (result.duplicateFlag) {
-                showDuplicateWarning = true
-            }
+    // ── 弹框是否可见：有条码等待确认 ──
+    val showConfirmDialog = uiState.lastBarcode.isNotEmpty()
+
+    // 成功确认后清除 quantityInput，准备下次扫码
+    LaunchedEffect(uiState.lastConfirmResult) {
+        if (uiState.lastConfirmResult != null) {
+            quantityInput = ""
         }
     }
 
@@ -77,27 +77,8 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
                                     barcodeInput = ""
                                 }
                             },
-                            isLoading = uiState.isLoading
+                            isLoading = false // scanBarcode 不调 API，无需 loading
                         )
-                    }
-
-                    if (showDuplicateWarning) {
-                        uiState.lastScanResult?.let { result ->
-                            item { DuplicateWarningCard(result = result, onDismiss = { showDuplicateWarning = false }) }
-                        }
-                    }
-
-                    uiState.lastScanResult?.let { result ->
-                        if (!result.duplicateFlag) {
-                            item {
-                                MaterialInfoCard(
-                                    result = result,
-                                    quantityInput = quantityInput,
-                                    onQuantityChange = { quantityInput = it }
-                                )
-                            }
-                            item { ConfirmInboundButton() }
-                        }
                     }
 
                     if (uiState.scanHistory.isNotEmpty()) {
@@ -118,6 +99,27 @@ fun InboundScreen(viewModel: InboundViewModel = hiltViewModel()) {
                 }
             }
         }
+    }
+
+    // ── 条形码确认弹框（扫码后立即弹出，不调 API） ──
+    if (showConfirmDialog) {
+        ScanConfirmDialog(
+            barcode = uiState.lastBarcode,
+            quantityInput = quantityInput,
+            isLoading = uiState.isLoading,
+            errorMessage = uiState.confirmError,
+            onQuantityChange = { quantityInput = it },
+            onConfirm = {
+                val qty = quantityInput.toDoubleOrNull()
+                if (qty != null && qty > 0) {
+                    viewModel.confirmScan(qty)
+                }
+            },
+            onCancel = {
+                viewModel.cancelConfirm()
+                quantityInput = ""
+            }
+        )
     }
 }
 
@@ -290,175 +292,136 @@ private fun ScanArea(
 }
 
 @Composable
-private fun MaterialInfoCard(
-    result: ReceiptScanResponse,
+private fun ScanConfirmDialog(
+    barcode: String,
     quantityInput: String,
-    onQuantityChange: (String) -> Unit
+    isLoading: Boolean = false,
+    errorMessage: String? = null,
+    onQuantityChange: (String) -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBg),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            InfoRow(label = "物料编码", value = result.materialCode ?: "--")
-            Spacer(modifier = Modifier.height(8.dp))
-            InfoRow(label = "物料名称", value = result.materialName ?: "--")
-
-            Spacer(modifier = Modifier.height(12.dp))
-
+    AlertDialog(
+        onDismissRequest = onCancel,
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false
+        ),
+        title = {
             Text(
-                text = "入库数量",
-                fontSize = 18.sp,
-                color = TextSecondary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = quantityInput,
-                    onValueChange = onQuantityChange,
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = 56.dp),
-                    placeholder = {
-                        Text(
-                            if (result.quantity > 0) "${result.quantity.toInt()}" else "输入数量",
-                            fontSize = 18.sp,
-                            color = TextSecondary
-                        )
-                    },
-                    singleLine = true,
-                    textStyle = LocalTextStyle.current.copy(
-                        fontSize = 18.sp,
-                        color = TextPrimary,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    shape = RoundedCornerShape(8.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "盘",
-                    fontSize = 18.sp,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Text(
-                text = "储位分配",
-                fontSize = 18.sp,
-                color = TextSecondary
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-
-            val slotText = result.assignedSlot?.let { "$it" } ?: "自动分配"
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Primary.copy(alpha = 0.08f))
-                    .padding(horizontal = 12.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "\uD83D\uDCCD",
-                    fontSize = 20.sp
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = slotText,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Primary
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ConfirmInboundButton() {
-    Button(
-        onClick = { },
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 56.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = Success)
-    ) {
-        Text(
-            text = "\u2705 确认入库",
-            fontSize = 20.sp,
-            fontWeight = FontWeight.Bold
-        )
-    }
-}
-
-@Composable
-private fun DuplicateWarningCard(
-    result: ReceiptScanResponse,
-    onDismiss: () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Warning.copy(alpha = 0.12f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = "\u26A0\uFE0F 检测到重复扫码",
-                fontSize = 20.sp,
+                text = "\u2705 确认入库",
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
-                color = Danger
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = "物料: ${result.materialCode ?: "--"}  ${result.materialName ?: ""}",
-                fontSize = 18.sp,
                 color = TextPrimary
             )
-            result.warning?.let {
-                Spacer(modifier = Modifier.height(6.dp))
+        },
+        text = {
+            Column(modifier = Modifier.padding(horizontal = 4.dp)) {
+                // 条形码（用户在扫码枪/PDA 上扫到的原始值）
                 Text(
-                    text = it,
-                    fontSize = 18.sp,
-                    color = Danger
+                    text = "条形码",
+                    fontSize = 16.sp,
+                    color = TextSecondary
                 )
-            }
-            result.assignedSlot?.let { slot ->
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "已存在库存: 储位 $slot",
-                    fontSize = 18.sp,
-                    color = TextPrimary
+                    text = barcode,
+                    fontSize = 24.sp,
+                    color = TextPrimary,
+                    fontWeight = FontWeight.Bold
                 )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 入库数量 - 用户必须在此输入
+                Text(
+                    text = "入库数量",
+                    fontSize = 18.sp,
+                    color = TextSecondary,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = quantityInput,
+                        onValueChange = onQuantityChange,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 56.dp),
+                        enabled = !isLoading,
+                        placeholder = {
+                            Text(
+                                "输入数量",
+                                fontSize = 18.sp,
+                                color = TextSecondary
+                            )
+                        },
+                        singleLine = true,
+                        textStyle = LocalTextStyle.current.copy(
+                            fontSize = 22.sp,
+                            color = TextPrimary,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "盘",
+                        fontSize = 18.sp,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                // 确认失败的错误信息
+                errorMessage?.let { msg ->
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = msg,
+                        fontSize = 16.sp,
+                        color = Danger,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(14.dp))
-            OutlinedButton(
-                onClick = {
-                    onDismiss()
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 52.dp),
+        },
+        confirmButton = {
+            Button(
+                onClick = onConfirm,
+                enabled = !isLoading &&
+                    quantityInput.toDoubleOrNull() != null &&
+                    (quantityInput.toDoubleOrNull() ?: 0.0) > 0,
                 shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Primary)
+                colors = ButtonDefaults.buttonColors(containerColor = Success)
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = Color.White
+                    )
+                } else {
+                    Text(
+                        text = "确认入库",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onCancel,
+                enabled = !isLoading
             ) {
                 Text(
-                    text = "\uD83D\uDD19 重新扫码",
+                    text = "取消",
                     fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
+                    color = TextSecondary
                 )
             }
         }
-    }
+    )
 }
 
 @Composable
@@ -510,26 +473,6 @@ private fun HistoryItem(scan: ReceiptScanResponse) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = "$label: ",
-            fontSize = 18.sp,
-            color = TextSecondary
-        )
-        Text(
-            text = value,
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = TextPrimary
-        )
     }
 }
 

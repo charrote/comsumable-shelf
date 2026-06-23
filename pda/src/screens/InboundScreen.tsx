@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useCallback, useRef } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
-  FlatList, ActivityIndicator, ScrollView,
+  ActivityIndicator, ScrollView, Modal,
 } from 'react-native'
 import { createReceiptApi, scanPreviewApi, scanInboundApi } from '../api'
 import type { ReceiptScanResponse, BarcodePreviewResponse, MaterialCandidate } from '../types/api'
@@ -14,8 +14,6 @@ const Colors = {
 
 type Step = 'start' | 'scanning'
 
-type ConfirmMode = 'auto' | 'select_material' | 'new_material'
-
 export default function InboundScreen() {
   const user = useAuthStore((s) => s.user)
   const [step, setStep] = useState<Step>('start')
@@ -25,15 +23,19 @@ export default function InboundScreen() {
   const [receiptNo, setReceiptNo] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [history, setHistory] = useState<ReceiptScanResponse[]>([])
+  const barcodeRef = useRef<TextInput>(null)
 
-  // Preview state
+  // ── 扫码预览结果（来自 scanPreviewApi，仅查询不保存） ──
   const [preview, setPreview] = useState<BarcodePreviewResponse | null>(null)
-  const [confirmMode, setConfirmMode] = useState<ConfirmMode>('auto')
+  const [confirmQty, setConfirmQty] = useState('')
+  const [confirmError, setConfirmError] = useState('')
+
+  // 候选物料选择（低置信度时）
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | null>(null)
   const [newMaterialCode, setNewMaterialCode] = useState('')
   const [newMaterialName, setNewMaterialName] = useState('')
-  const [manualQty, setManualQty] = useState('')
 
+  // ── 开始入库 ──
   const startReceipt = useCallback(async () => {
     if (!operator.trim()) {
       Alert.alert('提示', '请输入操作员姓名')
@@ -45,6 +47,8 @@ export default function InboundScreen() {
       setReceiptId(receipt.id)
       setReceiptNo(receipt.receipt_no)
       setStep('scanning')
+      // 自动聚焦扫码输入框
+      setTimeout(() => barcodeRef.current?.focus(), 300)
     } catch (e: any) {
       Alert.alert('错误', e?.response?.data?.detail || '创建入库单失败')
     } finally {
@@ -52,103 +56,110 @@ export default function InboundScreen() {
     }
   }, [operator])
 
-  // Handle barcode scan: preview first
+  // ── 扫码：仅预览，不保存 ──
   const handleBarcodeSubmit = useCallback(async () => {
     if (!barcode.trim() || receiptId == null) return
     setIsLoading(true)
     setPreview(null)
-    setConfirmMode('auto')
+    setConfirmQty('')
+    setConfirmError('')
     setSelectedMaterialId(null)
     setNewMaterialCode('')
     setNewMaterialName('')
     try {
-      const res = await scanPreviewApi(receiptId, { barcode: barcode.trim(), operator })
+      const res = await scanPreviewApi(receiptId, {
+        barcode: barcode.trim(),
+        operator,
+      })
       setPreview(res)
-
-      // Determine confirm mode based on status
-      if (res.status === 'ok' && res.candidates && res.candidates.length > 0) {
-        // Auto-proceed
-        await doConfirmScan(res.barcode, res.material_id!, undefined, false, parseFloat(manualQty) || res.quantity)
-      } else if (res.status === 'pending_review' && res.candidates && res.candidates.length > 0) {
-        setConfirmMode('select_material')
-        setManualQty(String(res.quantity || 1))
-      } else if (res.status === 'new_material') {
-        setConfirmMode('new_material')
-        setNewMaterialCode(res.material_code || barcode.trim())
-        setNewMaterialName(res.material_name || '')
-        setManualQty(String(res.quantity || 1))
-      } else if (res.status === 'ok') {
-        // Direct auto-proceed
-        await doConfirmScan(res.barcode, res.material_id!, undefined, false, parseFloat(manualQty) || res.quantity)
+      setConfirmQty(String(res.quantity || 1))
+      // 有候选物料时预填第一个
+      if (res.candidates && res.candidates.length > 0) {
+        setSelectedMaterialId(res.candidates[0].material_id)
       }
+      setBarcode('')
+      // 始终弹出确认框，无论置信度高低（不自动调 scanInboundApi）
     } catch (e: any) {
       Alert.alert('扫描失败', e?.response?.data?.detail || '条码解析失败，请重试')
     } finally {
       setIsLoading(false)
     }
-  }, [barcode, receiptId, operator, manualQty])
+  }, [barcode, receiptId, operator])
 
-  // Execute the actual scan/confirm
-  const doConfirmScan = async (
-    bc: string,
-    matId?: number,
-    _matCode?: string,
-    isNew?: boolean,
-    qty?: number,
-  ) => {
-    if (receiptId == null) return
+  // ── 用户点「确认入库」后才真正调 API 保存 ──
+  const doConfirmScan = useCallback(async () => {
+    if (receiptId == null || !preview) return
+    const qty = parseFloat(confirmQty)
+    if (isNaN(qty) || qty <= 0) {
+      setConfirmError('请输入有效数量')
+      return
+    }
+
     setIsLoading(true)
+    setConfirmError('')
     try {
+      const hasCandidates = preview.candidates && preview.candidates.length > 0
+      const isNewMaterial = preview.status === 'new_material'
+      const matId = selectedMaterialId || preview.material_id
+
       const result = await scanInboundApi(receiptId, {
-        barcode: bc,
+        barcode: preview.barcode,
         operator,
-        qty: qty || 1,
-        manual_material_id: matId || undefined,
-        is_new_material: isNew || false,
-        new_material_code: isNew ? newMaterialCode : undefined,
-        new_material_name: isNew ? newMaterialName : undefined,
+        qty,
+        manual_material_id: (hasCandidates && matId) ? matId : undefined,
+        is_new_material: isNewMaterial || false,
+        new_material_code: isNewMaterial ? newMaterialCode : undefined,
+        new_material_name: isNewMaterial ? newMaterialName : undefined,
       })
+
+      // 成功 → 加入历史记录，关闭弹框，清空扫码框
       setHistory((prev) => [result, ...prev])
-      setBarcode('')
       setPreview(null)
-      setConfirmMode('auto')
+      setConfirmQty('')
+      setConfirmError('')
       setSelectedMaterialId(null)
       setNewMaterialCode('')
       setNewMaterialName('')
-      setManualQty('')
+      setBarcode('')
 
-      if (result.status === 'ok') {
-        // Auto-focus next scan
-      } else if (result.status === 'duplicate') {
+      // 自动聚焦下一个扫码
+      setTimeout(() => barcodeRef.current?.focus(), 300)
+
+      if (result.status === 'duplicate') {
         Alert.alert('重复扫码', result.message || '该条码已入库')
-      } else if (result.status === 'pending_review') {
-        Alert.alert('需确认', result.message)
       }
     } catch (e: any) {
-      Alert.alert('入库失败', e?.response?.data?.detail || '请重试')
+      setConfirmError(e?.response?.data?.detail || '入库失败，请重试')
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [receiptId, preview, confirmQty, operator, selectedMaterialId, newMaterialCode, newMaterialName])
 
-  // Confirm with selected material
-  const handleConfirmWithSelection = async () => {
-    if (!preview) return
-    const qty = parseFloat(manualQty) || preview.quantity
-    if (confirmMode === 'select_material' && selectedMaterialId) {
-      await doConfirmScan(preview.barcode, selectedMaterialId, undefined, false, qty)
-    } else if (confirmMode === 'new_material') {
-      await doConfirmScan(preview.barcode, undefined, undefined, true, qty)
-    }
-  }
+  // ── 取消确认 ──
+  const handleCancelConfirm = useCallback(() => {
+    setPreview(null)
+    setConfirmQty('')
+    setConfirmError('')
+    setSelectedMaterialId(null)
+    setNewMaterialCode('')
+    setNewMaterialName('')
+    setTimeout(() => barcodeRef.current?.focus(), 300)
+  }, [])
 
-  // Start screen
+  // 根据 status 判断预览卡片风格
+  const isAutoMatch = preview?.status === 'ok' && (!preview.candidates || preview.candidates.length === 0)
+  const isPendingReview = preview?.status === 'pending_review' || (preview?.candidates && preview.candidates.length > 0)
+  const isNewMaterial = preview?.status === 'new_material'
+
+  // ═══════════════════════════════════════════
+  //  开始页
+  // ═══════════════════════════════════════════
   if (step === 'start') {
     return (
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>收料入库</Text>
-          <Text style={styles.headerSub}>扫描客户条码 → 自动识别 → 确认 → 打印标签</Text>
+          <Text style={styles.headerSub}>扫描客户条码 → 确认数量 → 入库</Text>
         </View>
         <View style={styles.form}>
           <Text style={styles.label}>操作员</Text>
@@ -170,6 +181,9 @@ export default function InboundScreen() {
     )
   }
 
+  // ═══════════════════════════════════════════
+  //  扫码页
+  // ═══════════════════════════════════════════
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -178,9 +192,10 @@ export default function InboundScreen() {
       </View>
 
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-        {/* Scan Input */}
+        {/* 扫码输入 */}
         <View style={styles.scanSection}>
           <TextInput
+            ref={barcodeRef}
             style={styles.input}
             placeholder="扫描客户条码"
             value={barcode}
@@ -197,132 +212,7 @@ export default function InboundScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Preview Card */}
-        {preview && (
-          <View style={[styles.previewCard, preview.status === 'ok' ? styles.previewOk : styles.previewWarn]}>
-            <Text style={styles.previewTitle}>
-              {preview.status === 'ok' ? '✅ 匹配成功' :
-               preview.status === 'new_material' ? '🆕 新料号' : '⚠️ 需确认'}
-            </Text>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>条码</Text>
-              <Text style={styles.previewValue}>{preview.barcode}</Text>
-            </View>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>物料编码</Text>
-              <Text style={styles.previewValueBold}>{preview.material_code || '--'}</Text>
-            </View>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>物料名称</Text>
-              <Text style={styles.previewValue}>{preview.material_name || '--'}</Text>
-            </View>
-            <View style={styles.previewRow}>
-              <Text style={styles.previewLabel}>数量</Text>
-              <Text style={styles.previewValue}>{preview.quantity} {preview.unit}</Text>
-            </View>
-            {preview.batch_no ? (
-              <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>批次</Text>
-                <Text style={styles.previewValue}>{preview.batch_no}</Text>
-              </View>
-            ) : null}
-            {preview.date_code ? (
-              <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>生产周期</Text>
-                <Text style={styles.previewValue}>{preview.date_code}</Text>
-              </View>
-            ) : null}
-            {preview.spec ? (
-              <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>规格</Text>
-                <Text style={styles.previewValue}>{preview.spec}</Text>
-              </View>
-            ) : null}
-            {preview.confidence > 0 && preview.confidence < 1 && (
-              <View style={styles.previewRow}>
-                <Text style={styles.previewLabel}>置信度</Text>
-                <Text style={styles.previewValue}>{(preview.confidence * 100).toFixed(0)}%</Text>
-              </View>
-            )}
-
-            {/* Candidate selection */}
-            {confirmMode === 'select_material' && preview.candidates && preview.candidates.length > 0 && (
-              <View style={styles.candidateSection}>
-                <Text style={styles.candidateTitle}>请选择匹配的物料：</Text>
-                {preview.candidates.map((c: MaterialCandidate) => (
-                  <TouchableOpacity
-                    key={c.material_id}
-                    style={[styles.candidateItem, selectedMaterialId === c.material_id && styles.candidateSelected]}
-                    onPress={() => setSelectedMaterialId(c.material_id)}
-                  >
-                    <Text style={styles.candidateCode}>{c.code}</Text>
-                    <Text style={styles.candidateName}>{c.name}</Text>
-                    <Text style={styles.candidateConf}>匹配度: {(c.confidence * 100).toFixed(0)}%</Text>
-                  </TouchableOpacity>
-                ))}
-                <View style={styles.qtyRow}>
-                  <Text style={styles.previewLabel}>数量</Text>
-                  <TextInput
-                    style={styles.qtyInput}
-                    value={manualQty}
-                    onChangeText={setManualQty}
-                    keyboardType="numeric"
-                    placeholder="1"
-                  />
-                  <Text style={styles.previewLabel}>盘</Text>
-                </View>
-                <TouchableOpacity
-                  style={[styles.button, styles.confirmButton, !selectedMaterialId && styles.buttonDisabled]}
-                  onPress={handleConfirmWithSelection}
-                  disabled={!selectedMaterialId || isLoading}
-                >
-                  {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认入库</Text>}
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* New material form */}
-            {confirmMode === 'new_material' && (
-              <View style={styles.candidateSection}>
-                <Text style={styles.candidateTitle}>确认为新料号：</Text>
-                <Text style={styles.previewLabel}>料号编码</Text>
-                <TextInput
-                  style={styles.input}
-                  value={newMaterialCode}
-                  onChangeText={setNewMaterialCode}
-                  placeholder="输入料号编码"
-                />
-                <Text style={styles.previewLabel}>料号名称</Text>
-                <TextInput
-                  style={styles.input}
-                  value={newMaterialName}
-                  onChangeText={setNewMaterialName}
-                  placeholder="输入物料名称"
-                />
-                <View style={styles.qtyRow}>
-                  <Text style={styles.previewLabel}>数量</Text>
-                  <TextInput
-                    style={styles.qtyInput}
-                    value={manualQty}
-                    onChangeText={setManualQty}
-                    keyboardType="numeric"
-                    placeholder="1"
-                  />
-                  <Text style={styles.previewLabel}>盘</Text>
-                </View>
-                <TouchableOpacity
-                  style={[styles.button, styles.confirmButton, (!newMaterialCode.trim()) && styles.buttonDisabled]}
-                  onPress={handleConfirmWithSelection}
-                  disabled={!newMaterialCode.trim() || isLoading}
-                >
-                  {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认新料入库</Text>}
-                </TouchableOpacity>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Scan History */}
+        {/* 历史记录 */}
         {history.length > 0 && (
           <>
             <Text style={styles.sectionTitle}>扫描记录 ({history.length})</Text>
@@ -345,6 +235,195 @@ export default function InboundScreen() {
           </>
         )}
       </ScrollView>
+
+      {/* ═══════════════════════════════════════════
+          确认弹框：扫码后无论置信度高低都弹出
+          ═══════════════════════════════════════════ */}
+      <Modal
+        visible={preview != null}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCancelConfirm}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            {preview && (
+              <>
+                {/* 标题 */}
+                <Text style={styles.modalTitle}>
+                  {isAutoMatch ? '✅ 确认入库' :
+                   isNewMaterial ? '🆕 确认新料入库' : '⚠️ 确认物料'}
+                </Text>
+
+                {/* 物料信息 */}
+                <View style={styles.modalInfo}>
+                  {/* 匹配度 + 状态 — 合并成一行醒目展示 */}
+                  <View style={styles.confidenceRow}>
+                    <View style={styles.confidenceBadge}>
+                      <Text style={styles.confidenceLabel}>匹配度</Text>
+                      <Text style={[
+                        styles.confidenceValue,
+                        { color: preview.confidence >= 0.8 ? Colors.success : preview.confidence >= 0.5 ? Colors.warning : Colors.danger }
+                      ]}>
+                        {(preview.confidence * 100).toFixed(0)}%
+                      </Text>
+                    </View>
+                    <View style={[
+                      styles.statusBadge,
+                      { backgroundColor: isAutoMatch ? Colors.success : isNewMaterial ? Colors.info : Colors.warning }
+                    ]}>
+                      <Text style={styles.statusBadgeText}>
+                        {isAutoMatch ? '自动匹配' : isNewMaterial ? '新料号' : '待确认'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* 进度条 */}
+                  {preview.confidence > 0 && (
+                    <View style={styles.confidenceBarOuter}>
+                      <View style={[styles.confidenceBarInner, {
+                        width: `${Math.min(preview.confidence * 100, 100)}%`,
+                        backgroundColor: preview.confidence >= 0.8 ? Colors.success : preview.confidence >= 0.5 ? Colors.warning : Colors.danger,
+                      }]} />
+                    </View>
+                  )}
+
+                  {/* 字段列表 — 2 列网格 */}
+                  <View style={styles.fieldsGrid}>
+                    <View style={styles.fieldItem}>
+                      <Text style={styles.fieldItemLabel}>条形码</Text>
+                      <Text style={styles.fieldItemValue} numberOfLines={1}>{preview.barcode}</Text>
+                    </View>
+                    <View style={styles.fieldItem}>
+                      <Text style={styles.fieldItemLabel}>供应商代码</Text>
+                      <Text style={styles.fieldItemValue}>{preview.supplier_code || '--'}</Text>
+                    </View>
+                    <View style={[styles.fieldItem, styles.fieldItemFull]}>
+                      <Text style={styles.fieldItemLabel}>物料编码</Text>
+                      <Text style={styles.fieldItemValueBold}>{preview.material_code || '--'}</Text>
+                    </View>
+                    <View style={[styles.fieldItem, styles.fieldItemFull]}>
+                      <Text style={styles.fieldItemLabel}>物料名称</Text>
+                      <Text style={styles.fieldItemValue}>{preview.material_name || '--'}</Text>
+                    </View>
+                    <View style={styles.fieldItem}>
+                      <Text style={styles.fieldItemLabel}>规格</Text>
+                      <Text style={styles.fieldItemValue}>{preview.spec || '--'}</Text>
+                    </View>
+                    <View style={styles.fieldItem}>
+                      <Text style={styles.fieldItemLabel}>批次号</Text>
+                      <Text style={styles.fieldItemValue}>{preview.batch_no || '--'}</Text>
+                    </View>
+                    <View style={styles.fieldItem}>
+                      <Text style={styles.fieldItemLabel}>生产周期</Text>
+                      <Text style={styles.fieldItemValue}>{preview.date_code || '--'}</Text>
+                    </View>
+                    <View style={styles.fieldItem}>
+                      <Text style={styles.fieldItemLabel}>数量</Text>
+                      <Text style={styles.fieldItemValue}>{preview.quantity ?? '--'} 盘</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* 候选物料选择（低置信度时） */}
+                {isPendingReview && preview.candidates && preview.candidates.length > 0 && (
+                  <View style={styles.candidateSection}>
+                    <Text style={styles.candidateTitle}>请选择匹配的物料：</Text>
+                    {preview.candidates.map((c: MaterialCandidate) => (
+                      <TouchableOpacity
+                        key={c.material_id}
+                        style={[styles.candidateItem, selectedMaterialId === c.material_id && styles.candidateSelected]}
+                        onPress={() => setSelectedMaterialId(c.material_id)}
+                      >
+                        <View style={styles.candidateRow}>
+                          <View style={styles.candidateInfo}>
+                            <Text style={styles.candidateCode}>{c.code}</Text>
+                            <Text style={styles.candidateName}>{c.name}</Text>
+                          </View>
+                          <View style={[
+                            styles.candidateConfBadge,
+                            { backgroundColor: c.confidence >= 0.8 ? Colors.success : c.confidence >= 0.5 ? Colors.warning : Colors.danger }
+                          ]}>
+                            <Text style={styles.candidateConfText}>
+                              {(c.confidence * 100).toFixed(0)}%
+                            </Text>
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {/* 新料号输入 */}
+                {isNewMaterial && (
+                  <View style={styles.candidateSection}>
+                    <Text style={styles.candidateTitle}>确认为新料号：</Text>
+                    <Text style={styles.fieldLabel}>料号编码</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={newMaterialCode}
+                      onChangeText={setNewMaterialCode}
+                      placeholder="输入料号编码"
+                    />
+                    <Text style={styles.fieldLabel}>料号名称</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={newMaterialName}
+                      onChangeText={setNewMaterialName}
+                      placeholder="输入物料名称"
+                    />
+                  </View>
+                )}
+
+                {/* 数量输入 */}
+                <View style={styles.qtySection}>
+                  <Text style={styles.qtyLabel}>入库数量</Text>
+                  <View style={styles.qtyRow}>
+                    <TextInput
+                      style={styles.qtyInput}
+                      value={confirmQty}
+                      onChangeText={(v) => { setConfirmQty(v); setConfirmError('') }}
+                      keyboardType="numeric"
+                      editable={!isLoading}
+                    />
+                    <Text style={styles.qtyUnit}>盘</Text>
+                  </View>
+                </View>
+
+                {/* 错误提示 */}
+                {confirmError ? (
+                  <Text style={styles.errorText}>{confirmError}</Text>
+                ) : null}
+
+                {/* 按钮 */}
+                <View style={styles.modalButtons}>
+                  <TouchableOpacity
+                    style={[styles.modalButton, styles.cancelButton]}
+                    onPress={handleCancelConfirm}
+                    disabled={isLoading}
+                  >
+                    <Text style={styles.cancelButtonText}>取消</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalButton, styles.confirmButton,
+                      (isLoading || (isPendingReview && !selectedMaterialId)) && styles.buttonDisabled
+                    ]}
+                    onPress={doConfirmScan}
+                    disabled={isLoading || (isPendingReview && !selectedMaterialId)}
+                  >
+                    {isLoading ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.confirmButtonText}>确认入库</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -361,26 +440,8 @@ const styles = StyleSheet.create({
   label: { fontSize: 16, color: Colors.text, fontWeight: '600', marginBottom: 6 },
   input: { backgroundColor: '#fff', padding: 14, borderRadius: 8, marginBottom: 12, fontSize: 18, borderWidth: 1, borderColor: '#ddd' },
   button: { backgroundColor: Colors.primary, padding: 16, borderRadius: 8, alignItems: 'center', marginBottom: 12 },
-  confirmButton: { backgroundColor: Colors.success, marginTop: 8 },
   buttonDisabled: { opacity: 0.5 },
   buttonText: { color: '#fff', fontSize: 18, fontWeight: '600' },
-  previewCard: { padding: 16, borderRadius: 12, marginHorizontal: 12, marginBottom: 12, borderWidth: 1 },
-  previewOk: { backgroundColor: '#f0fff4', borderColor: Colors.success },
-  previewWarn: { backgroundColor: '#fffbe6', borderColor: Colors.warning },
-  previewTitle: { fontSize: 18, fontWeight: 'bold', color: Colors.text, marginBottom: 12 },
-  previewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginVertical: 3 },
-  previewLabel: { fontSize: 15, color: Colors.textSecondary, flex: 1 },
-  previewValue: { fontSize: 15, color: Colors.text, flex: 2, textAlign: 'right' },
-  previewValueBold: { fontSize: 16, color: Colors.text, fontWeight: 'bold', flex: 2, textAlign: 'right' },
-  candidateSection: { marginTop: 12, borderTopWidth: 1, borderTopColor: '#eee', paddingTop: 12 },
-  candidateTitle: { fontSize: 16, fontWeight: '600', color: Colors.text, marginBottom: 8 },
-  candidateItem: { padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', marginBottom: 8, backgroundColor: '#fff' },
-  candidateSelected: { borderColor: Colors.primary, backgroundColor: '#e6f0ff' },
-  candidateCode: { fontSize: 16, fontWeight: 'bold', color: Colors.text },
-  candidateName: { fontSize: 14, color: Colors.textSecondary, marginTop: 2 },
-  candidateConf: { fontSize: 13, color: Colors.primary, marginTop: 2 },
-  qtyRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 8 },
-  qtyInput: { backgroundColor: '#fff', padding: 10, borderRadius: 8, fontSize: 18, borderWidth: 1, borderColor: '#ddd', width: 80, textAlign: 'center', marginHorizontal: 8 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', color: Colors.text, marginHorizontal: 12, marginTop: 8, marginBottom: 8 },
   historyItem: { flexDirection: 'row', backgroundColor: Colors.card, padding: 12, borderRadius: 8, marginHorizontal: 12, marginBottom: 6, borderWidth: 1, borderColor: '#eee' },
   historyDot: { justifyContent: 'center', marginRight: 10 },
@@ -392,4 +453,56 @@ const styles = StyleSheet.create({
   historyCode: { fontSize: 15, fontWeight: '600', color: Colors.text },
   historyMsg: { fontSize: 13, color: Colors.textSecondary, marginTop: 2 },
   historySlot: { fontSize: 13, color: Colors.primary, marginTop: 2 },
+
+  // ── Modal ──
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalContent: { backgroundColor: '#fff', borderRadius: 16, padding: 20, width: '100%', maxWidth: 500, maxHeight: '90%' },
+  modalTitle: { fontSize: 22, fontWeight: 'bold', color: Colors.text, marginBottom: 16, textAlign: 'center' },
+  modalInfo: { marginBottom: 12 },
+  // ── 置信度与状态 ──
+  confidenceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 },
+  confidenceBadge: { flexDirection: 'row', alignItems: 'baseline' },
+  confidenceLabel: { fontSize: 14, color: Colors.textSecondary, marginRight: 6 },
+  confidenceValue: { fontSize: 24, fontWeight: 'bold' },
+  statusBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 },
+  statusBadgeText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  // ── 置信度进度条 ──
+  confidenceBarOuter: { height: 6, backgroundColor: '#e8e8e8', borderRadius: 3, marginBottom: 14, overflow: 'hidden' },
+  confidenceBarInner: { height: 6, borderRadius: 3 },
+  // ── 字段网格 ──
+  fieldsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -6 },
+  fieldItem: { width: '50%', paddingHorizontal: 6, marginBottom: 10 },
+  fieldItemFull: { width: '100%' },
+  fieldItemLabel: { fontSize: 12, color: Colors.textSecondary, marginBottom: 2 },
+  fieldItemValue: { fontSize: 15, color: Colors.text },
+  fieldItemValueBold: { fontSize: 17, color: Colors.text, fontWeight: 'bold' },
+
+  // 候选物料
+  candidateSection: { marginTop: 8, marginBottom: 12, borderTopWidth: 1, borderTopColor: '#eee', paddingTop: 12 },
+  candidateTitle: { fontSize: 16, fontWeight: '600', color: Colors.text, marginBottom: 8 },
+  candidateItem: { padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#ddd', marginBottom: 8, backgroundColor: '#fff' },
+  candidateSelected: { borderColor: Colors.primary, backgroundColor: '#e6f0ff' },
+  candidateRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  candidateInfo: { flex: 1, marginRight: 12 },
+  candidateCode: { fontSize: 16, fontWeight: 'bold', color: Colors.text },
+  candidateName: { fontSize: 14, color: Colors.textSecondary, marginTop: 2 },
+  candidateConfBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, minWidth: 50, alignItems: 'center' },
+  candidateConfText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
+  fieldLabel: { fontSize: 14, color: Colors.textSecondary, fontWeight: '600', marginTop: 8, marginBottom: 4 },
+
+  // 数量
+  qtySection: { marginVertical: 12 },
+  qtyLabel: { fontSize: 16, color: Colors.text, fontWeight: '600', marginBottom: 6 },
+  qtyRow: { flexDirection: 'row', alignItems: 'center' },
+  qtyInput: { backgroundColor: '#fff', padding: 12, borderRadius: 8, fontSize: 22, fontWeight: 'bold', borderWidth: 1, borderColor: '#ddd', width: 120, textAlign: 'center' },
+  qtyUnit: { fontSize: 18, color: Colors.text, marginLeft: 8, fontWeight: '600' },
+  errorText: { color: Colors.danger, fontSize: 15, textAlign: 'center', marginBottom: 8 },
+
+  // 按钮
+  modalButtons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
+  modalButton: { flex: 1, padding: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center', minHeight: 52 },
+  cancelButton: { backgroundColor: '#f0f0f0', marginRight: 8 },
+  confirmButton: { backgroundColor: Colors.success, marginLeft: 8 },
+  cancelButtonText: { fontSize: 18, color: Colors.textSecondary, fontWeight: '600' },
+  confirmButtonText: { fontSize: 18, color: '#fff', fontWeight: 'bold' },
 })

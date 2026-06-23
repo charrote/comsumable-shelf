@@ -1,11 +1,11 @@
 """Receipt (inbound) business service — OCR matching + material auto-create + reel creation."""
 
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List, Dict
 from dataclasses import dataclass, field
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import MaterialMaster, InventoryReel, ReceiptReel, Receipt, Shelf, ShelfSlot, CustomerMaterialMapping
@@ -185,13 +185,26 @@ async def finalize_receipt_reel(
         dict with pallet_id, assigned_slot, etc.
     """
     now = datetime.now()
+    today = date.today()
+
+    # ── Generate reel_code: REEL-YYYYMMDD-XXXX ──
+    date_prefix = today.strftime("%Y%m%d")
+    pattern = f"REEL-{date_prefix}-%"
+    count_result = await db.execute(
+        select(func.count()).select_from(InventoryReel).where(
+            InventoryReel.reel_code.like(pattern)
+        )
+    )
+    seq = (count_result.scalar() or 0) + 1
+    reel_code = f"REEL-{date_prefix}-{seq:04d}"
 
     # ── 1. Create InventoryReel ──
     pallet = InventoryReel(
+        reel_code=reel_code,
         material_id=material_id,
         quantity=quantity,
         original_quantity=quantity,
-        reel_barcode=barcode,
+        reel_barcode=reel_code,
         customer_code=customer_material_code,
         customer_material_code=customer_material_code,
         customer_barcode=customer_barcode or barcode,
@@ -243,7 +256,7 @@ async def finalize_receipt_reel(
                 material_name=material.name,
                 quantity=quantity,
                 customer_material_code=customer_material_code,
-                reel_barcode=str(pallet.id),
+                reel_barcode=pallet.reel_code or str(pallet.id),
             )
             if label_ok:
                 rp.internal_label_printed = 1
@@ -253,6 +266,7 @@ async def finalize_receipt_reel(
 
     return {
         "reel_id": pallet.id,
+        "reel_code": reel_code,
         "assigned_slot": assigned_slot,
         "quantity": quantity,
         "label_printed": printed,

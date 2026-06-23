@@ -1,8 +1,8 @@
 """Receipt (inbound) API routes."""
 
 from datetime import datetime
-from typing import Optional
-from sqlalchemy import select, func, update
+from typing import Optional, List
+from sqlalchemy import select, func, update, delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.schemas import (
@@ -68,6 +68,18 @@ async def get_receipt(
     )
     rows = items_result.all()
 
+    # Get reel_code for each item
+    reel_ids = [row.ReceiptReel.reel_id for row in rows if row.ReceiptReel.reel_id]
+    reel_code_map = {}
+    if reel_ids:
+        inv_result = await db.execute(
+            select(InventoryReel.id, InventoryReel.reel_code).where(
+                InventoryReel.id.in_(reel_ids)
+            )
+        )
+        for inv_row in inv_result.all():
+            reel_code_map[inv_row[0]] = inv_row[1] or ""
+
     return ReceiptDetailResponse(
         id=receipt.id,
         receipt_no=receipt.receipt_no,
@@ -86,6 +98,7 @@ async def get_receipt(
                 "barcode": row.ReceiptReel.barcode,
                 "customer_material_code": row.ReceiptReel.customer_material_code,
                 "reel_id": row.ReceiptReel.reel_id,
+                "reel_code": reel_code_map.get(row.ReceiptReel.reel_id, ""),
                 "internal_label_printed": row.ReceiptReel.internal_label_printed == 1,
                 "label_printed_at": row.ReceiptReel.label_printed_at.isoformat() if row.ReceiptReel.label_printed_at else None,
             }
@@ -359,6 +372,55 @@ async def create_receipt(
     )
 
 
+@router.delete("/{receipt_id}")
+async def delete_receipt(
+    receipt_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a draft receipt (only draft status allowed)."""
+    result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = result.scalar_one_or_none()
+    if not receipt:
+        raise HTTPException(status_code=404, detail="入库单不存在")
+    if receipt.status != "draft":
+        raise HTTPException(status_code=400, detail=f"仅草稿状态的入库单可删除（当前: {receipt.status}）")
+
+    # Delete related receipt_reels first
+    await db.execute(sa_delete(ReceiptReel).where(ReceiptReel.receipt_id == receipt_id))
+    await db.execute(sa_delete(Receipt).where(Receipt.id == receipt_id))
+    await db.commit()
+    return {"status": "ok", "message": "入库单已删除", "receipt_id": receipt_id}
+
+
+@router.post("/batch-delete")
+async def batch_delete_receipts(
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch delete draft receipts."""
+    ids: List[int] = data.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="请选择要删除的入库单")
+
+    # Verify all are draft
+    result = await db.execute(
+        select(Receipt).where(Receipt.id.in_(ids))
+    )
+    receipts = result.scalars().all()
+    non_draft = [r.id for r in receipts if r.status != "draft"]
+    if non_draft:
+        raise HTTPException(
+            status_code=400,
+            detail=f"以下入库单不是草稿状态，无法删除: {non_draft}"
+        )
+
+    for r in receipts:
+        await db.execute(sa_delete(ReceiptReel).where(ReceiptReel.receipt_id == r.id))
+        await db.execute(sa_delete(Receipt).where(Receipt.id == r.id))
+    await db.commit()
+    return {"status": "ok", "message": f"已删除 {len(ids)} 张入库单", "deleted_ids": ids}
+
+
 @router.post("/{receipt_id}/scan-preview", response_model=BarcodePreviewResponse)
 async def scan_preview(
     receipt_id: int,
@@ -539,6 +601,7 @@ async def scan_receipt(
             status="ok",
             action="first_in",
             reel_id=result["reel_id"],
+            reel_code=result.get("reel_code", ""),
             assigned_slot=result["assigned_slot"],
             quantity=result["quantity"],
             material_id=match.material_id,
@@ -667,6 +730,7 @@ async def _handle_human_confirmation(
         status=status_label,
         action=action_label,
         reel_id=result["reel_id"],
+        reel_code=result.get("reel_code", ""),
         assigned_slot=result["assigned_slot"],
         quantity=result["quantity"],
         material_id=material_id,

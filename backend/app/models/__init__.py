@@ -161,6 +161,7 @@ class InventoryReel(Base):
     __tablename__ = "inventory_reels"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    reel_code = Column(String, unique=True, nullable=True, comment="格式化卷盘编号，如 REEL-20260623-0001")
     material_id = Column(Integer, ForeignKey("material_master.id"), nullable=False)
     shelf_slot_id = Column(Integer, ForeignKey("shelf_slots.id"))
     quantity = Column(Float, nullable=False)

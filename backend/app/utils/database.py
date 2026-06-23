@@ -48,6 +48,7 @@ async def init_db():
         for table, column, col_type in [
             ("inventory_reels", "batch_no", "VARCHAR(100)"),
             ("inventory_reels", "date_code", "VARCHAR(100)"),
+            ("inventory_reels", "reel_code", "VARCHAR(50)"),
             ("receipt_reels", "batch_no", "VARCHAR(100)"),
             ("receipt_reels", "date_code", "VARCHAR(100)"),
         ]:
@@ -59,6 +60,19 @@ async def init_db():
                     END $$;
                 """)
             )
+        # Unique index for reel_code
+        await conn.execute(
+            text("""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_indexes
+                        WHERE tablename = 'inventory_reels' AND indexname = 'ix_inventory_reels_reel_code'
+                    ) THEN
+                        CREATE UNIQUE INDEX ix_inventory_reels_reel_code ON inventory_reels (reel_code);
+                    END IF;
+                END $$;
+            """)
+        )
 
 
 async def seed_db():

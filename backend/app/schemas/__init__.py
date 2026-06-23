@@ -154,6 +154,7 @@ class ReceiptScanResponse(BaseModel):
 
     # ── Auto-proceed result ──
     reel_id: Optional[int] = None
+    reel_code: str = ""
     assigned_slot: Optional[int] = None
     quantity: float = 0
 

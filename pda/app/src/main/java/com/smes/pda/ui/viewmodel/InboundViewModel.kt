@@ -15,10 +15,12 @@ import javax.inject.Inject
 data class InboundUiState(
     val isLoading: Boolean = false,
     val activeReceiptId: Int? = null,
-    val lastScanResult: ReceiptScanResponse? = null,
     val scanHistory: List<ReceiptScanResponse> = emptyList(),
     val error: String? = null,
-    val operator: String = ""
+    val operator: String = "",
+    val lastBarcode: String = "",         // 最近一次扫码的条码，非空时弹框
+    val confirmError: String? = null,     // 确认时的错误（显示在弹框内）
+    val lastConfirmResult: ReceiptScanResponse? = null  // 最近一次确认成功的结果
 )
 
 @HiltViewModel
@@ -57,26 +59,44 @@ class InboundViewModel @Inject constructor(
         }
     }
 
+    /**
+     * 扫码：仅存条码，不调 API。
+     * 等用户在弹框里确认数量后，才调用 [confirmScan] 真正落库。
+     */
     fun scanBarcode(barcode: String) {
         if (barcode.isBlank()) return
+        _uiState.value = _uiState.value.copy(
+            lastBarcode = barcode,
+            confirmError = null
+        )
+    }
+
+    /**
+     * 用户确认数量后，唯一一次调 API 落库。
+     */
+    fun confirmScan(quantity: Double) {
         val receiptId = _uiState.value.activeReceiptId ?: return
+        val barcode = _uiState.value.lastBarcode
         val operator = _uiState.value.operator
-        if (operator.isBlank()) return
+        if (barcode.isBlank() || operator.isBlank()) return
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
-            when (val result = receiptRepository.scanInbound(receiptId, barcode, operator)) {
+            _uiState.value = _uiState.value.copy(isLoading = true, confirmError = null)
+            when (val result = receiptRepository.scanInbound(receiptId, barcode, operator, qty = quantity)) {
                 is ApiResult.Success -> {
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        lastScanResult = result.data,
+                        lastBarcode = "",
+                        confirmError = null,
+                        lastConfirmResult = result.data,
                         scanHistory = _uiState.value.scanHistory + result.data
                     )
                 }
                 is ApiResult.Error -> {
+                    // 确认失败：弹框保持打开，显示错误，用户可重试
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        error = result.message
+                        confirmError = result.message
                     )
                 }
             }
@@ -87,7 +107,11 @@ class InboundViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(error = null)
     }
 
-    fun clearLastScan() {
-        _uiState.value = _uiState.value.copy(lastScanResult = null)
+    /** 用户取消弹框 */
+    fun cancelConfirm() {
+        _uiState.value = _uiState.value.copy(
+            lastBarcode = "",
+            confirmError = null
+        )
     }
 }

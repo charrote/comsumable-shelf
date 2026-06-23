@@ -118,6 +118,10 @@ export const reprintLabelApi = (
   receiptId: number,
   data: { receipt_reel_id: number; printer_ip?: string; printer_port?: number }
 ) => apiClient.post(`/receipts/${receiptId}/reprint`, data)
+export const deleteReceiptApi = (id: number) =>
+  apiClient.delete(`/receipts/${id}`)
+export const batchDeleteReceiptsApi = (ids: number[]) =>
+  apiClient.post('/receipts/batch-delete', { ids })
 
 // Issue
 export const getIssueListApi = (params: any) =>
