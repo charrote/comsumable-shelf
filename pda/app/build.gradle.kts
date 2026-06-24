@@ -41,7 +41,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("String", "DEFAULT_API_URL", "\"http://101.34.63.68/api\"")
+buildConfigField("String", "DEFAULT_API_URL", "\"http://101.34.63.68/api\"")
         }
         debug {
             isMinifyEnabled = false

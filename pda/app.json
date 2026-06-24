@@ -1,0 +1,30 @@
+{
+  "expo": {
+    "name": "smes-pda",
+    "slug": "smes-pda",
+    "version": "1.0.1",
+    "sdkVersion": "50.0.0",
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "android": {
+      "package": "com.smes.pda"
+    },
+    "ios": {
+      "bundleIdentifier": "com.smes.pda",
+      "infoPlist": {
+        "NSCameraUsageDescription": "需要使用摄像头扫描条码"
+      }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "允许 $(PRODUCT_NAME) 使用您的摄像头扫描条码"
+        }
+      ]
+    ]
+  }
+}

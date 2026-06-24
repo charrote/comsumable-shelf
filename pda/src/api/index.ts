@@ -2,12 +2,33 @@ import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as t from '../types/api'
 
-const BASE_URL = 'http://localhost:8080/api'
+const API_URL_KEY = 'pda_api_url'
+const DEFAULT_BASE_URL = 'http://101.34.63.68:8080/api'
 
-const api: AxiosInstance = axios.create({
-  baseURL: BASE_URL,
+let api: AxiosInstance = axios.create({
+  baseURL: DEFAULT_BASE_URL,
   timeout: 30000,
   headers: { 'Content-Type': 'application/json' },
+})
+
+// ──── Dynamic baseURL ────
+export async function loadBaseUrl(): Promise<string> {
+  try {
+    const stored = await AsyncStorage.getItem(API_URL_KEY)
+    return stored || DEFAULT_BASE_URL
+  } catch {
+    return DEFAULT_BASE_URL
+  }
+}
+
+export async function updateBaseUrl(newUrl: string): Promise<void> {
+  await AsyncStorage.setItem(API_URL_KEY, newUrl)
+  api.defaults.baseURL = newUrl
+}
+
+// Initialize baseURL from storage on first import
+loadBaseUrl().then((url) => {
+  api.defaults.baseURL = url
 })
 
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
@@ -55,8 +76,26 @@ export async function listBOMsApi(params?: {
 }
 
 // ──── Receipts (Inbound) ────
+export async function listReceiptsApi(params?: { status?: string; keyword?: string }): Promise<{ data: t.ReceiptListItem[] }> {
+  const res = await api.get('/receipts', { params })
+  return res.data
+}
+
+export async function getReceiptDetailApi(receiptId: number): Promise<t.ReceiptDetailResponse> {
+  const res = await api.get(`/receipts/${receiptId}`)
+  return res.data
+}
+
 export async function createReceiptApi(data: t.ReceiptCreate): Promise<t.ReceiptDetailResponse> {
   const res = await api.post('/receipts', data)
+  return res.data
+}
+
+export async function cancelReceiptItemsApi(
+  receiptId: number,
+  data: t.CancelReceiptItemsRequest
+): Promise<t.CancelReceiptItemsResponse> {
+  const res = await api.post(`/receipts/${receiptId}/items/cancel`, data)
   return res.data
 }
 
@@ -94,6 +133,13 @@ export async function bindShelvingSlotApi(
   data: t.ShelvingBindRequest
 ): Promise<t.ShelvingBindResponse> {
   const res = await api.post('/shelving/bind', data)
+  return res.data
+}
+
+export async function scanShelvingSlotApi(
+  barcode: string
+): Promise<t.ShelvingScanSlotResponse> {
+  const res = await api.post('/shelving/scan-slot', { barcode })
   return res.data
 }
 

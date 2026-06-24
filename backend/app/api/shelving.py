@@ -2,9 +2,10 @@
 
 Supports two modes:
   1. Smart (sensor-based): scan reel -> put in slot -> sensor detects -> auto-bind
-  2. Manual: scan reel -> select shelf/slot -> bind
+  2. Manual: scan reel -> scan shelf slot barcode -> bind
 """
 
+import re
 from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -113,6 +114,115 @@ async def scan_reel_for_shelving(
         shelf_code=shelf_code,
         slot_code=slot_code,
         message=f"已识别料盘 #{reel.id}" if not slot_id else f"料盘 #{reel.id} 已上架至 {shelf_code}/{slot_code}",
+    )
+
+
+# ──── Slot Barcode Scanning (Manual Mode) ────
+
+class ShelvingScanSlotRequest(BaseModel):
+    barcode: str
+
+
+class ShelvingScanSlotResponse(BaseModel):
+    status: str  # ok | not_found | occupied
+    shelf_slot_id: int
+    shelf_id: int
+    shelf_code: str
+    slot_code: str
+    side: str = ""
+    slot_on_board: int = 0
+    is_occupied: bool = False
+    message: str = ""
+
+
+def _parse_slot_barcode(barcode: str) -> Optional[dict]:
+    """Parse shelf slot barcode into shelf_code, side, slot_on_board.
+
+    Supported formats (case-insensitive):
+      - A1A05       (shelf + side + 2-digit slot)
+      - A1-A05      (with dash before slot)
+      - A1A-05      (dash between side and slot)
+      - A1-A-05     (fully separated)
+      - a1a05       (lowercase)
+    """
+    b = barcode.strip().upper()
+    if not b:
+        return None
+
+    # Try fully separated: A1-A-05 → groups: A1, A, 05
+    m = re.match(r'^([A-Z0-9]+)-([A-B])(\d+)$', b)
+    if m:
+        return {"shelf_code": m.group(1), "side": m.group(2), "slot_on_board": int(m.group(3))}
+
+    # Try: A1-A05 or A1A-05 → split on dash to find side
+    m = re.match(r'^([A-Z0-9]+)-?([A-B])-?(\d+)$', b)
+    if m:
+        return {"shelf_code": m.group(1), "side": m.group(2), "slot_on_board": int(m.group(3))}
+
+    # Try compact: A1A05 → split shelf_code from side+slot
+    m = re.match(r'^([A-Z]+\d+)([A-B])(\d+)$', b)
+    if m:
+        return {"shelf_code": m.group(1), "side": m.group(2), "slot_on_board": int(m.group(3))}
+
+    return None
+
+
+@router.post("/scan-slot", response_model=ShelvingScanSlotResponse)
+async def scan_slot_for_shelving(
+    data: ShelvingScanSlotRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Scan a shelf slot barcode to identify the slot (manual mode).
+
+    Barcode format: {SHELF_CODE}{SIDE}{SLOT_NUMBER}
+    Examples: A1A05, A1-A05, A1-A-05
+    """
+    parsed = _parse_slot_barcode(data.barcode)
+    if not parsed:
+        raise HTTPException(status_code=400, detail="储位条码格式无效，示例: A1A05")
+
+    # Look up shelf by code
+    shelf_result = await db.execute(
+        select(Shelf).where(Shelf.code == parsed["shelf_code"], Shelf.active == 1)
+    )
+    shelf = shelf_result.scalar_one_or_none()
+    if not shelf:
+        raise HTTPException(status_code=404, detail=f"未找到料架 {parsed['shelf_code']}")
+
+    # Look up slot
+    slot_result = await db.execute(
+        select(ShelfSlot).where(
+            ShelfSlot.shelf_id == shelf.id,
+            ShelfSlot.side == parsed["side"],
+            ShelfSlot.slot_on_board == parsed["slot_on_board"],
+        )
+    )
+    slot = slot_result.scalar_one_or_none()
+    if not slot:
+        raise HTTPException(status_code=404, detail=f"未找到储位 {parsed['shelf_code']}-{parsed['side']}{parsed['slot_on_board']}")
+
+    # Check if slot is already occupied
+    occupied = await db.execute(
+        select(InventoryReel).where(
+            InventoryReel.shelf_slot_id == slot.id,
+            InventoryReel.status == "on_shelf",
+        ).limit(1)
+    )
+    is_occupied = occupied.scalar_one_or_none() is not None
+
+    slot_code = f"{slot.side}{slot.slot_on_board}"
+
+    return ShelvingScanSlotResponse(
+        status="occupied" if is_occupied else "ok",
+        shelf_slot_id=slot.id,
+        shelf_id=shelf.id,
+        shelf_code=shelf.code,
+        slot_code=slot_code,
+        side=slot.side,
+        slot_on_board=slot.slot_on_board,
+        is_occupied=is_occupied,
+        message=f"已识别储位: {shelf.code}/{slot_code}" if not is_occupied
+                 else f"储位 {shelf.code}/{slot_code} 已被占用",
     )
 
 

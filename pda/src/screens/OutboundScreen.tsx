@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
   FlatList, ActivityIndicator, ScrollView,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   listIssuesApi, getIssueDetailApi, calculateIssueApi, assignIssueApi,
   confirmPickApi, directOutboundApi, scanReelForDirectOutApi, listBOMsApi,
@@ -12,7 +13,9 @@ import type {
   IssueConfirmPickResponse, DirectOutResponse, ReelSelection,
   BOMResponse,
 } from '../types/api'
-import { useAuthStore } from '../store/authStore'
+import { useOperator } from '../hooks/useOperator'
+import BarcodeScanner from '../components/BarcodeScanner'
+import { DocumentIcon, PackageIcon, CameraIcon, CheckIcon, CrossIcon, CheckCircleIcon, ClockIcon } from '../components/Icons'
 
 const Colors = {
   primary: '#0066CC', success: '#00AA55', warning: '#FF9900', danger: '#DD3333',
@@ -23,11 +26,13 @@ type Mode = 'bom' | 'direct'
 type Step = 'select_mode' | 'bom_pick' | 'direct_scan'
 
 export default function OutboundScreen() {
-  const user = useAuthStore((s) => s.user)
+  const { operator } = useOperator()
+  const insets = useSafeAreaInsets()
   const [mode, setMode] = useState<Mode>('bom')
   const [step, setStep] = useState<Step>('select_mode')
-  const [operator] = useState(user?.username || '')
   const [isLoading, setIsLoading] = useState(false)
+  const [showPickScanner, setShowPickScanner] = useState(false)
+  const [showDirectScanner, setShowDirectScanner] = useState(false)
 
   // ── BOM Pick Flow ──
   const [boms, setBoms] = useState<BOMResponse[]>([])
@@ -128,7 +133,7 @@ export default function OutboundScreen() {
     try {
       const res = await assignIssueApi(selectedIssue.id)
       setAssignResult(`已生成 ${res.led_commands_created} 个亮灯指令`)
-      Alert.alert('亮灯分配', `✅ ${res.message}\n共 ${res.led_commands_created} 个储位亮灯`)
+      Alert.alert('亮灯分配', `${res.message}\n共 ${res.led_commands_created} 个储位亮灯`)
     } catch (e: any) {
       Alert.alert('亮灯失败', e?.response?.data?.detail || 'LED分配失败')
     } finally {
@@ -209,6 +214,59 @@ export default function OutboundScreen() {
     }
   }, [directReelInfo, directQty, operator])
 
+  // ── BOM Pick: 摄像头扫码回调 ──
+  const handlePickCameraScan = useCallback((barcodeValue: string) => {
+    setPickBarcode(barcodeValue)
+    setShowPickScanner(false)
+    // 自动触发确认出库
+    setTimeout(async () => {
+      if (!barcodeValue.trim() || !selectedIssue || !calcResult) return
+      setIsLoading(true)
+      try {
+        const firstReelId = calcResult.materials[0]?.reels_selected[0]?.reel_id
+        if (!firstReelId) {
+          Alert.alert('提示', '无可拣料的料盘，请先执行FIFO计算')
+          setIsLoading(false)
+          return
+        }
+        const res = await confirmPickApi(selectedIssue.id, {
+          barcode: barcodeValue.trim(),
+          reel_id: firstReelId,
+          operator,
+        })
+        setPickResult(res)
+        if (res.all_picked) {
+          Alert.alert('完成', '本出库单已全部拣料完成')
+        }
+      } catch (e: any) {
+        Alert.alert('拣料失败', e?.response?.data?.detail || '请重试')
+      } finally {
+        setIsLoading(false)
+      }
+    }, 100)
+  }, [selectedIssue, calcResult, operator])
+
+  // ── Direct Outbound: 摄像头扫码回调 ──
+  const handleDirectCameraScan = useCallback((barcodeValue: string) => {
+    setDirectBarcode(barcodeValue)
+    setShowDirectScanner(false)
+    // 自动触发查询料盘信息
+    setTimeout(async () => {
+      if (!barcodeValue.trim()) return
+      setIsLoading(true)
+      try {
+        const info = await scanReelForDirectOutApi(barcodeValue.trim())
+        setDirectReelInfo(info)
+        setDirectQty(String(info.quantity))
+        setDirectResult(null)
+      } catch (e: any) {
+        Alert.alert('扫描失败', e?.response?.data?.detail || '未找到该料盘')
+      } finally {
+        setIsLoading(false)
+      }
+    }, 100)
+  }, [])
+
   // Reset all
   const handleReset = () => {
     setStep('select_mode')
@@ -230,7 +288,7 @@ export default function OutboundScreen() {
   if (step === 'select_mode') {
     return (
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <Text style={styles.headerTitle}>扫码出库</Text>
           <Text style={styles.headerSub}>选择出库方式</Text>
         </View>
@@ -239,7 +297,7 @@ export default function OutboundScreen() {
             style={styles.modeCard}
             onPress={() => { setMode('bom'); setStep('bom_pick'); loadBOMs(); loadIssues() }}
           >
-            <Text style={styles.modeIcon}>📄</Text>
+            <DocumentIcon size={36} color={Colors.primary} />
             <Text style={styles.modeTitle}>按 BOM 出库</Text>
             <Text style={styles.modeDesc}>选择BOM → FIFO计算 → LED亮灯 → 扫码取料</Text>
           </TouchableOpacity>
@@ -247,7 +305,7 @@ export default function OutboundScreen() {
             style={styles.modeCard}
             onPress={() => { setMode('direct'); setStep('direct_scan') }}
           >
-            <Text style={styles.modeIcon}>📦</Text>
+            <PackageIcon size={36} color={Colors.primary} />
             <Text style={styles.modeTitle}>单独出料</Text>
             <Text style={styles.modeDesc}>扫描料盘条码 → 直接出库（退料/废料/紧急）</Text>
           </TouchableOpacity>
@@ -260,7 +318,7 @@ export default function OutboundScreen() {
   if (step === 'bom_pick') {
     return (
       <View style={styles.container}>
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
           <TouchableOpacity onPress={handleReset}>
             <Text style={styles.backBtn}>← 返回</Text>
           </TouchableOpacity>
@@ -421,13 +479,21 @@ export default function OutboundScreen() {
                 <View style={styles.card}>
                   <Text style={styles.stepTitle}>扫码取料</Text>
                   <Text style={styles.hint}>扫描亮灯储位上的料盘条码</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="扫描料盘条码"
-                    value={pickBarcode}
-                    onChangeText={setPickBarcode}
-                    autoFocus
-                  />
+                  <View style={styles.scanInputRow}>
+                    <TextInput
+                      style={[styles.input, styles.scanInputFlex]}
+                      placeholder="扫描料盘条码"
+                      value={pickBarcode}
+                      onChangeText={setPickBarcode}
+                      autoFocus
+                    />
+                    <TouchableOpacity
+                    style={styles.cameraBtn}
+                    onPress={() => setShowPickScanner(true)}
+                  >
+                    <CameraIcon size={24} color="#fff" />
+                    </TouchableOpacity>
+                  </View>
                   <TouchableOpacity
                     style={[styles.button, styles.confirmButton, !pickBarcode.trim() && styles.buttonDisabled]}
                     onPress={handleConfirmPick}
@@ -438,9 +504,14 @@ export default function OutboundScreen() {
 
                   {pickResult && (
                     <View style={[styles.resultBox, pickResult.all_picked ? styles.resultSuccess : styles.resultInfo]}>
-                      <Text style={styles.resultTitle}>
-                        {pickResult.all_picked ? '✅ 已完成' : '📦 已拣料'}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                        {pickResult.all_picked
+                          ? <CheckCircleIcon size={18} color="#00AA55" />
+                          : <PackageIcon size={18} color="#0066CC" />}
+                        <Text style={[styles.resultTitle, { marginBottom: 0, marginLeft: 6 }]}>
+                          {pickResult.all_picked ? '已完成' : '已拣料'}
+                        </Text>
+                      </View>
                       <Text>已拣: {pickResult.picked_qty} / 剩余: {pickResult.remaining_qty}</Text>
                       {pickResult.cleared_leds.length > 0 && (
                         <Text>已清除 {pickResult.cleared_leds.length} 个亮灯</Text>
@@ -459,7 +530,7 @@ export default function OutboundScreen() {
   // ── Direct Outbound ──
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity onPress={handleReset}>
           <Text style={styles.backBtn}>← 返回</Text>
         </TouchableOpacity>
@@ -470,14 +541,22 @@ export default function OutboundScreen() {
       <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
         <View style={styles.card}>
           <Text style={styles.stepTitle}>扫描料盘</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="扫描料盘条码"
-            value={directBarcode}
-            onChangeText={setDirectBarcode}
-            autoFocus
-            onSubmitEditing={handleDirectScan}
-          />
+          <View style={styles.scanInputRow}>
+            <TextInput
+              style={[styles.input, styles.scanInputFlex]}
+              placeholder="扫描料盘条码"
+              value={directBarcode}
+              onChangeText={setDirectBarcode}
+              autoFocus
+              onSubmitEditing={handleDirectScan}
+            />
+            <TouchableOpacity
+                    style={styles.cameraBtn}
+                    onPress={() => setShowDirectScanner(true)}
+                  >
+                    <CameraIcon size={24} color="#fff" />
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
             style={[styles.button, !directBarcode.trim() && styles.buttonDisabled]}
             onPress={handleDirectScan}
@@ -516,11 +595,16 @@ export default function OutboundScreen() {
               {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认出库</Text>}
             </TouchableOpacity>
 
-            {directResult && (
-              <View style={[styles.resultBox, directResult.status === 'ok' ? styles.resultSuccess : styles.resultError]}>
-                <Text style={styles.resultTitle}>
-                  {directResult.status === 'ok' ? '✅ 出库成功' : '❌ 出库失败'}
-                </Text>
+              {directResult && (
+                  <View style={[styles.resultBox, directResult.status === 'ok' ? styles.resultSuccess : styles.resultError]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                      {directResult.status === 'ok'
+                        ? <CheckCircleIcon size={18} color="#00AA55" />
+                        : <CrossIcon size={18} color="#DD3333" />}
+                      <Text style={[styles.resultTitle, { marginBottom: 0, marginLeft: 6 }]}>
+                        {directResult.status === 'ok' ? '出库成功' : '出库失败'}
+                      </Text>
+                    </View>
                 <Text>出库前: {directResult.quantity_before} → 出库后: {directResult.quantity_after}</Text>
                 <Text>储位释放: {directResult.slot_released ? '是' : '否'}</Text>
                 <Text>{directResult.message}</Text>
@@ -529,6 +613,21 @@ export default function OutboundScreen() {
           </View>
         )}
       </ScrollView>
+
+      {/* 摄像头扫码 - BOM 取料 */}
+      <BarcodeScanner
+        visible={showPickScanner}
+        onScan={handlePickCameraScan}
+        onClose={() => setShowPickScanner(false)}
+        title="扫码取料"
+      />
+      {/* 摄像头扫码 - 单独出料 */}
+      <BarcodeScanner
+        visible={showDirectScanner}
+        onScan={handleDirectCameraScan}
+        onClose={() => setShowDirectScanner(false)}
+        title="扫码出料"
+      />
     </View>
   )
 }
@@ -541,7 +640,6 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 13, color: 'rgba(255,255,255,0.85)', marginTop: 2 },
   modeContainer: { padding: 16, gap: 12 },
   modeCard: { backgroundColor: Colors.card, borderRadius: 12, padding: 20, elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  modeIcon: { fontSize: 36, marginBottom: 8 },
   modeTitle: { fontSize: 20, fontWeight: 'bold', color: Colors.text },
   modeDesc: { fontSize: 14, color: Colors.textSecondary, marginTop: 4 },
   scrollArea: { flex: 1 },
@@ -558,6 +656,9 @@ const styles = StyleSheet.create({
   linkBtn: { alignItems: 'center', marginVertical: 4 },
   linkText: { color: Colors.primary, fontSize: 15 },
   emptyText: { textAlign: 'center', color: Colors.textSecondary, fontSize: 16, marginVertical: 20 },
+  scanInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  scanInputFlex: { flex: 1, marginBottom: 0 },
+  cameraBtn: { width: 50, height: 50, borderRadius: 8, backgroundColor: Colors.info, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   previewLabel: { fontSize: 15, color: Colors.textSecondary, fontWeight: '600', marginBottom: 4, marginTop: 8 },
   selectItem: { padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#eee', marginBottom: 8 },
   selectItemTitle: { fontSize: 16, fontWeight: '600', color: Colors.text },

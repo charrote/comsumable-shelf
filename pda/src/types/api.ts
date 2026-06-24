@@ -79,6 +79,14 @@ export interface ReceiptScanRequest {
   new_material_name?: string
   printer_ip?: string
   printer_port?: number
+  /** 人工修正字段：物料名称 */
+  material_name?: string
+  /** 人工修正字段：规格 */
+  spec?: string
+  /** 人工修正字段：批次号 */
+  batch_no?: string
+  /** 人工修正字段：生产周期 */
+  date_code?: string
 }
 
 export interface ReceiptScanResponse {
@@ -131,6 +139,18 @@ export interface BarcodePreviewItem {
   editable: boolean
 }
 
+export interface ReceiptListItem {
+  id: number
+  receipt_no: string
+  purchase_order_no: string
+  customer_id: number
+  created_at: string
+  operator: string
+  status: string
+  type: string
+  items_count: number
+}
+
 export interface ReceiptCreate {
   type?: string
   operator: string
@@ -140,6 +160,7 @@ export interface ReceiptCreate {
 export interface ReceiptDetailResponse {
   id: number
   receipt_no: string
+  purchase_order_no?: string
   customer_id: number
   created_at: string
   operator: string
@@ -150,15 +171,42 @@ export interface ReceiptDetailResponse {
 export interface ReceiptItem {
   id: number
   material_id: number
+  material_code?: string
+  material_name?: string
+  material_unit?: string
   quantity: number
   barcode?: string
+  customer_barcode?: string
   customer_material_code?: string
   reel_id?: number
+  reel_code?: string
   internal_label_printed?: boolean
   label_printed_at?: string
 }
 
+export interface CancelReceiptItemsRequest {
+  receipt_reel_ids: number[]
+}
+
+export interface CancelReceiptItemsResponse {
+  status: string
+  message: string
+  cancelled_ids: number[]
+}
+
 // Shelving
+export interface ShelvingScanSlotResponse {
+  status: string           // ok | not_found | occupied
+  shelf_slot_id: number
+  shelf_id: number
+  shelf_code: string
+  slot_code: string
+  side: string
+  slot_on_board: number
+  is_occupied: boolean
+  message: string
+}
+
 export interface ShelvingBindRequest {
   reel_id: number
   shelf_id: number

@@ -7,6 +7,7 @@ const { Option } = Select
 
 interface InventoryItem {
   reel_id: number
+  reel_code: string
   material_code: string
   quantity: number
   first_in_time: string
@@ -132,7 +133,7 @@ export function InventoryPage() {
   }
 
   const columns = [
-    { title: '库存盘号', dataIndex: 'reel_id', key: 'reel_id', width: 100 },
+    { title: '库存盘号', dataIndex: 'reel_code', key: 'reel_code', width: 180 },
     { title: '物料编号', dataIndex: 'material_code', key: 'material_code', width: 140 },
     { title: '数量', dataIndex: 'quantity', key: 'quantity', width: 70 },
     {
@@ -254,7 +255,7 @@ export function InventoryPage() {
           {directTarget && (
             <Form layout="vertical">
               <p>
-                <strong>盘号：</strong>#{directTarget.reel_id}
+                <strong>盘号：</strong>{directTarget.reel_code}
               </p>
               <p>
                 <strong>物料：</strong>{directTarget.material_code}

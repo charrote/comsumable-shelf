@@ -5,6 +5,7 @@ import {
 } from 'react-native'
 import { getTrackingInventoryApi, getInventoryApi, getMaterialsApi } from '../api'
 import type { TrackingReelResponse, ReelInfo, MaterialResponse } from '../types/api'
+import { CheckCircleIcon, ClockIcon } from '../components/Icons'
 
 const Colors = {
   primary: '#0066CC', success: '#00AA55', warning: '#FF9900', danger: '#DD3333',
@@ -173,9 +174,14 @@ export default function TrackingScreen() {
                   <Text style={styles.cardSmall}>入库时间: {item.first_in_time}</Text>
                 ) : null}
                 {'xr_matched' in item ? (
-                  <Text style={[styles.cardSmall, { color: (item as TrackingReelResponse).xr_matched ? Colors.success : Colors.warning }]}>
-                    XR匹配: {(item as TrackingReelResponse).xr_matched ? '✅ 已配对' : '⏳ 待配对'}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 16, marginTop: 2 }}>
+                    {(item as TrackingReelResponse).xr_matched
+                      ? <CheckCircleIcon size={14} color={Colors.success} />
+                      : <ClockIcon size={14} color={Colors.warning} />}
+                    <Text style={[styles.cardSmall, { color: (item as TrackingReelResponse).xr_matched ? Colors.success : Colors.warning, marginLeft: 4 }]}>
+                      XR匹配: {(item as TrackingReelResponse).xr_matched ? '已配对' : '待配对'}
+                    </Text>
+                  </View>
                 ) : null}
               </View>
             )

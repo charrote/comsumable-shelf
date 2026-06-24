@@ -1,4 +1,4 @@
-import { Card, Button, Typography, Space, Tag, Steps, Alert, QRCode, Divider } from 'antd'
+import { Card, Button, Typography, Space, Tag, Steps, Alert, QRCode, Divider, Collapse } from 'antd'
 import {
   DownloadOutlined,
   AndroidOutlined,
@@ -11,10 +11,10 @@ import { getAppName } from '../store/configStore'
 
 const { Title, Text, Paragraph } = Typography
 
-const APP_VERSION = '1.1.0'
-const BUILD_NUMBER = 'debug-20260618'
-const APK_PATH = '/apk/app-debug.apk'
-const APK_SIZE = '20 MB'
+const APP_VERSION = '2.1'
+const BUILD_NUMBER = 'release-20260624'
+const APK_PATH = '/apk/app-release.apk'
+const APK_SIZE = '29 MB'
 
 export function AppDownloadPage() {
   const appName = getAppName()
@@ -91,9 +91,9 @@ export function AppDownloadPage() {
                 下载 APK ({APK_SIZE})
               </Button>
               <Alert
-                message="测试版本说明"
-                description="此版本为 Debug 构建，用于功能验证和集成测试。请勿用于生产环境。"
-                type="info"
+                message="正式发布版本"
+                description="此版本为 Release 构建，已连接正式服务器，适用于生产环境。首次登录请在服务器地址栏填写：http://101.34.63.68:8080/api"
+                type="success"
                 showIcon
                 style={{ borderRadius: 8 }}
               />
@@ -177,28 +177,70 @@ export function AppDownloadPage() {
         }
         style={{ borderRadius: 12 }}
       >
+        {/* v2.1 — 默认展开 */}
         <Divider orientation="left" plain>
-          v1.1.0 (2026-06-18)
+          v2.1 (2026-06-24)
         </Divider>
         <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
-          <li>服务端 IP 自动注入：Debug 包自动连本地/远程，Release 包连生产地址，无需手动配置</li>
-          <li>系统名称动态化：APP_NAME 从后端配置文件读取，PDA 首页 + Web 后台统一显示"智能物料管理系统"</li>
-          <li>硬件模拟模式：新增 HARDWARE_SIMULATION 环境变量，无硬件时自动跳过 LED/打印机/料架传感器</li>
-          <li>新增 /api/system/info 接口：前端动态获取系统名称、版本号等信息</li>
-          <li>入库上架自动分配储位：扫码后自动匹配空储位，减少人工操作</li>
-          <li>FIFO 出库策略优化：支持 tail_first 策略，优先取出后入库的物料</li>
-          <li>LED 亮灯指令持久化 + 后台 Worker 自动处理状态流转</li>
+          <li>Release 重新构建：包含最新源码，优化 R8 混淆与资源压缩，APK 体积 29MB</li>
+          <li>库存盘号修复：WEB 库存管理页库存盘号列显示正确的 Reel 编码格式（REEL-YYYYMMDD-XXXX）</li>
+          <li>前端缓存优化：Vite 构建产物启用内容哈希文件名，解决浏览器缓存不更新的问题</li>
+          <li>后端 API 增强：库存列表接口增加 reel_code 字段返回</li>
         </ul>
-        <Divider orientation="left" plain>
-          v1.0.0 (2026-06-17)
-        </Divider>
-        <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
-          <li>扫码入库：支持条码扫描、入库单创建、重复条码检测</li>
-          <li>扫码出库：支持出库单加载、LED 亮灯指引、拣货确认</li>
-          <li>补料上架：支持补料单创建、扫描上架、储位分配</li>
-          <li>库存跟踪：实时查看在库库存和流转记录</li>
-          <li>用户认证：登录/登出、Token 持久化</li>
-        </ul>
+
+        {/* 历史版本 — 折叠 */}
+        <Collapse
+          ghost
+          size="small"
+          items={[
+            {
+              key: 'v2.0',
+              label: 'v2.0 (2026-06-24)',
+              children: (
+                <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
+                  <li>底部 Tab 导航重构：首页/收料入库/料盘上架/扫码出库/库存跟踪，设置移至右上角齿轮入口</li>
+                  <li>操作员统一配置：设置页全局设置操作员，所有业务页面自动读取无需重复输入</li>
+                  <li>摄像头扫码：调用设备摄像头扫描条码，支持多种条码格式（Code128/QR/Data Matrix/EAN等）</li>
+                  <li>动态服务器地址：登录页/设置页可运行时配置 API 地址，支持多环境切换</li>
+                  <li>Release 构建优化：APK 体积从 177MB 缩减至 24MB（ABI 过滤 + R8 混淆 + 资源压缩）</li>
+                  <li>正式服务器地址：默认连接生产环境 http://101.34.63.68:8080/api</li>
+                  <li>收料单增加采购单号；收料详情增加取消功能；扫码流程优化</li>
+                  <li>BOM 导入优化：增加产品编码/产品名称录入，列表关联显示</li>
+                  <li>库存管理优化：增加客户列/客户筛选/状态筛选/Excel导出</li>
+                  <li>仪表盘优化：移除快速操作区，摘要卡片简化，版本号 2.0</li>
+                </ul>
+              ),
+            },
+            {
+              key: 'v1.1',
+              label: 'v1.1.0 (2026-06-18)',
+              children: (
+                <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
+                  <li>服务端 IP 自动注入：Debug 包自动连本地/远程，Release 包连生产地址，无需手动配置</li>
+                  <li>系统名称动态化：APP_NAME 从后端配置文件读取，PDA 首页 + Web 后台统一显示"智能物料管理系统"</li>
+                  <li>硬件模拟模式：新增 HARDWARE_SIMULATION 环境变量，无硬件时自动跳过 LED/打印机/料架传感器</li>
+                  <li>新增 /api/system/info 接口：前端动态获取系统名称、版本号等信息</li>
+                  <li>入库上架自动分配储位：扫码后自动匹配空储位，减少人工操作</li>
+                  <li>FIFO 出库策略优化：支持 tail_first 策略，优先取出后入库的物料</li>
+                  <li>LED 亮灯指令持久化 + 后台 Worker 自动处理状态流转</li>
+                </ul>
+              ),
+            },
+            {
+              key: 'v1.0',
+              label: 'v1.0.0 (2026-06-17)',
+              children: (
+                <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
+                  <li>扫码入库：支持条码扫描、入库单创建、重复条码检测</li>
+                  <li>扫码出库：支持出库单加载、LED 亮灯指引、拣货确认</li>
+                  <li>补料上架：支持补料单创建、扫描上架、储位分配</li>
+                  <li>库存跟踪：实时查看在库库存和流转记录</li>
+                  <li>用户认证：登录/登出、Token 持久化</li>
+                </ul>
+              ),
+            },
+          ]}
+        />
       </Card>
 
       {/* 底部 */}

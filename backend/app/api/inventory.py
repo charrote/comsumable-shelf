@@ -156,6 +156,7 @@ async def get_inventory(
             exhausted += 1
         pallets.append({
             "reel_id": pallet.id,
+            "reel_code": pallet.reel_code or str(pallet.id),
             "material_code": row[1],
             "quantity": pallet.quantity,
             "original_quantity": pallet.original_quantity,
