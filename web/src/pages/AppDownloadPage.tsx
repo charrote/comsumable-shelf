@@ -14,7 +14,7 @@ const { Title, Text, Paragraph } = Typography
 const APP_VERSION = '2.1'
 const BUILD_NUMBER = 'release-20260624'
 const APK_PATH = '/apk/app-release.apk'
-const APK_SIZE = '29 MB'
+const APK_SIZE = '57 MB'
 
 export function AppDownloadPage() {
   const appName = getAppName()

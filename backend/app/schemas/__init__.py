@@ -746,6 +746,40 @@ class BarcodeTestResponse(BaseModel):
     message: str = ""
 
 
+# ---------- Backup ----------
+class BackupResponse(BaseModel):
+    id: int
+    filename: str
+    filepath: str
+    file_size: int = 0
+    db_version: str = ""
+    status: str = "completed"
+    error_message: str = ""
+    operator: str = ""
+    created_at: Optional[datetime] = None
+
+
+class BackupCreateResponse(BaseModel):
+    id: int
+    filename: str
+    filepath: str
+    file_size: int = 0
+    status: str = "running"
+    message: str = ""
+
+
+class BackupRestoreRequest(BaseModel):
+    backup_id: Optional[int] = Field(None, description="备份记录 ID（二选一）")
+    filename: Optional[str] = Field(None, description="备份文件名（二选一，优先级低于 backup_id）")
+
+
+class BackupRestoreResponse(BaseModel):
+    status: str
+    backup_id: int
+    filename: str
+    message: str
+
+
 # ---------- General ----------
 class PaginatedResponse(BaseModel):
     items: list

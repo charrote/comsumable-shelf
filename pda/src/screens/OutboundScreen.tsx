@@ -1,21 +1,20 @@
 import React, { useState, useCallback } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
-  FlatList, ActivityIndicator, ScrollView,
+  ActivityIndicator, ScrollView,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   listIssuesApi, getIssueDetailApi, calculateIssueApi, assignIssueApi,
-  confirmPickApi, directOutboundApi, scanReelForDirectOutApi, listBOMsApi,
+  confirmPickApi, directOutboundApi, scanReelForDirectOutApi,
 } from '../api'
 import type {
   IssueOrderResponse, IssueDetailResponse, IssueCalculateResponse,
-  IssueConfirmPickResponse, DirectOutResponse, ReelSelection,
-  BOMResponse,
+  IssueConfirmPickResponse, DirectOutResponse,
 } from '../types/api'
 import { useOperator } from '../hooks/useOperator'
 import BarcodeScanner from '../components/BarcodeScanner'
-import { DocumentIcon, PackageIcon, CameraIcon, CheckIcon, CrossIcon, CheckCircleIcon, ClockIcon } from '../components/Icons'
+import { DocumentIcon, PackageIcon, CameraIcon, CrossIcon, CheckCircleIcon } from '../components/Icons'
 
 const Colors = {
   primary: '#0066CC', success: '#00AA55', warning: '#FF9900', danger: '#DD3333',
@@ -35,7 +34,6 @@ export default function OutboundScreen() {
   const [showDirectScanner, setShowDirectScanner] = useState(false)
 
   // ── BOM Pick Flow ──
-  const [boms, setBoms] = useState<BOMResponse[]>([])
   const [issues, setIssues] = useState<IssueOrderResponse[]>([])
   const [selectedIssue, setSelectedIssue] = useState<IssueOrderResponse | null>(null)
   const [issueDetails, setIssueDetails] = useState<IssueDetailResponse[]>([])
@@ -44,11 +42,6 @@ export default function OutboundScreen() {
   const [pickBarcode, setPickBarcode] = useState('')
   const [pickResult, setPickResult] = useState<IssueConfirmPickResponse | null>(null)
 
-  // ── BOM Pilot: select BOM + quantity → create issue ──
-  const [selectedBom, setSelectedBom] = useState<BOMResponse | null>(null)
-  const [prodQty, setProdQty] = useState('1')
-  const [showBomSelector, setShowBomSelector] = useState(false)
-
   // ── Direct Outbound Flow ──
   const [directBarcode, setDirectBarcode] = useState('')
   const [directReelInfo, setDirectReelInfo] = useState<{
@@ -56,19 +49,6 @@ export default function OutboundScreen() {
   } | null>(null)
   const [directQty, setDirectQty] = useState('')
   const [directResult, setDirectResult] = useState<DirectOutResponse | null>(null)
-
-  // ── BOM: Load BOMs ──
-  const loadBOMs = useCallback(async () => {
-    setIsLoading(true)
-    try {
-      const res = await listBOMsApi()
-      setBoms(Array.isArray(res) ? res : [])
-    } catch {
-      Alert.alert('错误', '加载BOM列表失败')
-    } finally {
-      setIsLoading(false)
-    }
-  }, [])
 
   // ── BOM: Load issue orders ──
   const loadIssues = useCallback(async () => {
@@ -280,8 +260,6 @@ export default function OutboundScreen() {
     setDirectBarcode('')
     setDirectQty('')
     setDirectResult(null)
-    setSelectedBom(null)
-    setShowBomSelector(false)
   }
 
   // ── Mode Selection ──
@@ -295,11 +273,11 @@ export default function OutboundScreen() {
         <View style={styles.modeContainer}>
           <TouchableOpacity
             style={styles.modeCard}
-            onPress={() => { setMode('bom'); setStep('bom_pick'); loadBOMs(); loadIssues() }}
+            onPress={() => { setMode('bom'); setStep('bom_pick'); loadIssues() }}
           >
             <DocumentIcon size={36} color={Colors.primary} />
-            <Text style={styles.modeTitle}>按 BOM 出库</Text>
-            <Text style={styles.modeDesc}>选择BOM → FIFO计算 → LED亮灯 → 扫码取料</Text>
+            <Text style={styles.modeTitle}>按料单出库</Text>
+            <Text style={styles.modeDesc}>选择发料单 → FIFO计算 → LED亮灯 → 扫码取料</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.modeCard}
@@ -322,95 +300,45 @@ export default function OutboundScreen() {
           <TouchableOpacity onPress={handleReset}>
             <Text style={styles.backBtn}>← 返回</Text>
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>按 BOM 出库</Text>
+          <Text style={styles.headerTitle}>按料单出库</Text>
           <Text style={styles.headerSub}>
-            {selectedIssue ? `单号: ${selectedIssue.order_no}` : '选择BOM/出库单'}
+            {selectedIssue ? `单号: ${selectedIssue.order_no}` : '选择发料单'}
           </Text>
         </View>
 
         <ScrollView style={styles.scrollArea} contentContainerStyle={styles.scrollContent}>
-          {/* BOM Selector */}
+          {/* Issue Orders List */}
           {!selectedIssue && (
-            <>
-              {/* Step 1: Select BOM & create issue */}
-              <View style={styles.card}>
-                <Text style={styles.stepTitle}>1. 选择 BOM</Text>
-                {!showBomSelector ? (
-                  <TouchableOpacity style={styles.button} onPress={() => { setShowBomSelector(true); loadBOMs() }}>
-                    <Text style={styles.buttonText}>选择 BOM 生成发料单</Text>
-                  </TouchableOpacity>
-                ) : (
-                  <>
-                    {boms.map(bom => (
-                      <TouchableOpacity key={bom.id} style={styles.selectItem}
-                        onPress={() => {
-                          setSelectedBom(bom)
-                          setShowBomSelector(false)
-                        }}>
-                        <Text style={styles.selectItemTitle}>{bom.product_name || bom.product_code || `BOM #${bom.id}`} v{bom.version}</Text>
-                        <Text style={styles.selectItemSub}>产品: {bom.product_name || bom.product_code || '--'} | 物料项: {bom.item_count || 0}</Text>
-                      </TouchableOpacity>
-                    ))}
-                  </>
-                )}
-
-                {selectedBom && (
-                  <View style={styles.selectedInfo}>
-                    <Text style={styles.selectedInfoText}>已选 BOM: {selectedBom.product_name || selectedBom.product_code || `#${selectedBom.id}`}</Text>
-                    <Text style={styles.previewLabel}>生产数量</Text>
-                    <TextInput
-                      style={styles.input}
-                      value={prodQty}
-                      onChangeText={setProdQty}
-                      keyboardType="numeric"
-                      placeholder="输入生产数量"
-                    />
-                    <TouchableOpacity
-                      style={[styles.button, styles.issueButton]}
-                      onPress={async () => {
-                        // The backend handles creating the issue from BOM
-                        // For now, just load existing issues
-                        Alert.alert('提示', '请先在 PC Web 端创建发料单，然后在下方列表中选择')
-                      }}
-                    >
-                      <Text style={styles.buttonText}>生成发料单</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-
-              {/* Issue Orders List */}
-              <View style={styles.card}>
-                <Text style={styles.stepTitle}>2. 选择发料单</Text>
-                <TouchableOpacity style={styles.linkBtn} onPress={loadIssues}>
-                  <Text style={styles.linkText}>刷新发料单列表</Text>
-                </TouchableOpacity>
-                {isLoading ? <ActivityIndicator style={{ marginVertical: 16 }} /> : null}
-                {issues.length === 0 && !isLoading ? (
-                  <Text style={styles.emptyText}>暂无待处理的发料单</Text>
-                ) : (
-                  issues.map(issue => (
-                    <TouchableOpacity key={issue.id} style={styles.issueCard} onPress={() => selectIssue(issue)}>
-                      <View style={styles.issueHeader}>
-                        <Text style={styles.issueNo}>#{issue.order_no}</Text>
-                        <View style={[styles.statusBadge, {
-                          backgroundColor: 
-                            issue.status === 'completed' ? Colors.success :
-                            issue.status === 'picking' ? Colors.warning : Colors.info
-                        }]}>
-                          <Text style={styles.statusText}>{issue.status}</Text>
-                        </View>
+            <View style={styles.card}>
+              <Text style={styles.stepTitle}>选择发料单</Text>
+              <TouchableOpacity style={styles.linkBtn} onPress={loadIssues}>
+                <Text style={styles.linkText}>刷新发料单列表</Text>
+              </TouchableOpacity>
+              {isLoading ? <ActivityIndicator style={{ marginVertical: 16 }} /> : null}
+              {issues.length === 0 && !isLoading ? (
+                <Text style={styles.emptyText}>暂无待处理的发料单</Text>
+              ) : (
+                issues.map(issue => (
+                  <TouchableOpacity key={issue.id} style={styles.issueCard} onPress={() => selectIssue(issue)}>
+                    <View style={styles.issueHeader}>
+                      <Text style={styles.issueNo}>#{issue.order_no}</Text>
+                      <View style={[styles.statusBadge, {
+                        backgroundColor: 
+                          issue.status === 'completed' ? Colors.success :
+                          issue.status === 'picking' ? Colors.warning : Colors.info
+                      }]}>
+                        <Text style={styles.statusText}>{issue.status}</Text>
                       </View>
-                      <Text style={styles.issueProduct}>{issue.product_name || issue.product_code || ''}</Text>
-                      <Text style={styles.issueMeta}>
-                        {issue.detail_count ?? 0} 项物料
-                        {issue.production_quantity ? ` × ${issue.production_quantity} 套` : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  ))
-                )}
-              </View>
-            </>
+                    </View>
+                    <Text style={styles.issueProduct}>{issue.product_name || issue.product_code || ''}</Text>
+                    <Text style={styles.issueMeta}>
+                      {issue.detail_count ?? 0} 项物料
+                      {issue.production_quantity ? ` × ${issue.production_quantity} 套` : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
           )}
 
           {/* Issue Detail & Operations */}
@@ -650,7 +578,6 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#fff', padding: 14, borderRadius: 8, marginBottom: 12, fontSize: 18, borderWidth: 1, borderColor: '#ddd' },
   button: { backgroundColor: Colors.primary, padding: 16, borderRadius: 8, alignItems: 'center', marginBottom: 8 },
   confirmButton: { backgroundColor: Colors.success },
-  issueButton: { backgroundColor: Colors.info },
   buttonDisabled: { opacity: 0.5 },
   buttonText: { color: '#fff', fontSize: 18, fontWeight: '600' },
   linkBtn: { alignItems: 'center', marginVertical: 4 },
@@ -660,11 +587,6 @@ const styles = StyleSheet.create({
   scanInputFlex: { flex: 1, marginBottom: 0 },
   cameraBtn: { width: 50, height: 50, borderRadius: 8, backgroundColor: Colors.info, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   previewLabel: { fontSize: 15, color: Colors.textSecondary, fontWeight: '600', marginBottom: 4, marginTop: 8 },
-  selectItem: { padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#eee', marginBottom: 8 },
-  selectItemTitle: { fontSize: 16, fontWeight: '600', color: Colors.text },
-  selectItemSub: { fontSize: 14, color: Colors.textSecondary, marginTop: 2 },
-  selectedInfo: { backgroundColor: '#f0f5ff', borderRadius: 8, padding: 12, marginTop: 8 },
-  selectedInfoText: { fontSize: 15, color: Colors.primary, fontWeight: '600', textAlign: 'center' },
   issueCard: { padding: 14, borderRadius: 8, borderWidth: 1, borderColor: '#eee', marginBottom: 8 },
   issueHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   issueNo: { fontSize: 16, fontWeight: 'bold', color: Colors.text },

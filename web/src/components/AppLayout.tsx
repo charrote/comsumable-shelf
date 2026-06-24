@@ -16,6 +16,7 @@ import {
   LogoutOutlined,
   DownloadOutlined,
   BugOutlined,
+  CloudUploadOutlined,
 } from '@ant-design/icons'
 import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -46,6 +47,7 @@ const menuItems = [
       { key: '/customers', label: '客户管理' },
       { key: '/app-download', icon: <DownloadOutlined />, label: 'PDA下载' },
       { key: '/hardware-debug', icon: <BugOutlined />, label: '硬件调试' },
+      { key: '/backup', icon: <CloudUploadOutlined />, label: '数据备份' },
     ],
   },
 ]

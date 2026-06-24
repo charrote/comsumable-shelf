@@ -480,6 +480,21 @@ class BarcodeDefinitionSegment(Base):
     )
 
 
+class DataBackup(Base):
+    """Database backup records."""
+    __tablename__ = "data_backups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    filename = Column(String, nullable=False, comment="备份文件名")
+    filepath = Column(String, nullable=False, comment="备份文件完整路径")
+    file_size = Column(Integer, default=0, comment="文件大小（字节）")
+    db_version = Column(String, default="", comment="备份时的数据库版本/架构版本")
+    status = Column(String, default="completed", comment="备份状态: running | completed | failed")
+    error_message = Column(String, default="", comment="失败时的错误信息")
+    operator = Column(String, default="", comment="操作人")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class User(Base):
     __tablename__ = "users"
 

@@ -395,3 +395,15 @@ export const testBarcodeDefinitionApi = (definitionId: number, barcode: string) 
   apiClient.post('/barcode-definitions/test', { definition_id: definitionId, barcode })
 export const getFieldMappingsApi = () =>
   apiClient.get('/barcode-definitions/field-mappings')
+
+// ── Data Backup ──
+export const getBackupsApi = () =>
+  apiClient.get('/backups')
+export const getBackupApi = (id: number) =>
+  apiClient.get(`/backups/${id}`)
+export const createBackupApi = () =>
+  apiClient.post('/backups')
+export const restoreBackupApi = (id: number) =>
+  apiClient.post(`/backups/${id}/restore`)
+export const deleteBackupApi = (id: number) =>
+  apiClient.delete(`/backups/${id}`)

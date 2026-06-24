@@ -54,6 +54,14 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "info"
 
+    # Backup
+    BACKUP_DIR: str = "/app/backups"
+    BACKUP_DB_HOST: str = "localhost"
+    BACKUP_DB_PORT: int = 5432
+    BACKUP_DB_NAME: str = "smes"
+    BACKUP_DB_USER: str = "postgres"
+    BACKUP_DB_PASSWORD: str = "postgres"
+
 
 # Create a global settings instance
 settings = Settings()

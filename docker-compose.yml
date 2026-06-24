@@ -40,6 +40,14 @@ services:
       XR_MATCH_WINDOW_SECONDS: ${XR_MATCH_WINDOW_SECONDS:-10}
       LED_WORKER_COUNT: ${LED_WORKER_COUNT:-4}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      BACKUP_DIR: /app/backups
+      BACKUP_DB_HOST: db
+      BACKUP_DB_PORT: 5432
+      BACKUP_DB_NAME: smes
+      BACKUP_DB_USER: postgres
+      BACKUP_DB_PASSWORD: ${PG_PASSWORD:-postgres}
+    volumes:
+      - backup-data:/app/backups
     healthcheck:
       test: ["CMD", "python", "-c", "import http.client; c = http.client.HTTPConnection('localhost', 8080); c.request('GET', '/health'); r = c.getresponse(); exit(0) if r.status == 200 else exit(1)"]
       interval: 10s
@@ -101,6 +109,7 @@ services:
 volumes:
   pgdata:
   pgadmin-data:
+  backup-data:
 
 networks:
   smes:
