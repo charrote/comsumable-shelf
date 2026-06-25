@@ -139,7 +139,8 @@ export function IssueOrderPage() {
 
   const columns = [
     { title: '发料单号', dataIndex: 'order_no', key: 'order_no', width: 180 },
-    { title: '产品', dataIndex: 'product_code', key: 'product_code', width: 150 },
+    { title: '产品编码', dataIndex: 'product_code', key: 'product_code', width: 150 },
+    { title: '产品名称', dataIndex: 'product_name', key: 'product_name', width: 200, ellipsis: true },
     { title: '生产数量', dataIndex: 'production_quantity', key: 'production_quantity', width: 100 },
     { title: '明细数', dataIndex: 'detail_count', key: 'detail_count', width: 80 },
     {

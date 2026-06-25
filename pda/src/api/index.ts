@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import { useAuthStore } from '../store/authStore'
 import * as t from '../types/api'
 
 const API_URL_KEY = 'pda_api_url'
@@ -43,7 +44,11 @@ api.interceptors.response.use(
   (res) => res,
   async (err) => {
     if (err.response?.status === 401) {
-      await AsyncStorage.removeItem('token')
+      // 只在非登录接口返回 401 时跳转登录页（登录接口 401 表示用户名或密码错误）
+      const isLoginRequest = err.config?.url?.includes('/auth/login')
+      if (!isLoginRequest) {
+        await useAuthStore.getState().logout()
+      }
     }
     return Promise.reject(err)
   }
