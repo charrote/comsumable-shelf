@@ -179,6 +179,30 @@ async def init_db():
             """)
         )
 
+        # Migration: create led_commands table if not exists
+        await conn.execute(
+            text("""
+                CREATE TABLE IF NOT EXISTS led_commands (
+                    id SERIAL PRIMARY KEY,
+                    issue_order_id INTEGER REFERENCES issue_order(id),
+                    material_id INTEGER NOT NULL,
+                    shelf_id INTEGER NOT NULL REFERENCES shelves(id),
+                    slot_id INTEGER NOT NULL REFERENCES shelf_slots(id),
+                    color VARCHAR(20) DEFAULT 'green',
+                    duration INTEGER DEFAULT 5,
+                    status VARCHAR(20) DEFAULT 'queued',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    sent_at TIMESTAMP,
+                    cleared_at TIMESTAMP
+                );
+            """)
+        )
+        await conn.execute(
+            text("""
+                CREATE INDEX IF NOT EXISTS idx_led_status ON led_commands (status, created_at);
+            """)
+        )
+
 
 async def seed_db():
     """Seed default data (admin user, default customer, system settings)."""
