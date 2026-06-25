@@ -60,20 +60,18 @@ class TestDuplicateScan:
         await db.commit()
         return reel
 
-    async def test_block_duplicate_by_default(
+    async def test_force_by_default(
         self, db_session: AsyncSession, sample_material: MaterialMaster,
         sample_customer: Customer,
     ):
-        """Default behavior (block) rejects duplicate scans."""
+        """Default behavior (force) skips duplicate check."""
         barcode = "DUP-001"
         await self._seed_reel(db_session, sample_material.id, sample_customer.id, barcode)
 
         result = await check_duplicate_scan(db_session, barcode, sample_customer.id)
 
-        assert result.duplicate is True
-        assert result.action == "block"
-        assert result.existing_reel_id is not None
-        assert "已拦截" in result.message
+        assert result.duplicate is False
+        assert result.action == "allow"
 
     async def test_warn_allows_duplicate_with_flag(
         self, db_session: AsyncSession, sample_material: MaterialMaster,
@@ -136,11 +134,11 @@ class TestDuplicateScan:
         assert result.duplicate is False
         assert result.action == "allow"
 
-    async def test_unknown_setting_falls_back_to_block(
+    async def test_unknown_setting_falls_back_to_force(
         self, db_session: AsyncSession, sample_material: MaterialMaster,
         sample_customer: Customer,
     ):
-        """Invalid setting value falls back to 'block'."""
+        """Invalid setting value falls back to 'force' (current default)."""
         barcode = "INVALID-SETTING"
         await self._seed_reel(db_session, sample_material.id, sample_customer.id, barcode)
 
@@ -150,7 +148,7 @@ class TestDuplicateScan:
 
         result = await check_duplicate_scan(db_session, barcode, sample_customer.id)
 
-        assert result.action == "block"
+        assert result.action == "allow"
 
 
 # =========================================================================

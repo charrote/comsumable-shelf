@@ -256,7 +256,7 @@ async def seed_db():
             },
             {
                 "key": "duplicate_scan_behavior",
-                "value": "block",
+                "value": "force",
                 "description": "重复扫码行为 (block=拦截 | warn=警告并放行 | force=不检查)",
             },
             {

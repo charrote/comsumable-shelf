@@ -459,6 +459,7 @@ export default function InboundScreen() {
                 value={barcode}
                 onChangeText={setBarcode}
                 autoFocus
+                showSoftInputOnFocus={false}
                 onSubmitEditing={handleBarcodeSubmit}
               />
               <TouchableOpacity

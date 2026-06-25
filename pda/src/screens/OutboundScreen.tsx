@@ -414,6 +414,7 @@ export default function OutboundScreen() {
                       value={pickBarcode}
                       onChangeText={setPickBarcode}
                       autoFocus
+                      showSoftInputOnFocus={false}
                     />
                     <TouchableOpacity
                     style={styles.cameraBtn}
@@ -476,6 +477,7 @@ export default function OutboundScreen() {
               value={directBarcode}
               onChangeText={setDirectBarcode}
               autoFocus
+              showSoftInputOnFocus={false}
               onSubmitEditing={handleDirectScan}
             />
             <TouchableOpacity

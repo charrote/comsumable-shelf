@@ -7,9 +7,9 @@ internal reel code like ``REEL-YYYYMMDD-XXXX``).  This module always queries
 
 System Setting: ``duplicate_scan_behavior``
 
-    - ``block`` (default) — Reject duplicate scans with ``status="duplicate"``
+    - ``block`` — Reject duplicate scans with ``status="duplicate"``
     - ``warn``  — Allow the scan through but mark ``duplicate_flag=True`` and attach a warning
-    - ``force`` — Bypass duplicate check entirely; treat every scan as first-time
+    - ``force`` (default) — Bypass duplicate check entirely; treat every scan as first-time
 
 Usage::
 
@@ -31,7 +31,7 @@ from app.models import SystemSetting, InventoryReel, ReceiptReel
 
 SETTING_KEY = "duplicate_scan_behavior"
 VALID_VALUES = ("block", "warn", "force")
-DEFAULT_VALUE = "block"
+DEFAULT_VALUE = "force"
 
 
 # ── Result DTO ──────────────────────────────────────────────────────────────

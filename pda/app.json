@@ -2,7 +2,7 @@
   "expo": {
     "name": "smes-pda",
     "slug": "smes-pda",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "sdkVersion": "50.0.0",
     "platforms": [
       "ios",
