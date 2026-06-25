@@ -10,12 +10,16 @@
       "web"
     ],
     "android": {
-      "package": "com.smes.pda"
+      "package": "com.smes.pda",
+      "usesCleartextTraffic": true
     },
     "ios": {
       "bundleIdentifier": "com.smes.pda",
       "infoPlist": {
-        "NSCameraUsageDescription": "需要使用摄像头扫描条码"
+        "NSCameraUsageDescription": "需要使用摄像头扫描条码",
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
       }
     },
     "plugins": [
