@@ -267,6 +267,10 @@ export const downloadBomQixinTemplateApi = async () => {
   window.URL.revokeObjectURL(url)
 }
 
+// Dashboard
+export const getDashboardPendingListsApi = () =>
+  apiClient.get('/dashboard/pending-lists')
+
 // Report
 export const getDailyReportApi = (date: string, customerId?: number) =>
   apiClient.get('/reports/daily', { params: { date, customer_id: customerId } })
@@ -363,6 +367,46 @@ export const debugSensorTestApi = (data: {
   rack_id: string
   interval?: number
 }) => apiClient.post('/light-debug/sensor-test', data)
+
+// ── Suppliers ──
+export const getSuppliersApi = () =>
+  apiClient.get('/suppliers')
+export const getAllSuppliersApi = () =>
+  apiClient.get('/suppliers/all')
+export const createSupplierApi = (data: {
+  code: string
+  name: string
+  contact_name?: string
+  contact_phone?: string
+  address?: string
+}) => apiClient.post('/suppliers', data)
+export const updateSupplierApi = (id: number, data: {
+  code: string
+  name: string
+  contact_name?: string
+  contact_phone?: string
+  address?: string
+}) => apiClient.put(`/suppliers/${id}`, data)
+export const deleteSupplierApi = (id: number) =>
+  apiClient.delete(`/suppliers/${id}`)
+export const uploadSuppliersApi = (file: File) => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return apiClient.post('/suppliers/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+export const downloadSupplierTemplateApi = async () => {
+  const res = await apiClient.get('/suppliers/template', { responseType: 'blob' })
+  const url = window.URL.createObjectURL(new Blob([res.data]))
+  const link = document.createElement('a')
+  link.href = url
+  link.setAttribute('download', '供应商导入模板.xlsx')
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(url)
+}
 
 // ── Data Backup ──
 export const getBackupsApi = () =>

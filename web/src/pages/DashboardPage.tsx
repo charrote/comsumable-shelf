@@ -1,15 +1,20 @@
 import { useState, useEffect } from 'react'
-import { Card, Col, Row, Statistic, Table, Tag, Spin } from 'antd'
+import { Card, Col, Row, Statistic, Tag, Spin, Table } from 'antd'
 import {
   ArrowUpOutlined,
-  ArrowDownOutlined,
   ShopOutlined,
   DatabaseOutlined,
   WarningOutlined,
-  FileTextOutlined,
+  ClockCircleOutlined,
   InboxOutlined,
 } from '@ant-design/icons'
-import { getMaterialsApi, getShelvesApi, getInventoryApi, getRecentTransactionsApi, getReceiptListApi, getIssueListApi } from '../api'
+import {
+  getMaterialsApi,
+  getShelvesApi,
+  getInventoryApi,
+  getDashboardPendingListsApi,
+} from '../api'
+import type { ColumnsType } from 'antd/es/table'
 
 interface DashboardData {
   totalMaterials: number
@@ -21,22 +26,48 @@ interface DashboardData {
   pendingIssues: number
 }
 
-const typeMap: Record<string, string> = {
-  in: '入库',
-  out: '出库',
-  restock: '补库',
-  reverse: '退料',
+interface PendingReceipt {
+  id: number
+  receipt_no: string
+  purchase_order_no: string
+  created_at: string | null
+  items_count: number
+  operator: string
 }
 
-interface Transaction {
-  key: string
-  time: string
-  type: string
-  material: string
-  materialName: string
+interface PendingShelving {
+  reel_id: number
+  reel_code: string
+  material_code: string
+  material_name: string
   quantity: number
-  operator: string
-  status: string
+  created_at: string | null
+}
+
+interface PendingIssue {
+  id: number
+  order_no: string
+  production_quantity: number
+  required_date: string | null
+  created_at: string | null
+  detail_count: number
+}
+
+interface PendingLists {
+  pending_receipts: PendingReceipt[]
+  pending_shelving: PendingShelving[]
+  pending_issues: PendingIssue[]
+}
+
+function formatTime(val: string | null | undefined): string {
+  if (!val) return '-'
+  const d = new Date(val)
+  if (isNaN(d.getTime())) return val
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${mm}-${dd} ${hh}:${mi}`
 }
 
 export function DashboardPage() {
@@ -52,7 +83,12 @@ export function DashboardPage() {
     pendingReceipts: 0,
     pendingIssues: 0,
   })
-  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [pendingLists, setPendingLists] = useState<PendingLists>({
+    pending_receipts: [],
+    pending_shelving: [],
+    pending_issues: [],
+  })
+
   useEffect(() => {
     const slowTimer = setTimeout(() => setSlow(true), 5000)
 
@@ -64,9 +100,7 @@ export function DashboardPage() {
         getMaterialsApi({}),
         getShelvesApi(),
         getInventoryApi({}),
-        getRecentTransactionsApi(20),
-        getReceiptListApi({ status: 'draft' }),
-        getIssueListApi({ status: 'pending' }),
+        getDashboardPendingListsApi(),
       ])
 
       clearTimeout(slowTimer)
@@ -75,9 +109,11 @@ export function DashboardPage() {
       let materials: any[] = []
       let shelves: any[] = []
       let pallets: any[] = []
-      let recentTxns: any[] = []
-      let pendingReceiptsCount = 0
-      let pendingIssuesCount = 0
+      let pendingListsData: PendingLists = {
+        pending_receipts: [],
+        pending_shelving: [],
+        pending_issues: [],
+      }
 
       if (results[0].status === 'fulfilled') {
         const d = results[0].value.data
@@ -102,19 +138,13 @@ export function DashboardPage() {
 
       if (results[3].status === 'fulfilled') {
         const d = results[3].value.data
-        recentTxns = Array.isArray(d) ? d : []
+        pendingListsData = {
+          pending_receipts: d?.pending_receipts ?? [],
+          pending_shelving: d?.pending_shelving ?? [],
+          pending_issues: d?.pending_issues ?? [],
+        }
       } else {
-        errors.push('操作履历')
-      }
-
-      if (results[4].status === 'fulfilled') {
-        const d = results[4].value.data
-        pendingReceiptsCount = Array.isArray(d) ? d.length : d?.data?.length ?? 0
-      }
-
-      if (results[5].status === 'fulfilled') {
-        const d = results[5].value.data
-        pendingIssuesCount = Array.isArray(d) ? d.length : d?.data?.length ?? 0
+        errors.push('待处理列表')
       }
 
       const onShelfReels = pallets.filter(
@@ -130,22 +160,11 @@ export function DashboardPage() {
         onShelfReels,
         pendingShelvingReels,
         physicalInventory: onShelfReels + pendingShelvingReels,
-        pendingReceipts: pendingReceiptsCount,
-        pendingIssues: pendingIssuesCount,
+        pendingReceipts: pendingListsData.pending_receipts.length,
+        pendingIssues: pendingListsData.pending_issues.length,
       })
 
-      setTransactions(
-        recentTxns.map((op: any, i: number) => ({
-          key: String(i),
-          time: op.time ?? '',
-          type: typeMap[op.type] ?? op.type,
-          material: op.material_code ?? '',
-          materialName: op.material_name ?? '',
-          quantity: op.quantity ?? 0,
-          operator: op.operator ?? '',
-          status: op.status ?? '成功',
-        })),
-      )
+      setPendingLists(pendingListsData)
 
       if (errors.length > 0) {
         setError(`部分数据加载失败: ${errors.join('、')}`)
@@ -158,6 +177,108 @@ export function DashboardPage() {
 
     return () => clearTimeout(slowTimer)
   }, [])
+
+  // ─── Columns for each table ───
+
+  const receiptColumns: ColumnsType<PendingReceipt> = [
+    {
+      title: '收料单号',
+      dataIndex: 'receipt_no',
+      key: 'receipt_no',
+      width: 140,
+      render: (val: string) => <span style={{ fontWeight: 500, fontSize: 13 }}>{val}</span>,
+    },
+    {
+      title: '采购单号',
+      dataIndex: 'purchase_order_no',
+      key: 'purchase_order_no',
+      width: 120,
+      render: (val: string) => val || '-',
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      width: 120,
+      render: (val: string) => formatTime(val),
+    },
+    {
+      title: '料项数',
+      dataIndex: 'items_count',
+      key: 'items_count',
+      width: 70,
+      align: 'center',
+    },
+    {
+      title: '操作人',
+      dataIndex: 'operator',
+      key: 'operator',
+      width: 80,
+      render: (val: string) => val || '-',
+    },
+  ]
+
+  const shelvingColumns: ColumnsType<PendingShelving> = [
+    {
+      title: '料盘编码',
+      dataIndex: 'reel_code',
+      key: 'reel_code',
+      width: 130,
+      render: (val: string) => <span style={{ fontWeight: 500, fontSize: 13 }}>{val}</span>,
+    },
+    {
+      title: '物料编码',
+      dataIndex: 'material_code',
+      key: 'material_code',
+      width: 110,
+    },
+    {
+      title: '物料名称',
+      dataIndex: 'material_name',
+      key: 'material_name',
+      width: 120,
+      render: (val: string) => val || '-',
+    },
+    {
+      title: '数量',
+      dataIndex: 'quantity',
+      key: 'quantity',
+      width: 70,
+      align: 'right',
+      render: (val: number) => val,
+    },
+  ]
+
+  const issueColumns: ColumnsType<PendingIssue> = [
+    {
+      title: '发料单号',
+      dataIndex: 'order_no',
+      key: 'order_no',
+      width: 150,
+      render: (val: string) => <span style={{ fontWeight: 500, fontSize: 13 }}>{val}</span>,
+    },
+    {
+      title: '生产数量',
+      dataIndex: 'production_quantity',
+      key: 'production_quantity',
+      width: 90,
+      align: 'right',
+    },
+    {
+      title: '物料项数',
+      dataIndex: 'detail_count',
+      key: 'detail_count',
+      width: 80,
+      align: 'center',
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      width: 120,
+      render: (val: string) => formatTime(val),
+    },
+  ]
 
   return (
     <div>
@@ -187,9 +308,20 @@ export function DashboardPage() {
       )}
       {!loading && !error && (
         <>
+          {/* 隐藏列表卡片滚动条 */}
+          <style>{`
+            .dashboard-scroll-inner {
+              scrollbar-width: none;
+              -ms-overflow-style: none;
+            }
+            .dashboard-scroll-inner::-webkit-scrollbar {
+              display: none;
+            }
+          `}</style>
+          {/* ── Top Row: 4 Stat Cards (equal height) ── */}
           <Row gutter={16} style={{ marginBottom: 24 }}>
             <Col span={6}>
-              <Card>
+              <Card style={{ height: '100%' }}>
                 <Statistic
                   title="物料总数"
                   value={data.totalMaterials}
@@ -199,7 +331,7 @@ export function DashboardPage() {
               </Card>
             </Col>
             <Col span={6}>
-              <Card>
+              <Card style={{ height: '100%' }}>
                 <Statistic
                   title="料架总数"
                   value={data.totalShelves}
@@ -209,7 +341,7 @@ export function DashboardPage() {
               </Card>
             </Col>
             <Col span={6}>
-              <Card>
+              <Card style={{ height: '100%' }}>
                 <Statistic
                   title="物理在库"
                   value={data.physicalInventory}
@@ -223,7 +355,7 @@ export function DashboardPage() {
               </Card>
             </Col>
             <Col span={6}>
-              <Card>
+              <Card style={{ height: '100%' }}>
                 <Statistic
                   title="待上架"
                   value={data.pendingShelvingReels}
@@ -235,54 +367,82 @@ export function DashboardPage() {
             </Col>
           </Row>
 
+          {/* ── Bottom Row: 3 Equal-Width Pending Lists (equal height, taller, hidden scrollbar) ── */}
           <Row gutter={16}>
-            <Col span={12}>
-              <Card title="最近操作记录">
-                <Table
-                  dataSource={transactions}
-                  columns={[
-                    {
-                      title: '时间',
-                      dataIndex: 'time',
-                      key: 'time',
-                      render: (val: string) => {
-                        if (!val) return '-'
-                        // ISO → "MM-DD HH:mm"
-                        const d = new Date(val)
-                        if (isNaN(d.getTime())) return val
-                        const mm = String(d.getMonth() + 1).padStart(2, '0')
-                        const dd = String(d.getDate()).padStart(2, '0')
-                        const hh = String(d.getHours()).padStart(2, '0')
-                        const mi = String(d.getMinutes()).padStart(2, '0')
-                        return `${mm}-${dd} ${hh}:${mi}`
-                      },
-                    },
-                    { title: '类型', dataIndex: 'type', key: 'type' },
-                    { title: '物料编码', dataIndex: 'material', key: 'material' },
-                    { title: '数量', dataIndex: 'quantity', key: 'quantity' },
-                    { title: '操作人', dataIndex: 'operator', key: 'operator' },
-                    {
-                      title: '状态',
-                      dataIndex: 'status',
-                      key: 'status',
-                      render: (text: string) => (
-                        <Tag color={text === '成功' ? 'green' : 'red'}>{text}</Tag>
-                      ),
-                    },
-                  ]}
-                  pagination={false}
-                  size="small"
-                />
+            {/* 待入库收料单 */}
+            <Col span={8}>
+              <Card
+                title={
+                  <span>
+                    <InboxOutlined style={{ marginRight: 8 }} />
+                    待入库收料单
+                    <Tag style={{ marginLeft: 8 }} color="blue">{pendingLists.pending_receipts.length}</Tag>
+                  </span>
+                }
+                style={{ height: 400 }}
+                styles={{ body: { padding: 0, height: 'calc(100% - 57px)', overflow: 'hidden' } }}
+              >
+                <div className="dashboard-scroll-inner" style={{ height: '100%', overflowY: 'auto' }}>
+                  <Table
+                    dataSource={pendingLists.pending_receipts}
+                    columns={receiptColumns}
+                    rowKey="id"
+                    pagination={false}
+                    size="small"
+                    locale={{ emptyText: '暂无待入库收料单' }}
+                  />
+                </div>
               </Card>
             </Col>
-            <Col span={12}>
-              <Card title="待处理事项">
-                <div>
-                  <p><FileTextOutlined style={{ marginRight: 8 }} />待确认入库: {data.pendingReceipts} 单</p>
-                  <p><InboxOutlined style={{ marginRight: 8 }} />待执行发料: {data.pendingIssues} 单</p>
-                  {data.pendingShelvingReels > 0 && (
-                    <p><WarningOutlined style={{ marginRight: 8, color: '#faad14' }} />待上架料盘: {data.pendingShelvingReels} 盘</p>
-                  )}
+
+            {/* 待上架物料 */}
+            <Col span={8}>
+              <Card
+                title={
+                  <span>
+                    <ClockCircleOutlined style={{ marginRight: 8 }} />
+                    待上架物料
+                    <Tag style={{ marginLeft: 8 }} color="orange">{pendingLists.pending_shelving.length}</Tag>
+                  </span>
+                }
+                style={{ height: 400 }}
+                styles={{ body: { padding: 0, height: 'calc(100% - 57px)', overflow: 'hidden' } }}
+              >
+                <div className="dashboard-scroll-inner" style={{ height: '100%', overflowY: 'auto' }}>
+                  <Table
+                    dataSource={pendingLists.pending_shelving}
+                    columns={shelvingColumns}
+                    rowKey="reel_id"
+                    pagination={false}
+                    size="small"
+                    locale={{ emptyText: '暂无待上架物料' }}
+                  />
+                </div>
+              </Card>
+            </Col>
+
+            {/* 待发料料单 */}
+            <Col span={8}>
+              <Card
+                title={
+                  <span>
+                    <ArrowUpOutlined style={{ marginRight: 8 }} />
+                    待发料料单
+                    <Tag style={{ marginLeft: 8 }} color="green">{pendingLists.pending_issues.length}</Tag>
+                  </span>
+                }
+                style={{ height: 400 }}
+                styles={{ body: { padding: 0, height: 'calc(100% - 57px)', overflow: 'hidden' } }}
+              >
+                <div className="dashboard-scroll-inner" style={{ height: '100%', overflowY: 'auto' }}>
+                  <Table
+                    dataSource={pendingLists.pending_issues}
+                    columns={issueColumns}
+                    rowKey="id"
+                    pagination={false}
+                    size="small"
+                    locale={{ emptyText: '暂无待发料料单' }}
+                  />
                 </div>
               </Card>
             </Col>

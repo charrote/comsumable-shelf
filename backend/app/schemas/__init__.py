@@ -34,6 +34,7 @@ class MaterialCreate(BaseModel):
     category_id: Optional[int] = None
     qty_per_pallet: Optional[float] = None
     barcode_pattern: Optional[str] = None
+    supplier_code: Optional[str] = None
     active: Optional[int] = None
 
 
@@ -45,6 +46,7 @@ class MaterialUpdate(BaseModel):
     category_id: Optional[int] = None
     qty_per_pallet: Optional[float] = None
     barcode_pattern: Optional[str] = None
+    supplier_code: Optional[str] = None
     active: Optional[int] = None
 
 
@@ -57,6 +59,7 @@ class MaterialResponse(BaseModel):
     qty_per_pallet: Optional[float] = None
     category: Optional[str] = None
     stock_balance: Optional[float] = None
+    supplier_code: Optional[str] = None
     active: int = 1
 
 
@@ -65,6 +68,33 @@ class MaterialUploadResponse(BaseModel):
     imported: int = 0
     skipped: int = 0
     categories_created: int = 0
+
+
+# ---------- Supplier ----------
+class SupplierCreate(BaseModel):
+    code: str
+    name: str
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+class SupplierUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+class SupplierResponse(BaseModel):
+    id: int
+    code: str
+    name: str
+    contact_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    address: Optional[str] = None
+    active: int = 1
 
 
 # ---------- Customer Material Mapping ----------

@@ -11,6 +11,7 @@ import { XrManagePage } from './pages/XrManagePage'
 import { BOMPage } from './pages/BOMPage'
 import { BomDetailPage } from './pages/BomDetailPage'
 import { CustomerPage } from './pages/CustomerPage'
+import { SupplierPage } from './pages/SupplierPage'
 import { ReportPage } from './pages/ReportPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { UserManagementPage } from './pages/UserManagementPage'
@@ -43,6 +44,7 @@ export default function App() {
                 <Route path="bom" element={<BOMPage />} />
                 <Route path="bom/:bomId" element={<BomDetailPage />} />
                 <Route path="customers" element={<CustomerPage />} />
+                <Route path="suppliers" element={<SupplierPage />} />
                 <Route path="report" element={<ReportPage />} />
                 <Route path="settings" element={<SystemSettingsPage />} />
                 <Route path="barcode-definitions" element={<BarcodeDefinitionPage />} />

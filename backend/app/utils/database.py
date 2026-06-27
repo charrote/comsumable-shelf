@@ -50,6 +50,29 @@ async def init_db():
     from app.models import Base  # noqa: F401
 
     async with engine.begin() as conn:
+        # ── Cleanup broken table state from previous failed runs ──
+        # DDL rollback in PostgreSQL removes tables but NOT sequences.
+        # A previous init_db() that failed mid-transaction could leave the
+        # `suppliers` table in a broken state (exists but missing the default
+        # sequence on the id column).  Detect this and drop the broken table
+        # so create_all() can rebuild it correctly.
+        # This is a no-op on a healthy database or a clean install.
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'suppliers' AND relkind = 'r')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM pg_depend d
+                       JOIN pg_class c ON c.oid = d.objid
+                       WHERE d.refobjid = (
+                           SELECT oid FROM pg_class WHERE relname = 'suppliers' AND relkind = 'r'
+                       ) AND c.relname = 'suppliers_id_seq'
+                   )
+                THEN
+                    DROP TABLE IF EXISTS suppliers CASCADE;
+                END IF;
+            END $$;
+        """))
+
         await conn.run_sync(
             lambda sync_session: Base.metadata.create_all(
                 sync_session, checkfirst=True
@@ -278,21 +301,26 @@ async def init_db():
         """))
 
         # -- Migration: add assigned_color to issue_order --
-        try:
-            await conn.execute(text(
-                "ALTER TABLE issue_order ADD COLUMN assigned_color VARCHAR(50)"
-            ))
-        except Exception:
-            # Column might already exist (PostgreSQL: use IF NOT EXISTS)
-            try:
-                await conn.execute(text("""
-                    DO $$ BEGIN
-                        ALTER TABLE issue_order ADD COLUMN IF NOT EXISTS assigned_color VARCHAR(50);
-                    EXCEPTION WHEN duplicate_column THEN NULL;
-                    END $$;
-                """))
-            except Exception:
-                pass  # Column already exists, ignore
+        # NOTE: Must use DO $$ ... $$ block with IF NOT EXISTS from the start,
+        # because a bare ALTER TABLE that fails will abort the entire transaction,
+        # causing all subsequent migrations to fail with InFailedSQLTransactionError.
+        await conn.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE issue_order ADD COLUMN IF NOT EXISTS assigned_color VARCHAR(50);
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+        """))
+
+        # Migration: add supplier_code to material_master
+        await conn.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE material_master ADD COLUMN IF NOT EXISTS supplier_code VARCHAR(100);
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+        """))
+
+        # Note: suppliers table is auto-created by Base.metadata.create_all()
+        # via the Supplier model, so no raw CREATE TABLE is needed here.
 
 
 async def seed_db():

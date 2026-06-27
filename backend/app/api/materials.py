@@ -35,11 +35,11 @@ async def download_material_template():
     wb = Workbook()
     ws = wb.active
     ws.title = "物料主数据模板"
-    headers = ["料号", "品名", "规格", "单位", "类别"]
+    headers = ["料号", "品名", "规格", "单位", "类别", "供应商代码"]
     ws.append(headers)
-    ws.append(["MAT-001", "贴片电阻", "100Ω,1/16W,J,0402,卷带", "PCS", "贴片电阻"])
-    ws.append(["MAT-002", "贴片电容", "100nF,16V,K,X7R,0402,卷带", "PCS", "贴片电容"])
-    widths = [22, 18, 40, 10, 15]
+    ws.append(["MAT-001", "贴片电阻", "100Ω,1/16W,J,0402,卷带", "PCS", "贴片电阻", "SUP-001"])
+    ws.append(["MAT-002", "贴片电容", "100nF,16V,K,X7R,0402,卷带", "PCS", "贴片电容", ""])
+    widths = [22, 18, 40, 10, 15, 15]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
     buf = io.BytesIO()
@@ -116,6 +116,7 @@ async def upload_materials(
         spec = str(row[2] or "").strip()
         unit = str(row[3] or "PCS").strip() if len(row) > 3 else "PCS"
         category_name = str(row[4] or "").strip() if len(row) > 4 else ""
+        supplier_code = str(row[5] or "").strip() if len(row) > 5 else ""
 
         if not raw_code or not name:
             continue
@@ -147,6 +148,7 @@ async def upload_materials(
                 existing_mat.name = name
                 existing_mat.spec = spec
                 existing_mat.unit = unit
+                existing_mat.supplier_code = supplier_code or existing_mat.supplier_code
                 if category_id is not None:
                     existing_mat.category_id = category_id
                 imported += 1
@@ -185,6 +187,7 @@ async def upload_materials(
             spec=spec,
             unit=unit,
             category_id=category_id,
+            supplier_code=supplier_code or None,
             active=1,
         )
         db.add(mat)
@@ -253,6 +256,7 @@ async def list_materials(
             MaterialResponse(
                 id=m.id, code=m.code, name=m.name,
                 spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
+                supplier_code=m.supplier_code,
                 active=m.active,
             ) for m in materials
         ],
@@ -276,7 +280,8 @@ async def create_material(
         code=data.code, name=data.name, spec=data.spec,
         unit=data.unit or "个",
         category_id=data.category_id, qty_per_pallet=data.qty_per_pallet,
-        barcode_pattern=data.barcode_pattern, active=1,
+        barcode_pattern=data.barcode_pattern,
+        supplier_code=data.supplier_code, active=1,
         customer_id=1,
     )
     db.add(material)
@@ -286,6 +291,7 @@ async def create_material(
         id=material.id, code=material.code, name=material.name,
         spec=material.spec, unit=material.unit,
         qty_per_pallet=material.qty_per_pallet,
+        supplier_code=material.supplier_code,
         active=material.active,
     )
 
@@ -468,6 +474,7 @@ async def get_material(
     return MaterialResponse(
         id=m.id, code=m.code, name=m.name,
         spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
+        supplier_code=m.supplier_code,
         active=m.active,
     )
 
@@ -498,6 +505,8 @@ async def update_material(
         m.qty_per_pallet = data.qty_per_pallet
     if data.barcode_pattern is not None:
         m.barcode_pattern = data.barcode_pattern
+    if data.supplier_code is not None:
+        m.supplier_code = data.supplier_code
     if data.active is not None:
         m.active = data.active
     await db.commit()
@@ -505,6 +514,7 @@ async def update_material(
     return MaterialResponse(
         id=m.id, code=m.code, name=m.name,
         spec=m.spec, unit=m.unit, qty_per_pallet=m.qty_per_pallet,
+        supplier_code=m.supplier_code,
         active=m.active,
     )
 
@@ -691,6 +701,8 @@ async def batch_update_materials(
             m.category_id = fields["category_id"]
         if "qty_per_pallet" in fields:
             m.qty_per_pallet = fields["qty_per_pallet"]
+        if "supplier_code" in fields:
+            m.supplier_code = fields["supplier_code"]
     await db.commit()
     return {"status": "ok", "message": f"已批量更新 {len(materials)} 个物料", "count": len(materials)}
 

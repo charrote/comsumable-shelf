@@ -7,6 +7,7 @@ import {
   getCustomersApi, getMappingsApi, createMappingApi, updateMappingApi, deleteMappingApi,
   uploadMaterialsApi, downloadMaterialTemplateApi,
   batchDeleteMaterialsApi, batchDeleteMaterialsPermanentlyApi, batchUpdateMaterialsApi,
+  getSuppliersApi,
 } from '../api'
 
 const { Option } = Select
@@ -41,6 +42,9 @@ export function MaterialManagementPage() {
 
   // ── Customers ──
   const [customers, setCustomers] = useState<any[]>([])
+
+  // ── Suppliers ──
+  const [suppliers, setSuppliers] = useState<any[]>([])
 
   // ── Pagination state ──
   const [currentPage, setCurrentPage] = useState(1)
@@ -100,6 +104,7 @@ export function MaterialManagementPage() {
 
   useEffect(() => {
     getCustomersApi().then(res => setCustomers(Array.isArray(res.data) ? res.data : [])).catch(() => {})
+    getSuppliersApi().then(res => setSuppliers(Array.isArray(res.data) ? res.data : [])).catch(() => {})
   }, [])
 
   // ── Load mappings ──
@@ -394,6 +399,7 @@ export function MaterialManagementPage() {
     { title: '规格', dataIndex: 'spec', key: 'spec', width: 200 },
     { title: '单位', dataIndex: 'unit', key: 'unit', width: 60 },
     { title: '单位数量', dataIndex: 'qty_per_pallet', key: 'qty_per_pallet', width: 100 },
+    { title: '供应商代码', dataIndex: 'supplier_code', key: 'supplier_code', width: 120 },
     { title: '库存', dataIndex: 'stock_balance', key: 'stock_balance', width: 100 },
     {
       title: '状态', dataIndex: 'active', key: 'active', width: 80,
@@ -554,6 +560,20 @@ export function MaterialManagementPage() {
           <Form.Item name="barcode_pattern" label="条码规则">
             <Input placeholder="正则表达式匹配条码" />
           </Form.Item>
+          <Form.Item name="supplier_code" label="供应商代码">
+            <Select
+              placeholder="选择供应商"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+            >
+              {suppliers.map((s: any) => (
+                <Option key={s.code} value={s.code} label={`${s.code} - ${s.name}`}>
+                  {s.code} - {s.name}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
           {editingRecord && (
             <Form.Item name="active" label="状态" valuePropName="checked">
               <Switch
@@ -659,6 +679,20 @@ export function MaterialManagementPage() {
           </Form.Item>
           <Form.Item name="category_id" label="类别ID">
             <Input type="number" placeholder="留空则不更新此项" />
+          </Form.Item>
+          <Form.Item name="supplier_code" label="供应商代码">
+            <Select
+              placeholder="留空则不更新此项"
+              allowClear
+              showSearch
+              optionFilterProp="label"
+            >
+              {suppliers.map((s: any) => (
+                <Option key={s.code} value={s.code} label={`${s.code} - ${s.name}`}>
+                  {s.code} - {s.name}
+                </Option>
+              ))}
+            </Select>
           </Form.Item>
         </Form>
       </Modal>

@@ -70,10 +70,19 @@ export function ShelfManagementPage() {
   const handleDelete = async (id: number) => {
     try {
       await deleteShelfApi(id)
-      message.success('料架已禁用')
+      message.success('料架已永久删除')
       loadData()
-    } catch {
-      message.error('禁用料架失败')
+    } catch (e: any) {
+      const detail = e.response?.data?.detail || e.message || '删除失败'
+      if (e.response?.status === 409) {
+        Modal.warning({
+          title: '无法删除料架',
+          content: <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{detail}</pre>,
+          okText: '确定',
+        })
+      } else {
+        message.error('删除料架失败: ' + detail)
+      }
     }
   }
 
@@ -157,6 +166,7 @@ export function ShelfManagementPage() {
       await deleteSlotApi(selectedShelf.id, slotId)
       message.success('储位已删除')
       await loadSlots(selectedShelf)
+      loadData() // 刷新料架列表的储位数数据
     } catch {
       message.error('删除储位失败')
     }
@@ -190,7 +200,7 @@ export function ShelfManagementPage() {
             灯测试
           </Button>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)} />
-          <Popconfirm title="确认禁用该料架？" onConfirm={() => handleDelete(record.id)}>
+          <Popconfirm title="确认永久删除该料架？" onConfirm={() => handleDelete(record.id)}>
             <Button type="link" size="small" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>

@@ -19,6 +19,7 @@ from app.api.materials import router as materials_router
 from app.api.users import router as users_router
 from app.api.settings import router as settings_router
 from app.api.customers import router as customers_router
+from app.api.suppliers import router as suppliers_router
 
 from app.api.dashboard import router as dashboard_router
 from app.api.shelving import router as shelving_router
@@ -114,6 +115,7 @@ app.include_router(materials_router, prefix=settings.API_PREFIX)
 app.include_router(users_router, prefix=settings.API_PREFIX)
 app.include_router(settings_router, prefix=settings.API_PREFIX)
 app.include_router(customers_router, prefix=settings.API_PREFIX)
+app.include_router(suppliers_router, prefix=settings.API_PREFIX)
 app.include_router(dashboard_router, prefix=settings.API_PREFIX)
 app.include_router(shelving_router, prefix=settings.API_PREFIX)
 app.include_router(barcode_definition_router, prefix=settings.API_PREFIX)

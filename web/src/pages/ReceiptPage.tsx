@@ -222,7 +222,7 @@ export function ReceiptPage() {
         const reelCode = data.reel_code || `REEL#${data.reel_id}`
         message.success(`入库成功！${reelCode}`)
 
-        // ── Add to scanned list (keep modal open for multi-item) ──
+        // Add to scanned list (keep modal open for multi-item)
         setScannedItems(prev => [{
           id: data.reel_id,
           reel_id: data.reel_id,
@@ -235,7 +235,10 @@ export function ReceiptPage() {
           message: data.message,
         }, ...prev])
 
-        // ── Save barcode mapping if user modified the result ──
+        // 扫码入库成功后刷新收料列表，以更新物料数
+        loadReceipts()
+
+        // Save barcode mapping if user modified the result
         if (userModified && data.material_id && previewData) {
           const origCode = previewData.material_code || barcode
           const mappedId = data.material_id

@@ -1,7 +1,7 @@
 """Shelf management API routes — CRUD + smart shelf operations."""
 
 from typing import Optional, List
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.schemas import (
@@ -10,7 +10,7 @@ from app.schemas import (
 )
 from app.services.rack_api_client import RackApiClient, get_rack_api_config
 from app.utils.database import get_db
-from app.models import Shelf, ShelfSlot
+from app.models import Shelf, ShelfSlot, ShelfSlotEvent, InventoryReel
 
 router = APIRouter(prefix="/shelves", tags=["Shelf Management"])
 
@@ -171,10 +171,108 @@ async def delete_shelf(
     shelf_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    shelf = await _get_shelf_or_404(shelf_id, db)
-    shelf.active = 0
+    """Permanently delete a shelf (hard delete).
+
+    - Cascades: shelf_slot_events → shelf_slots → shelf
+    - If any inventory_reels or other business records reference the shelf's slots,
+      returns HTTP 409 with detailed message (same pattern as material master delete).
+    """
+    result = await db.execute(select(Shelf).where(Shelf.id == shelf_id))
+    shelf = result.scalar_one_or_none()
+    if not shelf:
+        raise HTTPException(status_code=404, detail="料架不存在")
+
+    # Collect all slot IDs belonging to this shelf
+    slots_result = await db.execute(
+        select(ShelfSlot.id).where(ShelfSlot.shelf_id == shelf_id)
+    )
+    slot_ids = [row[0] for row in slots_result.all()]
+
+    # ── Check FK references ──────────────────────────────────────────
+    ref_tables: list[tuple[str, str, str]] = [
+        ("inventory_reels", "shelf_slot_id", "库存记录"),
+    ]
+
+    # Dynamically discover additional FK references from PostgreSQL catalog
+    fk_discovery_sql = text("""
+        SELECT
+            pgc.conrelid::regclass::text AS ref_table,
+            a.attname AS ref_column,
+            pgc.conname AS constraint_name
+        FROM pg_constraint pgc
+        JOIN pg_attribute a
+            ON a.attnum = ANY(pgc.conkey)
+            AND a.attrelid = pgc.conrelid
+        WHERE pgc.contype = 'f'
+          AND pgc.conrelid::regclass::text != 'shelves'
+          AND pgc.confrelid::regclass::text = 'shelves'
+          AND pgc.conkey[1] = a.attnum
+    """)
+    try:
+        fk_result = await db.execute(fk_discovery_sql)
+        fk_rows = fk_result.fetchall()
+        for row in fk_rows:
+            ref_table = row[0]
+            ref_column = row[1]
+            constraint_name = row[2]
+            if not any(r[0] == ref_table for r in ref_tables):
+                ref_tables.append(
+                    (ref_table, ref_column, f"外键约束:{constraint_name}")
+                )
+    except Exception:
+        pass
+
+    referenced_by = []
+
+    if slot_ids:
+        for table, fk_column, label in ref_tables:
+            try:
+                count_result = await db.execute(
+                    text(
+                        f"SELECT COUNT(*) FROM {table} WHERE {fk_column} = ANY(:slot_ids)"
+                    ),
+                    {"slot_ids": slot_ids},
+                )
+                count = count_result.scalar()
+                if count and count > 0:
+                    referenced_by.append(f"{label}({count}条)")
+            except Exception:
+                pass
+
+        # Also check references that point directly to shelves (e.g. led_commands.shelf_id)
+        try:
+            led_count = await db.execute(
+                text("SELECT COUNT(*) FROM led_commands WHERE shelf_id = :sid"),
+                {"sid": shelf_id},
+            )
+            led_val = led_count.scalar() or 0
+            if led_val > 0:
+                referenced_by.append(f"控灯指令({led_val}条)")
+        except Exception:
+            pass
+
+    if referenced_by:
+        ref_detail = "、".join(referenced_by)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"料架 '{shelf.code}' 无法删除，已被以下模块引用：{ref_detail}。"
+                f"请先清理相关引用记录后再试。"
+            ),
+        )
+
+    # ── Cascade delete: events → slots → shelf ──────────────────────
+    if slot_ids:
+        await db.execute(
+            delete(ShelfSlotEvent).where(ShelfSlotEvent.shelf_slot_id.in_(slot_ids))
+        )
+        await db.execute(
+            delete(ShelfSlot).where(ShelfSlot.shelf_id == shelf_id)
+        )
+
+    await db.execute(delete(Shelf).where(Shelf.id == shelf_id))
     await db.commit()
-    return {"status": "ok", "message": "料架已禁用"}
+    return {"status": "ok", "message": f"料架 '{shelf.code}' 已永久删除"}
 
 
 # ── 储位管理 ──────────────────────────────────────────────────────────

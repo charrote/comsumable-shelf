@@ -45,6 +45,7 @@ const menuItems = [
       { key: '/barcode-definitions', label: '条码定义' },
       { key: '/users', label: '用户管理' },
       { key: '/customers', label: '客户管理' },
+      { key: '/suppliers', label: '供应商管理' },
       { key: '/app-download', icon: <DownloadOutlined />, label: 'PDA下载' },
       { key: '/backup', icon: <CloudUploadOutlined />, label: '数据备份' },
       { key: '/light-debug', icon: <BugOutlined />, label: '灯控调试' },

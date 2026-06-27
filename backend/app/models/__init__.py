@@ -61,6 +61,7 @@ class MaterialMaster(Base):
     unit = Column(String, default="盘")
     qty_per_pallet = Column(Float)
     barcode_pattern = Column(String)
+    supplier_code = Column(String, comment="供应商代码")
     active = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -505,6 +506,20 @@ class DataBackup(Base):
     error_message = Column(String, default="", comment="失败时的错误信息")
     operator = Column(String, default="", comment="操作人")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Supplier(Base):
+    __tablename__ = "suppliers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, unique=True, nullable=False, index=True, comment="供应商编码")
+    name = Column(String, nullable=False, comment="供应商名称")
+    contact_name = Column(String, comment="联系人")
+    contact_phone = Column(String, comment="联系电话")
+    address = Column(String, comment="地址")
+    active = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class User(Base):
