@@ -13,7 +13,7 @@ const { Title, Text, Paragraph } = Typography
 
 const APP_VERSION = '3.0.0'
 const BUILD_NUMBER = 'release-20260627'
-const APK_PATH = '/apk/app-release.apk'
+const APK_PATH = `/apk/smes-pda.${APP_VERSION}.apk`
 
 export function AppDownloadPage() {
   const appName = getAppName()
@@ -83,7 +83,7 @@ export function AppDownloadPage() {
                 size="large"
                 icon={<DownloadOutlined />}
                 href={APK_PATH}
-                download
+                download={`smes-pda.${APP_VERSION}.apk`}
                 block
                 style={{ height: 48, fontSize: 16, borderRadius: 8 }}
               >
