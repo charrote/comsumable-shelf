@@ -182,6 +182,8 @@ export function AppDownloadPage() {
         </Divider>
         <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
           <li>全版本号升级至 3.0.0：统一 PDA 端首页/设置页/登录页版本号显示</li>
+          <li>智能料架更换底层硬件通信协议改为 HTTP REST API（JSON/UTF-8） 控灯</li>
+          <li>重构入料上架、料盘下架、新灯控联动逻辑；增加料架回调；增加灯控调试与灯控管理</li>
           <li>出库策略管理移至 Web 管理端：移动端不再允许修改出库策略，由后台统一控制</li>
           <li>登录页新增版本号显示：登录页底部显示当前版本信息</li>
           <li>修复出库策略不生效：FIFO 计算时正确传入用户在设置页选择的策略参数</li>
