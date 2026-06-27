@@ -21,8 +21,8 @@ dist/
 .DS_Store
 Thumbs.db
 
-# Scripts (local utilities, not shipped)
-script/
+# Docs
+/docs/
 
 # Build
 *.db
