@@ -91,7 +91,7 @@ export function AppDownloadPage() {
               </Button>
               <Alert
                 message="正式发布版本"
-                description="此版本为 Release 构建，已连接正式服务器，适用于生产环境。首次登录请在服务器地址栏填写：http://101.34.63.68:8080/api"
+                description="首次使用请设置正确的生产服务器地址"
                 type="success"
                 showIcon
                 style={{ borderRadius: 8 }}
