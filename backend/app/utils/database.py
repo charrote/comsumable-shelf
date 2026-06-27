@@ -10,6 +10,9 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from app.config import settings
+import structlog
+
+logger = structlog.get_logger()
 
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -52,6 +55,23 @@ async def init_db():
                 sync_session, checkfirst=True
             )
         )
+
+        # ── Safety check: verify core tables actually exist ──
+        # (handle stale volumes where checkfirst=True incorrectly skips creation)
+        core_tables = ["users", "customers", "material_master"]
+        for tbl in core_tables:
+            result = await conn.execute(
+                text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{tbl}')")
+            )
+            if not result.scalar():
+                logger.warning(f"Core table '{tbl}' missing after create_all — force-creating")
+                # Re-run create_all without checkfirst for this specific case
+                await conn.run_sync(
+                    lambda sync_session: Base.metadata.create_all(
+                        sync_session, checkfirst=False, tables=[Base.metadata.tables[tbl]]
+                    )
+                )
+
         # Migration: add batch_no / date_code columns if not exist
         for table, column, col_type in [
             ("inventory_reels", "batch_no", "VARCHAR(100)"),
