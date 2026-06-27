@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Table, Input, Space, Tag, Select, Spin, message, Button, Modal, Form, InputNumber } from 'antd'
+import { Table, Input, Space, Tag, Select, Spin, message, Button, Modal } from 'antd'
 import { SearchOutlined, ExportOutlined } from '@ant-design/icons'
 import { getInventoryApi, directOutboundApi, getCustomersApi, exportInventoryApi } from '../api'
 
@@ -24,6 +24,7 @@ const statusColors: Record<string, string> = {
   in_use: 'blue',
   tracking: 'orange',
   exhausted: 'red',
+  ready_restock: 'purple',
 }
 
 const statusLabels: Record<string, string> = {
@@ -32,6 +33,7 @@ const statusLabels: Record<string, string> = {
   in_use: '使用中',
   tracking: '跟踪中',
   exhausted: '已耗尽',
+  ready_restock: '待退库',
 }
 
 const allStatusOptions = Object.keys(statusLabels).map(key => ({
@@ -49,10 +51,9 @@ export function InventoryPage() {
   const [total, setTotal] = useState(0)
   const [exporting, setExporting] = useState(false)
 
-  // ── Direct outbound modal ──
+  // ── Direct outbound modal (whole-reel mode) ──
   const [directModalVisible, setDirectModalVisible] = useState(false)
   const [directTarget, setDirectTarget] = useState<InventoryItem | null>(null)
-  const [directQty, setDirectQty] = useState<number>(1)
   const [directLoading, setDirectLoading] = useState(false)
 
   useEffect(() => {
@@ -102,22 +103,16 @@ export function InventoryPage() {
   // ── Open direct outbound modal ──
   const handleOpenDirect = (item: InventoryItem) => {
     setDirectTarget(item)
-    setDirectQty(item.quantity)
     setDirectModalVisible(true)
   }
 
-  // ── Confirm direct outbound ──
+  // ── Confirm direct outbound (whole-reel) ──
   const handleConfirmDirect = async () => {
     if (!directTarget) return
-    if (directQty <= 0 || directQty > directTarget.quantity) {
-      message.warning(`出库数量须在 1 ~ ${directTarget.quantity} 之间`)
-      return
-    }
     setDirectLoading(true)
     try {
       const palletId = Number(directTarget.reel_id)
       const res = await directOutboundApi(palletId, {
-        quantity: directQty,
         operator: 'web',
         release_slot: true,
       })
@@ -233,7 +228,7 @@ export function InventoryPage() {
           pagination={{ pageSize: 20, total }}
         />
 
-        {/* ── Direct Outbound Confirmation Modal ── */}
+        {/* ── Direct Outbound Confirmation Modal (whole-reel mode) ── */}
         <Modal
           title={
             <Space>
@@ -247,37 +242,20 @@ export function InventoryPage() {
             setDirectModalVisible(false)
             setDirectTarget(null)
           }}
-          okText="确认出库"
+          okText="确认出库（整盘）"
           cancelText="取消"
           confirmLoading={directLoading}
           okButtonProps={{ danger: true }}
         >
           {directTarget && (
-            <Form layout="vertical">
-              <p>
-                <strong>盘号：</strong>{directTarget.reel_code}
+            <div style={{ padding: '8px 0' }}>
+              <p><strong>盘号：</strong>{directTarget.reel_code}</p>
+              <p><strong>物料：</strong>{directTarget.material_code}</p>
+              <p><strong>数量：</strong>{directTarget.quantity}</p>
+              <p style={{ color: '#faad14', marginTop: 16 }}>
+                ⚠️ 出库将以整盘为单位，该盘将被标记为<strong>已耗尽</strong>，储位将释放。
               </p>
-              <p>
-                <strong>物料：</strong>{directTarget.material_code}
-              </p>
-              <p>
-                <strong>当前库存：</strong>{directTarget.quantity}
-              </p>
-              <Form.Item label="出库数量" required>
-                <InputNumber
-                  min={1}
-                  max={directTarget.quantity}
-                  value={directQty}
-                  onChange={(val) => setDirectQty(val || 0)}
-                  style={{ width: '100%' }}
-                />
-              </Form.Item>
-              {directQty === directTarget.quantity && (
-                <p style={{ color: '#faad14' }}>
-                  出库数量等于库存，该盘将被标记为<strong>已耗尽</strong>，储位将释放。
-                </p>
-              )}
-            </Form>
+            </div>
           )}
         </Modal>
       </div>

@@ -3,48 +3,46 @@ import {
   View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity,
   TextInput, RefreshControl,
 } from 'react-native'
-import { getTrackingInventoryApi, getInventoryApi, getMaterialsApi } from '../api'
-import type { TrackingReelResponse, ReelInfo, MaterialResponse } from '../types/api'
-import { CheckCircleIcon, ClockIcon } from '../components/Icons'
+import { getInventoryApi } from '../api'
+import type { ReelInfo } from '../types/api'
 
 const Colors = {
   primary: '#0066CC', success: '#00AA55', warning: '#FF9900', danger: '#DD3333',
   info: '#3399CC', card: '#FFFFFF', bg: '#F5F7FA', text: '#1A1A1A', textSecondary: '#666666',
 }
 
-type Tab = 'tracking' | 'onshelf'
+type Tab = 'pending' | 'onshelf'
 
 export default function TrackingScreen() {
-  const [tab, setTab] = useState<Tab>('tracking')
-  const [trackingList, setTrackingList] = useState<TrackingReelResponse[]>([])
-  const [onShelfList, setOnShelfList] = useState<ReelInfo[]>([])
+  const [tab, setTab] = useState<Tab>('pending')
+  const [allReels, setAllReels] = useState<ReelInfo[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState('')
-  const [materials, setMaterials] = useState<MaterialResponse[]>([])
 
-  const loadTracking = useCallback(async () => {
-    try {
-      const res = await getTrackingInventoryApi()
-      setTrackingList(res.pallets || [])
-    } catch {
-      // ignore
-    }
-  }, [])
+  // Status 中文映射
+  const statusLabels: Record<string, string> = {
+    pending_shelving: '待上架',
+    on_shelf: '在架',
+    in_use: '使用中',
+    tracking: '跟踪中',
+    exhausted: '已耗尽',
+    ready_restock: '待退库',
+  }
 
-  const loadOnShelf = useCallback(async () => {
+  const statusColorsMap: Record<string, string> = {
+    pending_shelving: Colors.warning,
+    on_shelf: Colors.success,
+    in_use: Colors.info,
+    tracking: Colors.warning,
+    exhausted: Colors.danger,
+    ready_restock: '#9B59B6',
+  }
+
+  const loadAll = useCallback(async () => {
     try {
       const res = await getInventoryApi()
-      setOnShelfList(res.pallets || [])
-    } catch {
-      // ignore
-    }
-  }, [])
-
-  const loadMaterials = useCallback(async () => {
-    try {
-      const res = await getMaterialsApi()
-      setMaterials(Array.isArray(res) ? res : [])
+      setAllReels(res.pallets || [])
     } catch {
       // ignore
     }
@@ -52,47 +50,46 @@ export default function TrackingScreen() {
 
   useEffect(() => {
     setIsLoading(true)
-    Promise.all([loadTracking(), loadMaterials()]).finally(() => setIsLoading(false))
-  }, [loadTracking, loadMaterials])
-
-  useEffect(() => {
-    if (tab === 'onshelf') {
-      setIsLoading(true)
-      loadOnShelf().finally(() => setIsLoading(false))
-    }
-  }, [tab, loadOnShelf])
+    loadAll().finally(() => setIsLoading(false))
+  }, [loadAll])
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true)
-    if (tab === 'tracking') {
-      await loadTracking()
-    } else {
-      await loadOnShelf()
-    }
+    await loadAll()
     setRefreshing(false)
-  }, [tab, loadTracking, loadOnShelf])
+  }, [loadAll])
 
-  // Filter on-shelf items by search keyword
-  const filteredOnShelf = searchKeyword
-    ? onShelfList.filter(item =>
-        item.material_code?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-        item.shelf_code?.toLowerCase().includes(searchKeyword.toLowerCase())
-      )
-    : onShelfList
+  // ── 按 Tab 过滤 ──
+  const pendingList = allReels.filter(r => r.status === 'pending_shelving')
+  const onshelfList = allReels.filter(r => r.status === 'on_shelf')
 
-  // Summary
-  const totalOnShelf = onShelfList.filter(r => r.status === 'on_shelf').length
-  const totalQty = onShelfList.reduce((sum, r) => sum + (r.quantity || 0), 0)
-  const exhaustedCount = onShelfList.filter(r => r.status === 'exhausted').length
+  // 搜索过滤
+  const filterByKeyword = (list: ReelInfo[]) =>
+    searchKeyword
+      ? list.filter(item =>
+          item.material_code?.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+          item.shelf_code?.toLowerCase().includes(searchKeyword.toLowerCase())
+        )
+      : list
+
+  const currentList = tab === 'pending'
+    ? filterByKeyword(pendingList)
+    : filterByKeyword(onshelfList)
+
+  // 统计
+  const pendingCount = pendingList.length
+  const onshelfCount = onshelfList.length
+  const physicalInventory = pendingCount + onshelfCount
+  const totalQty = allReels.reduce((sum, r) => sum + (r.quantity || 0), 0)
 
   const renderTabBar = () => (
     <View style={styles.tabBar}>
       <TouchableOpacity
-        style={[styles.tab, tab === 'tracking' && styles.tabActive]}
-        onPress={() => setTab('tracking')}
+        style={[styles.tab, tab === 'pending' && styles.tabActive]}
+        onPress={() => setTab('pending')}
       >
-        <Text style={[styles.tabText, tab === 'tracking' && styles.tabTextActive]}>
-          跟踪中 ({trackingList.length})
+        <Text style={[styles.tabText, tab === 'pending' && styles.tabTextActive]}>
+          待上架 ({pendingCount})
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
@@ -100,13 +97,11 @@ export default function TrackingScreen() {
         onPress={() => setTab('onshelf')}
       >
         <Text style={[styles.tabText, tab === 'onshelf' && styles.tabTextActive]}>
-          在库 ({totalOnShelf})
+          在库 ({onshelfCount})
         </Text>
       </TouchableOpacity>
     </View>
   )
-
-  const data = tab === 'tracking' ? trackingList : filteredOnShelf
 
   return (
     <View style={styles.container}>
@@ -125,12 +120,19 @@ export default function TrackingScreen() {
 
       {renderTabBar()}
 
-      {/* Summary for on-shelf */}
-      {tab === 'onshelf' && onShelfList.length > 0 && (
+      {/* Summary bar */}
+      {allReels.length > 0 && (
         <View style={styles.summaryBar}>
-          <Text style={styles.summaryText}>在库: {totalOnShelf} 盘</Text>
+          <Text style={[styles.summaryText, { color: Colors.success }]}>
+            物理在库: {physicalInventory} 盘
+          </Text>
+          <Text style={styles.summaryText}>在架 {onshelfCount}</Text>
+          {pendingCount > 0 && (
+            <Text style={[styles.summaryText, { color: Colors.warning }]}>
+              待上架 {pendingCount}
+            </Text>
+          )}
           <Text style={styles.summaryText}>总量: {totalQty}</Text>
-          <Text style={[styles.summaryText, { color: Colors.danger }]}>耗尽: {exhaustedCount}</Text>
         </View>
       )}
 
@@ -138,23 +140,22 @@ export default function TrackingScreen() {
         <ActivityIndicator style={{ marginTop: 40 }} size="large" color={Colors.primary} />
       ) : (
         <FlatList
-          data={data}
-          keyExtractor={(item) => String((item as any).reel_id)}
+          data={currentList}
+          keyExtractor={(item) => String(item.reel_id)}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={[Colors.primary]} />}
           renderItem={({ item }) => {
-            const isTracking = 'last_out_time' in item
-            const statusColor = isTracking
-              ? (item as TrackingReelResponse).xr_matched ? Colors.success : Colors.warning
-              : (item as ReelInfo).status === 'on_shelf' ? Colors.success :
-                (item as ReelInfo).status === 'exhausted' ? Colors.danger : Colors.warning
+            const itemStatus = item.status || ''
+            const statusColor = statusColorsMap[itemStatus] || Colors.warning
             return (
               <View style={styles.card}>
                 <View style={styles.cardHeader}>
                   <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
                   <Text style={styles.cardTitle}>{item.material_code}</Text>
-                  {(item as any).status && (
+                  {itemStatus && (
                     <View style={styles.statusLabel}>
-                      <Text style={[styles.statusLabelText, { color: statusColor }]}>{(item as any).status}</Text>
+                      <Text style={[styles.statusLabelText, { color: statusColor }]}>
+                        {statusLabels[itemStatus] || itemStatus}
+                      </Text>
                     </View>
                   )}
                 </View>
@@ -163,32 +164,21 @@ export default function TrackingScreen() {
                 ) : null}
                 <View style={styles.cardRow}>
                   <Text style={styles.cardBody}>数量: {item.quantity}</Text>
-                  {'shelf_code' in item && item.shelf_code ? (
+                  {item.shelf_code ? (
                     <Text style={styles.cardBody}>料架: {item.shelf_code}</Text>
-                  ) : null}
+                  ) : (
+                    <Text style={[styles.cardBody, { color: Colors.warning }]}>未上架</Text>
+                  )}
                 </View>
-                {'last_out_time' in item && item.last_out_time ? (
-                  <Text style={styles.cardSmall}>最后出库: {item.last_out_time}</Text>
-                ) : null}
-                {'first_in_time' in item && item.first_in_time ? (
+                {item.first_in_time ? (
                   <Text style={styles.cardSmall}>入库时间: {item.first_in_time}</Text>
-                ) : null}
-                {'xr_matched' in item ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 16, marginTop: 2 }}>
-                    {(item as TrackingReelResponse).xr_matched
-                      ? <CheckCircleIcon size={14} color={Colors.success} />
-                      : <ClockIcon size={14} color={Colors.warning} />}
-                    <Text style={[styles.cardSmall, { color: (item as TrackingReelResponse).xr_matched ? Colors.success : Colors.warning, marginLeft: 4 }]}>
-                      XR匹配: {(item as TrackingReelResponse).xr_matched ? '已配对' : '待配对'}
-                    </Text>
-                  </View>
                 ) : null}
               </View>
             )
           }}
           ListEmptyComponent={
             <Text style={styles.emptyText}>
-              {tab === 'tracking' ? '暂无跟踪中的物料' : '暂无在库物料'}
+              {tab === 'pending' ? '暂无待上架物料' : '暂无在库物料'}
             </Text>
           }
         />

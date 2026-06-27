@@ -138,6 +138,8 @@ export default function LoginScreen() {
           )}
         </View>
       )}
+
+      <Text style={styles.version}>版本 3.0.0</Text>
     </ScrollView>
   )
 }
@@ -165,4 +167,5 @@ const styles = StyleSheet.create({
   testResult: { textAlign: 'center', fontSize: 14, marginTop: 8 },
   testSuccess: { color: '#52c41a' },
   testFail: { color: '#ff4d4f' },
+  version: { textAlign: 'center', fontSize: 13, color: '#999', marginTop: 24 },
 })

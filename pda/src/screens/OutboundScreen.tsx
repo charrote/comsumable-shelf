@@ -42,12 +42,11 @@ export default function OutboundScreen() {
   const [pickBarcode, setPickBarcode] = useState('')
   const [pickResult, setPickResult] = useState<IssueConfirmPickResponse | null>(null)
 
-  // ── Direct Outbound Flow ──
+  // ── Direct Outbound Flow (whole-reel mode) ──
   const [directBarcode, setDirectBarcode] = useState('')
   const [directReelInfo, setDirectReelInfo] = useState<{
     reel_id: number; material_code: string; material_name?: string; quantity: number; shelf_code?: string
   } | null>(null)
-  const [directQty, setDirectQty] = useState('')
   const [directResult, setDirectResult] = useState<DirectOutResponse | null>(null)
 
   // ── BOM: Load issue orders ──
@@ -74,10 +73,27 @@ export default function OutboundScreen() {
       setAssignResult('')
       setPickResult(null)
 
-      // If already assigned/calculated, load details
-      if (issue.status === 'assigned' || issue.status === 'picking') {
-        const calcRes = await calculateIssueApi(issue.id)
-        setCalcResult(calcRes)
+      // If already assigned/picking, the details already contain reel_assignments
+      // from getIssueDetailApi — no need to re-calculate
+      if (issue.status === 'assigned') {
+        // Build a synthetic calc result from existing detail data
+        const mats = issueDetails.map(d => ({
+          material_id: d.material_id,
+          material_code: d.material_code || '',
+          material_name: d.material_name || '',
+          required_qty: d.required_qty,
+          available_qty: d.assigned_qty || 0,
+          strategy: 'cached',
+          reels_selected: (d.reel_assignments || []).map(ra => ({
+            reel_id: ra.reel_id,
+            quantity: ra.pick_quantity,
+            last_in_time: new Date().toISOString(),
+            shelf_slot_id: ra.shelf_slot_id || 0,
+          })),
+          total_selected: d.assigned_qty || 0,
+          shortage: d.shortage || 0,
+        }))
+        setCalcResult({ issue_order_id: issue.id, calculated_at: new Date().toISOString(), strategy_used: 'cached', materials: mats })
       }
       setStep('bom_pick')
     } catch (e: any) {
@@ -126,17 +142,9 @@ export default function OutboundScreen() {
     if (!pickBarcode.trim() || !selectedIssue || !calcResult) return
     setIsLoading(true)
     try {
-      // Find which reel to pick based on barcode (backend handles matching)
-      // Use first reel from first material as fallback
-      const firstReelId = calcResult.materials[0]?.reels_selected[0]?.reel_id
-      if (!firstReelId) {
-        Alert.alert('提示', '无可拣料的料盘，请先执行FIFO计算')
-        setIsLoading(false)
-        return
-      }
+      // 由后端通过 barcode 匹配正确的 reel，前端不再传固定 reel_id
       const res = await confirmPickApi(selectedIssue.id, {
         barcode: pickBarcode.trim(),
-        reel_id: firstReelId,
         operator,
       })
       setPickResult(res)
@@ -150,7 +158,7 @@ export default function OutboundScreen() {
     } finally {
       setIsLoading(false)
     }
-  }, [pickBarcode, selectedIssue, calcResult, operator])
+  }, [pickBarcode, selectedIssue, operator])
 
   // ── Direct Outbound: Scan Reel ──
   const handleDirectScan = useCallback(async () => {
@@ -159,7 +167,6 @@ export default function OutboundScreen() {
     try {
       const info = await scanReelForDirectOutApi(directBarcode.trim())
       setDirectReelInfo(info)
-      setDirectQty(String(info.quantity))
       setDirectResult(null)
     } catch (e: any) {
       Alert.alert('扫描失败', e?.response?.data?.detail || '未找到该料盘')
@@ -168,31 +175,23 @@ export default function OutboundScreen() {
     }
   }, [directBarcode])
 
-  // ── Direct Outbound: Confirm ──
+  // ── Direct Outbound: Confirm (whole-reel) ──
   const handleDirectConfirm = useCallback(async () => {
     if (!directReelInfo) return
-    const qty = parseFloat(directQty)
-    if (!qty || qty <= 0) {
-      Alert.alert('提示', '请输入有效出库数量')
-      return
-    }
     setIsLoading(true)
     try {
       const res = await directOutboundApi(directReelInfo.reel_id, {
-        quantity: qty,
         operator,
         release_slot: true,
       })
       setDirectResult(res)
-      if (res.status === 'ok') {
-        Alert.alert('出库成功', res.message || '直接出库完成')
-      }
+      Alert.alert('出库成功', `整盘出库完成\n盘 #${directReelInfo.reel_id}（数量 ${directReelInfo.quantity}）已全部出库`)
     } catch (e: any) {
       Alert.alert('出库失败', e?.response?.data?.detail || '请重试')
     } finally {
       setIsLoading(false)
     }
-  }, [directReelInfo, directQty, operator])
+  }, [directReelInfo, operator])
 
   // ── BOM Pick: 摄像头扫码回调 ──
   const handlePickCameraScan = useCallback((barcodeValue: string) => {
@@ -200,18 +199,11 @@ export default function OutboundScreen() {
     setShowPickScanner(false)
     // 自动触发确认出库
     setTimeout(async () => {
-      if (!barcodeValue.trim() || !selectedIssue || !calcResult) return
+      if (!barcodeValue.trim() || !selectedIssue) return
       setIsLoading(true)
       try {
-        const firstReelId = calcResult.materials[0]?.reels_selected[0]?.reel_id
-        if (!firstReelId) {
-          Alert.alert('提示', '无可拣料的料盘，请先执行FIFO计算')
-          setIsLoading(false)
-          return
-        }
         const res = await confirmPickApi(selectedIssue.id, {
           barcode: barcodeValue.trim(),
-          reel_id: firstReelId,
           operator,
         })
         setPickResult(res)
@@ -224,7 +216,7 @@ export default function OutboundScreen() {
         setIsLoading(false)
       }
     }, 100)
-  }, [selectedIssue, calcResult, operator])
+  }, [selectedIssue, operator])
 
   // ── Direct Outbound: 摄像头扫码回调 ──
   const handleDirectCameraScan = useCallback((barcodeValue: string) => {
@@ -237,7 +229,6 @@ export default function OutboundScreen() {
       try {
         const info = await scanReelForDirectOutApi(barcodeValue.trim())
         setDirectReelInfo(info)
-        setDirectQty(String(info.quantity))
         setDirectResult(null)
       } catch (e: any) {
         Alert.alert('扫描失败', e?.response?.data?.detail || '未找到该料盘')
@@ -258,7 +249,6 @@ export default function OutboundScreen() {
     setPickBarcode('')
     setDirectReelInfo(null)
     setDirectBarcode('')
-    setDirectQty('')
     setDirectResult(null)
   }
 
@@ -498,31 +488,27 @@ export default function OutboundScreen() {
 
         {directReelInfo && (
           <View style={styles.card}>
-            <Text style={styles.stepTitle}>料盘信息</Text>
+            <Text style={styles.stepTitle}>料盘信息（整盘出库）</Text>
             <View style={styles.reelInfoCard}>
               <Text style={styles.reelInfoLabel}>Reel #: {directReelInfo.reel_id}</Text>
               <Text style={styles.reelInfoText}>物料: {directReelInfo.material_code}</Text>
               <Text style={styles.reelInfoText}>{directReelInfo.material_name}</Text>
-              <Text style={styles.reelInfoText}>当前数量: {directReelInfo.quantity}</Text>
+              <Text style={styles.reelInfoText}>数量: {directReelInfo.quantity}</Text>
               {directReelInfo.shelf_code && (
                 <Text style={styles.reelInfoText}>储位: {directReelInfo.shelf_code}</Text>
               )}
             </View>
 
-            <Text style={styles.previewLabel}>出库数量</Text>
-            <TextInput
-              style={styles.input}
-              value={directQty}
-              onChangeText={setDirectQty}
-              keyboardType="numeric"
-              placeholder="输入出库数量"
-            />
+            <Text style={{ color: '#FF9900', fontSize: 14, marginBottom: 12, textAlign: 'center' }}>
+              出库以整盘为单位，确认后将整盘出库
+            </Text>
+
             <TouchableOpacity
-              style={[styles.button, styles.confirmButton, !directQty && styles.buttonDisabled]}
+              style={[styles.button, styles.confirmButton]}
               onPress={handleDirectConfirm}
-              disabled={!directQty || isLoading}
+              disabled={isLoading}
             >
-              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认出库</Text>}
+              {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>确认整盘出库</Text>}
             </TouchableOpacity>
 
               {directResult && (

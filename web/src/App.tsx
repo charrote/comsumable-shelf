@@ -15,9 +15,9 @@ import { ReportPage } from './pages/ReportPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { UserManagementPage } from './pages/UserManagementPage'
 import { AppDownloadPage } from './pages/AppDownloadPage'
-import { HardwareDebugPage } from './pages/HardwareDebugPage'
 import { BarcodeDefinitionPage } from './pages/BarcodeDefinitionPage'
 import { BackupManagePage } from './pages/BackupManagePage'
+import { LightDebugPage } from './pages/LightDebugPage'
 import { useAuthStore } from './store/authStore'
 
 export default function App() {
@@ -48,8 +48,8 @@ export default function App() {
                 <Route path="barcode-definitions" element={<BarcodeDefinitionPage />} />
                 <Route path="users" element={<UserManagementPage />} />
                 <Route path="app-download" element={<AppDownloadPage />} />
-                <Route path="hardware-debug" element={<HardwareDebugPage />} />
                 <Route path="backup" element={<BackupManagePage />} />
+                <Route path="light-debug" element={<LightDebugPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </AppLayout>

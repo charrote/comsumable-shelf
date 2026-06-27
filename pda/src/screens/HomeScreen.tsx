@@ -30,7 +30,9 @@ export default function HomeScreen() {
       setSummary({
         app_name: '智能物料管理系统',
         today_inbound: 0, today_outbound: 0, pending_issues: 0,
-        on_shelf_pallets: 0, tracking_pallets: 0, pending_receipts: 0,
+        on_shelf_pallets: 0, pending_shelving_pallets: 0,
+        physical_inventory: 0,
+        tracking_pallets: 0, pending_receipts: 0,
       })
     }
   }, [])
@@ -66,7 +68,13 @@ export default function HomeScreen() {
             </View>
             <View style={styles.summaryRow}>
               <SummaryCard title="亮灯出库" value={summary?.pending_issues ?? 0} unit="单" color={Colors.warning} />
-              <SummaryCard title="在库料盘" value={summary?.on_shelf_pallets ?? 0} unit="盘" color={Colors.success} />
+              <SummaryCard
+                title="在库料盘"
+                value={summary?.physical_inventory ?? 0}
+                unit="盘"
+                subtitle={summary ? `上架${summary.on_shelf_pallets} · 待上架${summary.pending_shelving_pallets}` : ''}
+                color={Colors.success}
+              />
             </View>
           </View>
         )}
@@ -82,14 +90,6 @@ export default function HomeScreen() {
               </Text>
             </View>
           )}
-          {(summary?.tracking_pallets ?? 0) > 0 && (
-            <View style={styles.reminderRow}>
-              <View style={[styles.reminderDot, { backgroundColor: Colors.info }]} />
-              <Text style={styles.reminderText}>
-                {summary?.tracking_pallets} 盘退库待处理
-              </Text>
-            </View>
-          )}
           {(summary?.pending_receipts ?? 0) > 0 && (
             <View style={styles.reminderRow}>
               <View style={[styles.reminderDot, { backgroundColor: Colors.primary }]} />
@@ -98,9 +98,17 @@ export default function HomeScreen() {
               </Text>
             </View>
           )}
+          {(summary?.pending_shelving_pallets ?? 0) > 0 && (
+            <View style={styles.reminderRow}>
+              <View style={[styles.reminderDot, { backgroundColor: Colors.warning }]} />
+              <Text style={styles.reminderText}>
+                {summary?.pending_shelving_pallets} 盘待上架
+              </Text>
+            </View>
+          )}
           {(summary?.pending_issues ?? 0) === 0 &&
-           (summary?.tracking_pallets ?? 0) === 0 &&
-           (summary?.pending_receipts ?? 0) === 0 && (
+           (summary?.pending_receipts ?? 0) === 0 &&
+           (summary?.pending_shelving_pallets ?? 0) === 0 && (
             <View style={styles.reminderRow}>
               <View style={[styles.reminderDot, { backgroundColor: Colors.success }]} />
               <Text style={styles.reminderText}>暂无待办事项</Text>
@@ -108,20 +116,23 @@ export default function HomeScreen() {
           )}
         </View>
 
-        <Text style={styles.version}>版本 2.0</Text>
+        <Text style={styles.version}>版本 3.0.0</Text>
       </ScrollView>
     </View>
   )
 }
 
-function SummaryCard({ title, value, unit }: {
-  title: string; value: number; unit: string
+function SummaryCard({ title, value, unit, subtitle }: {
+  title: string; value: number; unit: string; subtitle?: string
 }) {
   return (
     <View style={styles.summaryCard}>
       <Text style={styles.summaryValue}>{value}</Text>
       <Text style={styles.summaryUnit}>{title}</Text>
       <Text style={styles.summaryUnitSmall}>{unit}</Text>
+      {subtitle ? (
+        <Text style={[styles.summaryUnitSmall, { marginTop: 2, fontSize: 11 }]}>{subtitle}</Text>
+      ) : null}
     </View>
   )
 }

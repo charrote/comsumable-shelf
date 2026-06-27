@@ -4,6 +4,10 @@ Strategies:
 - tail_first: 优先出库剩余量少的盘（尾数优先）
 - time_fifo: 严格按入库时间先后顺序
 - mixed: 同尾数时按时间排序
+
+锁定规则：
+- 整盘出库（最小单位 = 1 reel，不拆盘）
+- 已锁定的 reel（有 active 的 reel_reservation）不参与计算
 """
 
 from datetime import datetime
@@ -13,7 +17,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import InventoryReel, MaterialAlternative, SystemSetting
+from app.models import InventoryReel, MaterialAlternative, SystemSetting, ReelReservation
 
 
 async def _get_db_strategy(db) -> str | None:
@@ -27,6 +31,14 @@ async def _get_db_strategy(db) -> str | None:
     return result.scalar_one_or_none()
 
 
+async def _get_reserved_reel_ids(db: AsyncSession) -> List[int]:
+    """Get all reel IDs that currently have active reservations."""
+    result = await db.execute(
+        select(ReelReservation.reel_id).where(ReelReservation.status == "active")
+    )
+    return [row[0] for row in result.all()]
+
+
 async def calculate_fifo_pallets(
     db: AsyncSession,
     material_id: int,
@@ -34,24 +46,27 @@ async def calculate_fifo_pallets(
     required_qty: float,
     strategy: str = "config",
 ) -> Dict:
-    """Calculate which inventory pallets to pick.
-    
+    """Calculate which inventory pallets to pick (whole-reel mode).
+
     Args:
         db: Database session
         material_id: Material ID to pick from
         customer_id: Customer ID for scope
         required_qty: Total quantity needed
         strategy: FIFO strategy (config | tail_first | time_fifo | mixed)
-        
+
     Returns:
-        Dict with reels_selected, total_selected, shortage, strategy_used
+        Dict with reels, total_selected, shortage, strategy_used
+        NOTE: total_selected may exceed required_qty in whole-reel mode.
     """
     if strategy == "config":
-        # Try DB setting first, fall back to env config
         db_strategy = await _get_db_strategy(db)
         strategy = db_strategy if db_strategy else settings.FIFO_STRATEGY
 
-    # Fetch all on_shelf pallets
+    # Get IDs of all currently locked reels
+    reserved_ids = await _get_reserved_reel_ids(db)
+
+    # Fetch all on_shelf pallets, excluding reserved ones
     query = (
         select(InventoryReel)
         .where(
@@ -64,6 +79,9 @@ async def calculate_fifo_pallets(
     )
     result = await db.execute(query)
     pallets = result.scalars().all()
+
+    # Filter out reserved reels
+    pallets = [p for p in pallets if p.id not in reserved_ids]
 
     if not pallets:
         return {
@@ -81,22 +99,22 @@ async def calculate_fifo_pallets(
     elif strategy == "mixed":
         pallets.sort(key=lambda p: (p.quantity, p.last_in_time))
 
-    # Greedy selection
+    # Whole-reel greedy selection (不拆盘)
     selected = []
     remaining = required_qty
 
     for pallet in pallets:
         if remaining <= 0:
             break
-        take_qty = min(pallet.quantity, remaining)
+        # 整盘出库，取一整盘
         selected.append({
             "reel_id": pallet.id,
-            "quantity": take_qty,
+            "quantity": pallet.quantity,
             "last_in_time": pallet.last_in_time,
             "shelf_slot_id": pallet.shelf_slot_id,
-            "remaining_after": pallet.quantity - take_qty,
+            "remaining_after": 0,  # 整盘取走，盘上不留
         })
-        remaining -= take_qty
+        remaining -= pallet.quantity
 
     total_selected = sum(s["quantity"] for s in selected)
     shortage = required_qty - total_selected
@@ -114,16 +132,21 @@ async def get_available_qty(
     material_id: int,
     customer_id: int,
 ) -> float:
-    """Get total available quantity for a material."""
-    result = await db.execute(
-        select(func.coalesce(func.sum(InventoryReel.quantity), 0))
-        .where(
-            InventoryReel.material_id == material_id,
-            InventoryReel.customer_id == customer_id,
-            InventoryReel.status == "on_shelf",
-            InventoryReel.quantity > 0,
-        )
+    """Get total available quantity for a material (excluding reserved reels)."""
+    reserved_ids = await _get_reserved_reel_ids(db)
+
+    query = select(func.coalesce(func.sum(InventoryReel.quantity), 0)).where(
+        InventoryReel.material_id == material_id,
+        InventoryReel.customer_id == customer_id,
+        InventoryReel.status == "on_shelf",
+        InventoryReel.quantity > 0,
     )
+
+    # 如果不为空才加排除条件
+    if reserved_ids:
+        query = query.where(InventoryReel.id.notin_(reserved_ids))
+
+    result = await db.execute(query)
     return float(result.scalar_one())
 
 

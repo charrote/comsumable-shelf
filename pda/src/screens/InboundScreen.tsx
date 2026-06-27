@@ -40,6 +40,9 @@ export default function InboundScreen() {
   const [receipts, setReceipts] = useState<ReceiptListItem[]>([])
   const [loadingList, setLoadingList] = useState(false)
 
+  // ── 手工录入历史记录 ──
+  const [history, setHistory] = useState<ReceiptScanResponse[]>([])
+
   // ── 手工录入模式 ──
   const [manualMode, setManualMode] = useState(false)
   const [manualMaterialCode, setManualMaterialCode] = useState('')

@@ -19,14 +19,17 @@ from app.api.materials import router as materials_router
 from app.api.users import router as users_router
 from app.api.settings import router as settings_router
 from app.api.customers import router as customers_router
-from app.api.hardware_debug import router as hardware_debug_router
+
 from app.api.dashboard import router as dashboard_router
 from app.api.shelving import router as shelving_router
 from app.api.barcode_definition import router as barcode_definition_router
 from app.api.transactions import router as transactions_router
 from app.api.backup import router as backup_router
+from app.api.rack_callback import router as rack_callback_router
+from app.api.ws import router as ws_router
+from app.api.light_debug import router as light_debug_router
 from app.services.led_service import LedService
-from app.services.shelf_service import SlotPollingService
+from app.services.rack_slot_poller import RackSlotPoller
 
 structlog.configure(
     processors=[
@@ -53,20 +56,21 @@ async def lifespan(app: FastAPI):
     # ── LED service ──
     led_service = LedService()
     try:
-        await led_service.init(
-            master_ip=settings.MASTER_IP,
-            port=settings.MASTER_PORT,
-        )
+        await led_service.init()
         app.state.led_service = led_service
-        logger.info("LED service started")
+        logger.info("LED service started (HTTP API mode)")
     except Exception as e:
-        logger.warning(f"LED service init failed (hardware may be offline): {e}")
+        logger.warning(f"LED service init failed: {e}")
         app.state.led_service = led_service
 
-    # ── Slot polling service (hardware sensor auto-assign) ──
-    slot_service = SlotPollingService()
-    app.state.slot_service = slot_service
-    logger.info("Slot polling service initialized (idle, start via API)")
+    # ── RackSlotPoller (智能料架 HTTP 轮询) ──
+    rack_poller = RackSlotPoller()
+    app.state.rack_poller = rack_poller
+    try:
+        await rack_poller.start()
+        logger.info("RackSlotPoller started (HTTP polling for smart shelves)")
+    except Exception as e:
+        logger.warning(f"RackSlotPoller start failed: {e}")
 
     yield
     logger.info("Shutting down ConsumableShelf backend")
@@ -76,10 +80,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"LED service shutdown error: {e}")
     try:
-        await slot_service.stop()
-        logger.info("Slot polling service stopped")
+        await rack_poller.stop()
+        logger.info("RackSlotPoller stopped")
     except Exception as e:
-        logger.warning(f"Slot polling service shutdown error: {e}")
+        logger.warning(f"RackSlotPoller stop error: {e}")
 
 
 app = FastAPI(
@@ -110,12 +114,14 @@ app.include_router(materials_router, prefix=settings.API_PREFIX)
 app.include_router(users_router, prefix=settings.API_PREFIX)
 app.include_router(settings_router, prefix=settings.API_PREFIX)
 app.include_router(customers_router, prefix=settings.API_PREFIX)
-app.include_router(hardware_debug_router, prefix=settings.API_PREFIX)
 app.include_router(dashboard_router, prefix=settings.API_PREFIX)
 app.include_router(shelving_router, prefix=settings.API_PREFIX)
 app.include_router(barcode_definition_router, prefix=settings.API_PREFIX)
 app.include_router(transactions_router, prefix=settings.API_PREFIX)
 app.include_router(backup_router, prefix=settings.API_PREFIX)
+app.include_router(rack_callback_router, prefix=settings.API_PREFIX)
+app.include_router(light_debug_router, prefix=settings.API_PREFIX)
+app.include_router(ws_router)  # WebSocket 无 prefix
 
 
 @app.get(f"{settings.API_PREFIX}/system/info")

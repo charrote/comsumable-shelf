@@ -287,6 +287,7 @@ class IssueOrderListItem(BaseModel):
     customer_id: int
     customer_name: Optional[str] = None
     status: str
+    assigned_color: Optional[str] = None
     required_date: Optional[datetime] = None
     created_at: Optional[datetime] = None
     detail_count: int = 0
@@ -302,6 +303,7 @@ class IssueOrderDetail(BaseModel):
     customer_id: int
     customer_name: Optional[str] = None
     status: str
+    assigned_color: Optional[str] = None
     required_date: Optional[datetime] = None
     created_at: Optional[datetime] = None
     details: List[IssueDetailItem] = []
@@ -342,12 +344,13 @@ class IssueAssignResponse(BaseModel):
     led_commands_created: int
     shelf_id: int
     commands: List[dict]
+    assigned_color: Optional[str] = None
     message: str
 
 
 class IssueConfirmPickRequest(BaseModel):
     barcode: str
-    reel_id: int
+    reel_id: Optional[int] = None
     operator: str
 
 
@@ -364,7 +367,7 @@ class IssueConfirmPickResponse(BaseModel):
 class InventoryUpdateRequest(BaseModel):
     """Update inventory pallet fields (partial update)."""
     quantity: Optional[float] = Field(None, ge=0, description="盘数量（>=0）")
-    status: Optional[str] = Field(None, pattern=r"^(pending_shelving|on_shelf|in_use|tracking|exhausted)$")
+    status: Optional[str] = Field(None, pattern=r"^(pending_shelving|on_shelf|in_use|tracking|exhausted|ready_restock)$")
     shelf_slot_id: Optional[int] = Field(None, description="储位 ID（null 表示解除绑定）")
     note: Optional[str] = Field(None, max_length=500, description="变更备注")
 
@@ -421,7 +424,7 @@ class XrMatchRequest(BaseModel):
 
 
 class XrRestockRequest(BaseModel):
-    shelf_slot_id: int
+    shelf_slot_id: Optional[int] = Field(None, description="储位 ID（必填，不再支持 cell_id 参数）")
 
 
 # ---------- BOM ----------
@@ -518,6 +521,8 @@ class DailyReportSummary(BaseModel):
     total_out: float
     total_balance: float
     total_reels_on_shelf: int
+    total_reels_pending_shelving: int = 0
+    total_reels_physical_inventory: int = 0
     total_reels_tracking: int
 
 
@@ -530,6 +535,8 @@ class DailyReportDetail(BaseModel):
     out_qty: float
     closing_balance: float
     reels_on_shelf: int
+    reels_pending_shelving: int = 0
+    reels_physical_inventory: int = 0
     reels_tracking: int
 
 
@@ -561,51 +568,55 @@ class TransactionRecord(BaseModel):
 
 # ---------- Shelf ----------
 class ShelfCreate(BaseModel):
-    code: str
-    name: Optional[str] = None
-    a_sides: int = 0
-    b_sides: int = 0
-    controller_ip: Optional[str] = None
-    controller_port: int = 502
-    location: Optional[str] = None
+    code: str = Field(..., description="料架编号（同时也是通信编号）")
+    name: Optional[str] = Field(None, description="料架名称")
+    location: Optional[str] = Field(None, description="安装位置")
+
+
+class ShelfUpdate(BaseModel):
+    code: Optional[str] = Field(None, description="料架编号")
+    name: Optional[str] = Field(None, description="料架名称")
+    location: Optional[str] = Field(None, description="安装位置")
 
 
 class ShelfResponse(BaseModel):
     id: int
     code: str
     name: Optional[str] = None
-    a_sides: Optional[int] = 0
-    b_sides: Optional[int] = 0
-    total_slots: Optional[int] = 0
-    controller_ip: Optional[str] = None
-    controller_port: Optional[int] = 502
-    a_side_count: Optional[int] = 0
-    b_side_count: Optional[int] = 0
     location: Optional[str] = None
     active: Optional[int] = 1
+    slot_count: Optional[int] = 0
+
+    model_config = {"from_attributes": True}
 
 
 class ShelfSlotCreate(BaseModel):
-    side: str
-    board_address: int
-    slot_on_board: int
-    global_index: int
-    modbus_coil_base: int
+    side: str = Field(..., description="面（A/B）")
+    slot_on_board: int = Field(..., description="板上编号")
+    code: Optional[str] = Field(None, description="储位编号")
+    name: Optional[str] = Field(None, description="储位名称")
     max_quantity: Optional[float] = Field(None, ge=0, description="储位最大容量（null=不限制）")
+
+
+class ShelfSlotUpdate(BaseModel):
+    code: Optional[str] = Field(None, description="储位编号")
+    name: Optional[str] = Field(None, description="储位名称")
+    max_quantity: Optional[float] = Field(None, ge=0, description="储位最大容量")
 
 
 class ShelfSlotResponse(BaseModel):
     id: int
     shelf_id: int
     side: str
-    board_address: int
     slot_on_board: int
-    global_index: int
-    modbus_tcp_id: int
-    modbus_coil_base: int
+    code: Optional[str] = None
+    name: Optional[str] = None
+    cell_id: Optional[str] = None
     max_quantity: Optional[float] = None
     last_event_at: Optional[datetime] = None
     last_sensor_state: int = 0
+
+    model_config = {"from_attributes": True}
 
 
 class ShelfSlotEventResponse(BaseModel):
@@ -623,8 +634,7 @@ class SlotSensorState(BaseModel):
     """Live sensor state for a single slot."""
     slot_id: int
     side: str
-    board_address: int
-    slot_on_board: int
+    cell_id: Optional[str] = None
     has_material: bool
     last_event_at: Optional[datetime] = None
     bound_reel_id: Optional[int] = None
@@ -646,14 +656,13 @@ class SystemSettingResponse(BaseModel):
 
 # ---------- Direct Outbound ----------
 class DirectOutRequest(BaseModel):
-    quantity: float = Field(..., gt=0, description="出库数量")
     operator: str = Field(..., min_length=1)
     note: Optional[str] = Field(None, max_length=500)
-    release_slot: bool = Field(True, description="数量归零时是否释放储位")
+    release_slot: bool = Field(True, description="出库后是否释放储位")
 
 
 class DirectOutResponse(BaseModel):
-    status: str  # ok | exhausted | error
+    status: str  # exhausted | error
     reel_id: int
     quantity_before: float
     quantity_after: float

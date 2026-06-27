@@ -1,12 +1,13 @@
 """Unit tests for issue (outbound) API — create, calculate FIFO, assign LED,
-confirm-pick, and direct outbound flows.
+confirm-pick, cancel, and reservation locking flows.
 
 Covers:
   1. Create issue order from BOM
-  2. Calculate FIFO assignment (tail_first, time_fifo, shortage)
-  3. Assign LED commands
-  4. Confirm pick (partial + full consumption, transaction recording)
-  5. Direct outbound scan + confirm
+  2. Calculate FIFO (whole-reel mode, atomic assignment, shortage handling)
+  3. Reservation creation / locking / isolation
+  4. Assign LED commands
+  5. Confirm pick (partial + full consumption, reservation release)
+  6. Cancel issue order (release reservations)
 """
 
 import pytest
@@ -28,6 +29,7 @@ from app.models import (
     Transaction,
     Bom,
     BomItem,
+    ReelReservation,
 )
 from app.schemas import (
     IssueCreateRequest,
@@ -148,10 +150,9 @@ async def _make_shelf_with_slot(
 
     slot = ShelfSlot(
         shelf_id=shelf.id,
-        side="A", board_address=1,
+        side="A",
         slot_on_board=slot_on_board,
-        global_index=slot_on_board,
-        modbus_tcp_id=1, modbus_coil_base=0,
+        cell_id=f"{code}A{slot_on_board:04d}",
     )
     db.add(slot)
     await db.commit()
@@ -171,8 +172,6 @@ class TestCreateIssue:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """BOM with one item creates order with matching detail."""
-        # Need a product material (different from sample)
         product = MaterialMaster(
             customer_id=sample_customer.id,
             category_id=None,
@@ -205,7 +204,6 @@ class TestCreateIssue:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Same material appearing twice in BOM → quantity aggregated."""
         product = MaterialMaster(
             customer_id=sample_customer.id,
             category_id=None,
@@ -223,7 +221,6 @@ class TestCreateIssue:
         db_session.add(bom)
         await db_session.commit()
 
-        # Same material twice
         for _ in range(2):
             item = BomItem(bom_id=bom.id, material_id=sample_material.id, quantity=3.0)
             db_session.add(item)
@@ -242,7 +239,6 @@ class TestCreateIssue:
     async def test_bom_not_found_raises_404(
         self, db_session: AsyncSession,
     ):
-        """Non-existent BOM → error."""
         from fastapi import HTTPException
         req = IssueCreateRequest(bom_id=99999, production_quantity=1, customer_id=1)
 
@@ -257,13 +253,13 @@ class TestCreateIssue:
 # =========================================================================
 
 class TestCalculateIssue:
-    """POST /issues/{order_id}/calculate — FIFO reel assignment."""
+    """POST /issues/{order_id}/calculate — FIFO reel assignment (whole-reel mode)."""
 
     async def test_tail_first_assigns_smallest_first(
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """tail_first strategy: pallets with smallest qty picked first."""
+        """tail_first whole-reel mode: picks entire reels, smallest first."""
         product = MaterialMaster(
             customer_id=sample_customer.id, category_id=None,
             code="PROD-CALC", name="计算测试",
@@ -272,7 +268,6 @@ class TestCalculateIssue:
         await db_session.commit()
         bom = await _make_bom(db_session, sample_customer.id, product, [sample_material], [10.0])
 
-        # Create pallets: [10, 3, 7, 1]
         pallets = await _make_pallets(
             db_session, sample_material.id, sample_customer.id,
             [10.0, 3.0, 7.0, 1.0],
@@ -291,19 +286,19 @@ class TestCalculateIssue:
 
         mat = result.materials[0]
         assert mat.required_qty == 6.0
-        assert mat.total_selected == 6.0
+        # Whole-reel mode: picks 1, 3, 7 (entire reels, not partial)
+        assert mat.total_selected == 11.0  # 1+3+7
         assert mat.shortage == 0
 
-        # First reel should be smallest (qty=1), second (qty=3), third partial (qty=2 from 7)
-        assert mat.reels_selected[0].quantity == 1.0
-        assert mat.reels_selected[1].quantity == 3.0
-        assert mat.reels_selected[2].quantity == 2.0
+        assert mat.reels_selected[0].quantity == 1.0   # whole
+        assert mat.reels_selected[1].quantity == 3.0   # whole
+        assert mat.reels_selected[2].quantity == 7.0   # whole
 
-    async def test_shortage_reported(
+    async def test_shortage_reported_order_stays_pending(
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Insufficient stock → shortage > 0."""
+        """Insufficient stock → shortage > 0, order stays pending, no lock."""
         product = MaterialMaster(
             customer_id=sample_customer.id, category_id=None,
             code="PROD-SHORT", name="短缺测试",
@@ -324,15 +319,27 @@ class TestCalculateIssue:
         req = IssueCalculateRequest(strategy="tail_first")
         result = await calculate_issue(order.id, req, db_session)
 
+        # Returns shortage info
         mat = result.materials[0]
         assert mat.total_selected == 7.0  # all stock
-        assert mat.shortage == 3.0  # 10 - 7
+        assert mat.shortage == 3.0
 
-    async def test_order_status_updated_to_assigned(
+        # Order stays pending (NO assigned, NO lock)
+        await db_session.refresh(order)
+        assert order.status == "pending"
+        assert order.assigned_at is None
+
+        # No reservations created
+        res_result = await db_session.execute(
+            select(ReelReservation).where(ReelReservation.issue_order_id == order.id)
+        )
+        assert res_result.scalar_one_or_none() is None
+
+    async def test_order_status_updated_to_assigned_when_fully_met(
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """After calculate, order status becomes 'assigned'."""
+        """When stock is sufficient, order becomes 'assigned' and reels are locked."""
         product = MaterialMaster(
             customer_id=sample_customer.id, category_id=None,
             code="PROD-STATUS", name="状态测试",
@@ -353,10 +360,21 @@ class TestCalculateIssue:
         req = IssueCalculateRequest(strategy="tail_first")
         await calculate_issue(order.id, req, db_session)
 
-        # Refresh order
         await db_session.refresh(order)
         assert order.status == "assigned"
         assert order.assigned_at is not None
+
+        # Verify reservation created
+        res_result = await db_session.execute(
+            select(ReelReservation).where(
+                ReelReservation.issue_order_id == order.id,
+                ReelReservation.status == "active",
+            )
+        )
+        reservation = res_result.scalar_one_or_none()
+        assert reservation is not None
+        assert reservation.reel_id == pallets[0].id
+        assert reservation.reserved_qty == 5.0  # whole reel
 
     async def test_detail_reel_assignments_stored(
         self, db_session: AsyncSession,
@@ -383,12 +401,145 @@ class TestCalculateIssue:
         req = IssueCalculateRequest(strategy="tail_first")
         await calculate_issue(order.id, req, db_session)
 
-        # Reload detail
         await db_session.refresh(detail)
         assert detail.reel_assignments is not None
         ra = json.loads(detail.reel_assignments)
         assert len(ra) > 0
         assert ra[0]["reel_id"] in [p.id for p in pallets]
+        # pick_quantity should be whole reel qty
+        assert ra[0]["pick_quantity"] == 5.0
+
+    async def test_calculate_rejected_for_non_pending(
+        self, db_session: AsyncSession,
+        sample_customer: Customer, sample_material: MaterialMaster,
+    ):
+        """Calculate on already assigned order raises 400."""
+        from fastapi import HTTPException
+
+        product = MaterialMaster(
+            customer_id=sample_customer.id, category_id=None,
+            code="PROD-REJ", name="拒绝测试",
+        )
+        db_session.add(product)
+        await db_session.commit()
+        bom = await _make_bom(db_session, sample_customer.id, product, [sample_material], [1.0])
+
+        await _make_pallets(db_session, sample_material.id, sample_customer.id, [10.0])
+        order, detail = await _make_issue_order(
+            db_session, sample_customer.id, bom.id,
+            sample_material.id, required_qty=3.0,
+        )
+        # First calculate → assigned
+        req = IssueCalculateRequest(strategy="tail_first")
+        await calculate_issue(order.id, req, db_session)
+
+        # Second calculate → should fail
+        with pytest.raises(HTTPException) as exc:
+            await calculate_issue(order.id, req, db_session)
+        assert exc.value.status_code == 400
+
+
+# =========================================================================
+#  Reservation locking
+# =========================================================================
+
+class TestReservationLocking:
+    """Verify reservation system prevents double-allocation."""
+
+    async def test_two_orders_cannot_lock_same_reel(
+        self, db_session: AsyncSession,
+        sample_customer: Customer, sample_material: MaterialMaster,
+    ):
+        """Once order A locks reels, order B cannot see them as available."""
+        product = MaterialMaster(
+            customer_id=sample_customer.id, category_id=None,
+            code="PROD-LOCK1", name="锁定测试1",
+        )
+        product2 = MaterialMaster(
+            customer_id=sample_customer.id, category_id=None,
+            code="PROD-LOCK2", name="锁定测试2",
+        )
+        db_session.add_all([product, product2])
+        await db_session.commit()
+
+        bom1 = await _make_bom(db_session, sample_customer.id, product, [sample_material], [1.0])
+        bom2 = await _make_bom(db_session, sample_customer.id, product2, [sample_material], [1.0])
+
+        # Single reel: qty=10
+        pallets = await _make_pallets(
+            db_session, sample_material.id, sample_customer.id, [10.0],
+        )
+
+        # Order A needs 3 → assigned
+        order_a, _ = await _make_issue_order(
+            db_session, sample_customer.id, bom1.id,
+            sample_material.id, required_qty=3.0,
+        )
+        req_a = IssueCalculateRequest(strategy="tail_first")
+        result_a = await calculate_issue(order_a.id, req_a, db_session)
+        assert result_a.materials[0].shortage == 0
+        await db_session.refresh(order_a)
+        assert order_a.status == "assigned"
+
+        # Order B needs 3 → should be shortage (the only reel is locked by A)
+        order_b, _ = await _make_issue_order(
+            db_session, sample_customer.id, bom2.id,
+            sample_material.id, required_qty=3.0,
+        )
+        req_b = IssueCalculateRequest(strategy="tail_first")
+        result_b = await calculate_issue(order_b.id, req_b, db_session)
+
+        # B should see shortage because the only reel is locked by A
+        assert result_b.materials[0].shortage == 3.0
+        await db_session.refresh(order_b)
+        assert order_b.status == "pending"  # B stays pending
+
+    async def test_cancel_releases_locks_for_other_orders(
+        self, db_session: AsyncSession,
+        sample_customer: Customer, sample_material: MaterialMaster,
+    ):
+        """After cancelling order A, order B can use the previously locked reel."""
+        product = MaterialMaster(
+            customer_id=sample_customer.id, category_id=None,
+            code="PROD-CAN1", name="取消测试1",
+        )
+        product2 = MaterialMaster(
+            customer_id=sample_customer.id, category_id=None,
+            code="PROD-CAN2", name="取消测试2",
+        )
+        db_session.add_all([product, product2])
+        await db_session.commit()
+
+        bom1 = await _make_bom(db_session, sample_customer.id, product, [sample_material], [1.0])
+        bom2 = await _make_bom(db_session, sample_customer.id, product2, [sample_material], [1.0])
+
+        pallets = await _make_pallets(
+            db_session, sample_material.id, sample_customer.id, [10.0],
+        )
+
+        # Order A locks the reel
+        order_a, _ = await _make_issue_order(
+            db_session, sample_customer.id, bom1.id,
+            sample_material.id, required_qty=3.0,
+        )
+        await calculate_issue(order_a.id, IssueCalculateRequest(), db_session)
+        await db_session.refresh(order_a)
+        assert order_a.status == "assigned"
+
+        # Cancel order A
+        from app.api.issue import cancel_issue
+        await cancel_issue(order_a.id, db_session)
+
+        # Now order B should be able to lock the same reel
+        order_b, _ = await _make_issue_order(
+            db_session, sample_customer.id, bom2.id,
+            sample_material.id, required_qty=5.0,
+        )
+        result_b = await calculate_issue(order_b.id, IssueCalculateRequest(), db_session)
+
+        assert result_b.materials[0].shortage == 0
+        await db_session.refresh(order_b)
+        assert order_b.status == "assigned"
 
 
 # =========================================================================
@@ -412,7 +563,6 @@ class TestAssignLed:
         await db_session.commit()
         bom = await _make_bom(db_session, sample_customer.id, product, [sample_material], [1.0])
 
-        # Create pallet bound to the slot
         now = datetime.utcnow()
         pallet = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
@@ -429,7 +579,6 @@ class TestAssignLed:
             sample_material.id, required_qty=5.0,
         )
 
-        # Assign reel assignments JSON to detail (simulate after calculate)
         detail.reel_assignments = json.dumps([{
             "reel_id": pallet.id,
             "reel_barcode": "LED-PALLET",
@@ -437,9 +586,9 @@ class TestAssignLed:
             "slot_code": f"A{slot.slot_on_board}",
             "reel_qty": 10.0,
             "original_quantity": 10.0,
-            "pick_quantity": 5.0,
+            "pick_quantity": 10.0,  # whole reel
         }])
-        detail.assigned_qty = 5.0
+        detail.assigned_qty = 10.0
         detail.status = "completed"
         order.status = "assigned"
         await db_session.commit()
@@ -450,7 +599,6 @@ class TestAssignLed:
         assert result.led_commands_created == 1
         assert len(result.commands) == 1
 
-        # Verify LedCommand in DB
         cmd_result = await db_session.execute(
             select(LedCommand).where(LedCommand.issue_order_id == order.id)
         )
@@ -463,7 +611,6 @@ class TestAssignLed:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Issue detail without reel_assignments → no LED commands."""
         product = MaterialMaster(
             customer_id=sample_customer.id, category_id=None,
             code="PROD-NO-LED", name="无LED测试",
@@ -476,7 +623,6 @@ class TestAssignLed:
             db_session, sample_customer.id, bom.id,
             sample_material.id, required_qty=5.0,
         )
-        # No reel_assignments set
         result = await assign_led(order.id, db_session)
 
         assert result.assigned is True
@@ -486,7 +632,6 @@ class TestAssignLed:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """After assign LED, order status becomes 'picking'."""
         shelf, slot = await _make_shelf_with_slot(db_session)
         product = MaterialMaster(
             customer_id=sample_customer.id, category_id=None,
@@ -514,9 +659,9 @@ class TestAssignLed:
         detail.reel_assignments = json.dumps([{
             "reel_id": pallet.id, "reel_barcode": "PICKING-PALLET",
             "shelf_slot_id": slot.id, "slot_code": f"A{slot.slot_on_board}",
-            "reel_qty": 10.0, "original_quantity": 10.0, "pick_quantity": 5.0,
+            "reel_qty": 10.0, "original_quantity": 10.0, "pick_quantity": 10.0,
         }])
-        detail.assigned_qty = 5.0
+        detail.assigned_qty = 10.0
         detail.status = "completed"
         order.status = "assigned"
         await db_session.commit()
@@ -531,7 +676,7 @@ class TestAssignLed:
 # =========================================================================
 
 class TestConfirmPick:
-    """POST /issues/{order_id}/confirm-pick — partial/full consumption, txn."""
+    """POST /issues/{order_id}/confirm-pick — partial/full consumption, txn, reservation release."""
 
     async def _setup_pick_test(
         self, db_session: AsyncSession,
@@ -539,7 +684,7 @@ class TestConfirmPick:
         reel_qty: float = 10.0,
         required_qty: float = 4.0,
     ) -> tuple[IssueOrder, IssueDetail, InventoryReel, ShelfSlot]:
-        """Set up a basic pick scenario with shelf+slot+pallet+order."""
+        """Set up a basic pick scenario with shelf+slot+pallet+order+reservation."""
         shelf, slot = await _make_shelf_with_slot(db_session)
         product = MaterialMaster(
             customer_id=sample_customer.id, category_id=None,
@@ -564,17 +709,27 @@ class TestConfirmPick:
             db_session, sample_customer.id, bom.id,
             sample_material.id, required_qty,
         )
-        # Pre-assign reel_assignments
+        pick_qty = min(required_qty, reel_qty)
         detail.reel_assignments = json.dumps([{
             "reel_id": pallet.id, "reel_barcode": "CONFIRM-PALLET",
             "shelf_slot_id": slot.id, "slot_code": f"A{slot.slot_on_board}",
             "reel_qty": reel_qty, "original_quantity": reel_qty,
-            "pick_quantity": min(required_qty, reel_qty),
+            "pick_quantity": reel_qty,
         }])
-        detail.assigned_qty = min(required_qty, reel_qty)
-        detail.status = "completed" if required_qty <= reel_qty else "partial"
+        detail.assigned_qty = reel_qty
+        detail.status = "completed"
         order.status = "assigned"
-        # Add a pending LED command
+
+        # Create reservation
+        res = ReelReservation(
+            reel_id=pallet.id,
+            issue_order_id=order.id,
+            issue_detail_id=detail.id,
+            reserved_qty=reel_qty,
+            status="active",
+        )
+        db_session.add(res)
+
         led = LedCommand(
             issue_order_id=order.id,
             material_id=sample_material.id,
@@ -606,9 +761,8 @@ class TestConfirmPick:
 
         assert result.status == "ok"
         assert result.picked_qty == 4.0
-        assert result.remaining_qty == 0  # all picked
+        assert result.remaining_qty == 0
 
-        # Verify pallet quantity reduced
         await db_session.refresh(pallet)
         assert pallet.quantity == 6.0  # 10 - 4
         assert pallet.status == "on_shelf"
@@ -617,7 +771,6 @@ class TestConfirmPick:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Pick == full pallet: pallet exhausted."""
         order, detail, pallet, slot = await self._setup_pick_test(
             db_session, sample_customer, sample_material,
             reel_qty=5.0, required_qty=5.0,
@@ -643,7 +796,6 @@ class TestConfirmPick:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Pick creates a Transaction record."""
         order, detail, pallet, slot = await self._setup_pick_test(
             db_session, sample_customer, sample_material,
             reel_qty=10.0, required_qty=3.0,
@@ -656,7 +808,6 @@ class TestConfirmPick:
         )
         await confirm_pick(order.id, req, db_session)
 
-        # Verify transaction
         txn_result = await db_session.execute(
             select(Transaction).where(Transaction.reel_id == pallet.id)
         )
@@ -668,11 +819,47 @@ class TestConfirmPick:
         assert txn.source_id == order.id
         assert txn.operator == "tester"
 
+    async def test_reservation_released_on_pick(
+        self, db_session: AsyncSession,
+        sample_customer: Customer, sample_material: MaterialMaster,
+    ):
+        """After picking, the reservation status becomes 'consumed'."""
+        order, detail, pallet, slot = await self._setup_pick_test(
+            db_session, sample_customer, sample_material,
+            reel_qty=10.0, required_qty=5.0,
+        )
+
+        # Verify reservation is active before pick
+        res_before = await db_session.execute(
+            select(ReelReservation).where(
+                ReelReservation.reel_id == pallet.id,
+                ReelReservation.issue_order_id == order.id,
+            )
+        )
+        assert res_before.scalar_one_or_none().status == "active"
+
+        req = IssueConfirmPickRequest(
+            barcode=sample_material.code,
+            reel_id=pallet.id,
+            operator="tester",
+        )
+        await confirm_pick(order.id, req, db_session)
+
+        # After pick, reservation should be consumed
+        res_after = await db_session.execute(
+            select(ReelReservation).where(
+                ReelReservation.reel_id == pallet.id,
+                ReelReservation.issue_order_id == order.id,
+            )
+        )
+        reservation = res_after.scalar_one_or_none()
+        assert reservation.status == "consumed"
+        assert reservation.released_at is not None
+
     async def test_led_cleared_on_pick(
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """LED command for the picked slot is cleared."""
         order, detail, pallet, slot = await self._setup_pick_test(
             db_session, sample_customer, sample_material,
             reel_qty=10.0, required_qty=3.0,
@@ -688,7 +875,6 @@ class TestConfirmPick:
         assert len(result.cleared_leds) == 1
         assert result.cleared_leds[0] == slot.id
 
-        # Verify LED cleared
         led_result = await db_session.execute(
             select(LedCommand).where(LedCommand.issue_order_id == order.id)
         )
@@ -701,7 +887,6 @@ class TestConfirmPick:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """IssueDetail picked_qty and status are updated."""
         order, detail, pallet, slot = await self._setup_pick_test(
             db_session, sample_customer, sample_material,
             reel_qty=10.0, required_qty=6.0,
@@ -722,7 +907,6 @@ class TestConfirmPick:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Order status = completed when all details picked."""
         order, detail, pallet, slot = await self._setup_pick_test(
             db_session, sample_customer, sample_material,
             reel_qty=5.0, required_qty=5.0,
@@ -743,14 +927,11 @@ class TestConfirmPick:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Order stays picking if partial pick doesn't exhaust all details."""
-        # Use required_qty > 0 so after picking, shortage remains
         order, detail, pallet, slot = await self._setup_pick_test(
             db_session, sample_customer, sample_material,
             reel_qty=10.0, required_qty=4.0,
         )
 
-        # Second material required but not picked yet
         mat2 = MaterialMaster(
             customer_id=sample_customer.id, category_id=None,
             code="MAT2-OTHER", name="第二物料",
@@ -775,19 +956,16 @@ class TestConfirmPick:
         await confirm_pick(order.id, req, db_session)
 
         await db_session.refresh(order)
-        # detail 1 is completed, but detail 2 is still pending → order not "completed"
         assert order.status != "completed"
 
     async def test_confirm_already_completed_material(
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Picking a fully completed material returns 'error' (nothing left to pick)."""
         order, detail, pallet, slot = await self._setup_pick_test(
             db_session, sample_customer, sample_material,
             reel_qty=5.0, required_qty=5.0,
         )
-        # Mark detail as already completed
         detail.status = "completed"
         detail.picked_qty = 5.0
         await db_session.commit()
@@ -799,7 +977,6 @@ class TestConfirmPick:
         )
         result = await confirm_pick(order.id, req, db_session)
 
-        # remaining_need = 0 → pick_qty = 0 → returns "error"
         assert result.status == "error"
         assert result.picked_qty == 0
 
@@ -807,7 +984,6 @@ class TestConfirmPick:
         self, db_session: AsyncSession,
         sample_customer: Customer, sample_material: MaterialMaster,
     ):
-        """Unparseable barcode → error status."""
         order, detail, pallet, slot = await self._setup_pick_test(
             db_session, sample_customer, sample_material,
             reel_qty=10.0, required_qty=4.0,
@@ -825,7 +1001,110 @@ class TestConfirmPick:
 
 
 # =========================================================================
-#  FIFO service integration (reuse existing conftest pallet seed)
+#  Cancel issue order
+# =========================================================================
+
+class TestCancelIssue:
+    """POST /issues/{order_id}/cancel — cancel order & release locks."""
+
+    async def test_cancel_releases_reservations(
+        self, db_session: AsyncSession,
+        sample_customer: Customer, sample_material: MaterialMaster,
+    ):
+        """Cancel releases all active reservations."""
+        from app.api.issue import cancel_issue
+
+        product = MaterialMaster(
+            customer_id=sample_customer.id, category_id=None,
+            code="PROD-CAN1", name="取消测试A",
+        )
+        db_session.add(product)
+        await db_session.commit()
+        bom = await _make_bom(db_session, sample_customer.id, product, [sample_material], [1.0])
+
+        pallets = await _make_pallets(
+            db_session, sample_material.id, sample_customer.id, [5.0, 3.0],
+        )
+        order, detail = await _make_issue_order(
+            db_session, sample_customer.id, bom.id,
+            sample_material.id, required_qty=6.0,
+        )
+
+        # Calculate → assigned with reservations
+        await calculate_issue(order.id, IssueCalculateRequest(), db_session)
+        await db_session.refresh(order)
+        assert order.status == "assigned"
+
+        # Verify reservations exist
+        res_before = await db_session.execute(
+            select(ReelReservation).where(
+                ReelReservation.issue_order_id == order.id,
+                ReelReservation.status == "active",
+            )
+        )
+        assert len(res_before.scalars().all()) == 2  # two reels locked
+
+        # Cancel
+        result = await cancel_issue(order.id, db_session)
+        assert result["status"] == "ok"
+
+        # Verify reservations released
+        res_after = await db_session.execute(
+            select(ReelReservation).where(
+                ReelReservation.issue_order_id == order.id,
+                ReelReservation.status == "active",
+            )
+        )
+        assert len(res_after.scalars().all()) == 0  # no active reservations
+
+        released = await db_session.execute(
+            select(ReelReservation).where(
+                ReelReservation.issue_order_id == order.id,
+                ReelReservation.status == "released",
+            )
+        )
+        assert len(released.scalars().all()) == 2  # 2 released
+
+        # Verify order back to pending
+        await db_session.refresh(order)
+        assert order.status == "pending"
+
+    async def test_cancel_on_pending_order_is_noop(
+        self, db_session: AsyncSession,
+        sample_customer: Customer, sample_material: MaterialMaster,
+    ):
+        """Cancelling a pending order (no reservations) works without error."""
+        from app.api.issue import cancel_issue
+
+        order, detail = await _make_issue_order(
+            db_session, sample_customer.id, 1,
+            sample_material.id, required_qty=5.0,
+        )
+        result = await cancel_issue(order.id, db_session)
+        assert result["status"] == "ok"
+
+    async def test_cancel_on_picking_or_completed_raises_error(
+        self, db_session: AsyncSession,
+        sample_customer: Customer, sample_material: MaterialMaster,
+    ):
+        """Cancel only allowed for pending/assigned orders."""
+        from fastapi import HTTPException
+        from app.api.issue import cancel_issue
+
+        order, detail = await _make_issue_order(
+            db_session, sample_customer.id, 1,
+            sample_material.id, required_qty=5.0,
+        )
+        order.status = "completed"
+        await db_session.commit()
+
+        with pytest.raises(HTTPException) as exc:
+            await cancel_issue(order.id, db_session)
+        assert exc.value.status_code == 400
+
+
+# =========================================================================
+#  FIFO service integration
 # =========================================================================
 
 class TestFifoIntegration:
@@ -835,7 +1114,7 @@ class TestFifoIntegration:
         self, db_session: AsyncSession,
         sample_material: MaterialMaster, sample_customer: Customer,
     ):
-        """calculate_fifo_pallets returns dict with 'pallets' key."""
+        """calculate_fifo_pallets returns dict with 'reels' key (whole-reel)."""
         now = datetime(2026, 6, 1, 10, 0, 0)
         p = InventoryReel(
             material_id=sample_material.id, customer_id=sample_customer.id,
@@ -854,4 +1133,5 @@ class TestFifoIntegration:
 
         assert "reels" in result
         assert len(result["reels"]) == 1
-        assert result["reels"][0]["quantity"] == 5.0  # partial
+        # Whole-reel mode: picks entire 10, not partial 5
+        assert result["reels"][0]["quantity"] == 10.0

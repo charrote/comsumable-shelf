@@ -16,6 +16,7 @@ python-dotenv==1.0.0
 rapidfuzz==3.6.1
 openpyxl==3.1.2
 xlrd==2.0.2
+requests==2.31.0
 # OCR — PaddleOCR (Baidu open-source, no Google dependency)
 paddleocr==2.8.0
 paddlepaddle==2.6.2

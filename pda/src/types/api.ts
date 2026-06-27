@@ -211,7 +211,7 @@ export interface ShelvingBindRequest {
   reel_id: number
   shelf_id: number
   shelf_slot_id?: number
-  operator: string
+  operator?: string
 }
 
 export interface ShelvingBindResponse {
@@ -294,7 +294,7 @@ export interface IssueAssignResponse {
 
 export interface IssueConfirmPickRequest {
   barcode: string
-  reel_id: number
+  reel_id?: number
   operator: string
 }
 
@@ -360,19 +360,8 @@ export interface InventoryResponse {
   }
 }
 
-export interface TrackingReelResponse {
-  reel_id: number
-  material_code: string
-  material_name?: string
-  quantity: number
-  last_out_time?: string
-  status: string
-  xr_matched?: boolean
-}
-
 // Direct Outbound
 export interface DirectOutRequest {
-  quantity: number
   operator: string
   note?: string
   release_slot?: boolean
@@ -419,11 +408,8 @@ export interface ShelfSlotResponse {
   id: number
   shelf_id: number
   side: string
-  board_address: number
   slot_on_board: number
-  global_index: number
-  modbus_tcp_id: number
-  modbus_coil_base: number
+  cell_id?: string
   max_quantity?: number
   last_event_at?: string
   last_sensor_state?: number
@@ -432,7 +418,7 @@ export interface ShelfSlotResponse {
 export interface SlotSensorState {
   slot_id: number
   side: string
-  board_address: number
+  cell_id?: string
   slot_on_board: number
   has_material: boolean
   last_event_at?: string
@@ -446,6 +432,8 @@ export interface DashboardSummary {
   today_outbound: number
   pending_issues: number
   on_shelf_pallets: number
+  pending_shelving_pallets: number
+  physical_inventory: number
   tracking_pallets: number
   pending_receipts: number
 }

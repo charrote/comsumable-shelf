@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import MaterialMaster, InventoryReel, ReceiptReel, Receipt, Shelf, ShelfSlot, CustomerMaterialMapping, Transaction
+from app.models import MaterialMaster, InventoryReel, ReceiptReel, Receipt, CustomerMaterialMapping, Transaction
 from app.utils.barcode import parse_barcode, find_material_candidates
 from app.hal.printer import print_label
 
@@ -267,11 +267,15 @@ async def finalize_receipt_reel(
     # ── 3. Auto-assign empty slot (optional) ──
     assigned_slot = None
     if auto_assign_slot:
-        assigned_slot = await _auto_assign_slot(db, pallet, quantity)
-        # If slot assigned successfully, mark as on_shelf
-        if assigned_slot is not None:
-            pallet.status = "on_shelf"
-            await db.commit()
+        # ── 智能料架流程 ──
+        # 不立即分配储位，等待料架回调 /rack/callback/cell-changed 自动绑定
+        # 回调解析放入事件 → 调用 _find_unbound_reel() 匹配此 pallet
+        # pallet.status 保持 "pending_shelving"
+        logger.info(
+            "Reel %d created (pending_shelving), waiting for callback binding",
+            pallet.id,
+        )
+        # 所有料架均为 HTTP API 模式，等待回调自动绑定
 
     # ── 4. Print internal label (optional) ──
     printed = False
@@ -305,63 +309,4 @@ async def finalize_receipt_reel(
     }
 
 
-async def _auto_assign_slot(
-    db: AsyncSession,
-    pallet: InventoryReel,
-    quantity: float,
-) -> Optional[int]:
-    """Find and assign the first available empty slot.
 
-    Capacity priority (first non-None wins):
-        1. ``ShelfSlot.max_quantity`` (per-slot)
-        2. ``SystemSetting('default_slot_capacity')`` (global fallback)
-    """
-    from app.models import SystemSetting
-
-    # Read global default capacity (empty string = no limit)
-    cap_row = await db.execute(
-        select(SystemSetting.value).where(SystemSetting.key == "default_slot_capacity")
-    )
-    raw_global = cap_row.scalar_one_or_none()
-    global_capacity: Optional[float] = None
-    if raw_global and raw_global.strip():
-        try:
-            global_capacity = float(raw_global)
-        except (ValueError, TypeError):
-            global_capacity = None
-
-    slot_result = await db.execute(
-        select(
-            Shelf.id,
-            ShelfSlot.id,
-            ShelfSlot.global_index,
-            ShelfSlot.max_quantity,
-        )
-        .join(ShelfSlot, Shelf.id == ShelfSlot.shelf_id)
-        .where(
-            Shelf.active == 1,
-            ~ShelfSlot.id.in_(
-                select(InventoryReel.shelf_slot_id)
-                .where(
-                    InventoryReel.status == "on_shelf",
-                    InventoryReel.shelf_slot_id.isnot(None),
-                )
-            ),
-        )
-        .limit(10)
-    )
-    rows = slot_result.all()
-    for row in rows:
-        shelf_id, slot_db_id, global_idx, max_qty = row
-        effective_cap = max_qty if max_qty is not None else global_capacity
-        if effective_cap is not None and quantity > effective_cap:
-            continue
-        assigned_slot = global_idx
-        await db.execute(
-            InventoryReel.__table__.update()
-            .where(InventoryReel.id == pallet.id)
-            .values(shelf_slot_id=slot_db_id)
-        )
-        await db.commit()
-        return assigned_slot
-    return None

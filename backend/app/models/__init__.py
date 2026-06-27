@@ -3,7 +3,7 @@
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, Text, Float, DateTime, Boolean, ForeignKey,
-    UniqueConstraint, Index, Enum as SAEnum
+    UniqueConstraint, Index, Enum as SAEnum, text as sa_text
 )
 from sqlalchemy.orm import relationship, declarative_base
 import enum
@@ -92,18 +92,13 @@ class Shelf(Base):
     __tablename__ = "shelves"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    code = Column(String, unique=True, nullable=False, index=True)
-    name = Column(String)
-    a_sides = Column(Integer, default=0)
-    b_sides = Column(Integer, default=0)
-    total_slots = Column(Integer, default=0)
-    controller_ip = Column(String)
-    controller_port = Column(Integer, default=502)
-    a_side_count = Column(Integer, default=0)
-    b_side_count = Column(Integer, default=0)
-    location = Column(String)
+    code = Column(String, unique=True, nullable=False, index=True, comment="料架编号（同时也是通信编号）")
+    name = Column(String, comment="料架名称")
+    location = Column(String, comment="安装位置")
     active = Column(Integer, default=1)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    slots = relationship("ShelfSlot", back_populates="shelf")
 
 
 class ShelfSlot(Base):
@@ -111,12 +106,11 @@ class ShelfSlot(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     shelf_id = Column(Integer, ForeignKey("shelves.id"), nullable=False)
-    side = Column(String, nullable=False)  # 'A' or 'B'
-    board_address = Column(Integer, nullable=False)
-    slot_on_board = Column(Integer, nullable=False)
-    global_index = Column(Integer, nullable=False)
-    modbus_tcp_id = Column(Integer, nullable=False)
-    modbus_coil_base = Column(Integer, nullable=False)
+    side = Column(String, nullable=False, comment="面（A/B）")
+    slot_on_board = Column(Integer, nullable=False, comment="板上编号")
+    code = Column(String, comment="储位编号（如 A-01）")
+    name = Column(String, comment="储位名称")
+    cell_id = Column(String(32), unique=True, nullable=True, comment="自动生成: UPPER(code + side + slot_on_board)")
     max_quantity = Column(Float, nullable=True, comment="储位最大容量（null 表示不限制）")
     last_event_at = Column(DateTime, nullable=True, comment="最近一次传感器事件时间")
     last_sensor_state = Column(Integer, default=0, comment="最近一次传感器读取值（0=空, 1=有料）")
@@ -124,16 +118,8 @@ class ShelfSlot(Base):
     shelf = relationship("Shelf", back_populates="slots")
 
     __table_args__ = (
-        UniqueConstraint("shelf_id", "side", "slot_on_board", name="uq_slot_pos"),
-        Index("idx_slot_pos", "shelf_id", "side", "slot_on_board"),
+        Index("ix_shelf_slots_cell_id", "cell_id", postgresql_where=sa_text("cell_id IS NOT NULL")),
     )
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        if self.side == "A":
-            self.modbus_tcp_id = self.board_address
-        else:
-            self.modbus_tcp_id = 63 + self.board_address
 
 
 class ShelfSlotEvent(Base):
@@ -148,13 +134,13 @@ class ShelfSlotEvent(Base):
     old_state = Column(Integer, default=0)
     new_state = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # ── 智能料架新字段 ──
+    cell_id = Column(String(32), comment="储位号（回调数据）")
+    raw_data = Column(Text, comment="原始回调数据 JSON（调试用）")
 
     __table_args__ = (
         Index("idx_slot_event_type", "shelf_slot_id", "event_type", "created_at"),
     )
-
-
-Shelf.slots = relationship("ShelfSlot", back_populates="shelf")
 
 
 class InventoryReel(Base):
@@ -177,7 +163,7 @@ class InventoryReel(Base):
     inbound_type = Column(String, default="new")  # new | restock
     inbound_receipt_id = Column(Integer)
     inbound_xr_count = Column(Float)
-    status = Column(String, default="pending_shelving")  # pending_shelving | on_shelf | in_use | tracking | exhausted
+    status = Column(String, default="pending_shelving")  # pending_shelving | on_shelf | in_use | tracking | exhausted | ready_restock
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     batch_no = Column(String, comment="批次号（选填）")
     date_code = Column(String, comment="生产日期/周期代码（选填）")
@@ -245,6 +231,7 @@ class IssueOrder(Base):
     production_quantity = Column(Float, nullable=False, default=1)
     required_date = Column(DateTime)
     status = Column(String, default="pending")
+    assigned_color = Column(String(50), nullable=True, comment="当前发料单使用的储位灯颜色（如 red, green, blue），用于多任务并发亮灯区分")
     created_at = Column(DateTime, default=datetime.utcnow)
     assigned_at = Column(DateTime)
     completed_at = Column(DateTime)
@@ -265,6 +252,27 @@ class IssueDetail(Base):
     status = Column(String, default="pending")
 
     material = relationship("MaterialMaster", foreign_keys=[material_id])
+
+
+class ReelReservation(Base):
+    """Reel inventory lock — a reel can only have ONE active reservation at a time."""
+    __tablename__ = "reel_reservations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    reel_id = Column(Integer, ForeignKey("inventory_reels.id"), nullable=False, index=True)
+    issue_order_id = Column(Integer, ForeignKey("issue_order.id"), nullable=False)
+    issue_detail_id = Column(Integer, ForeignKey("issue_detail.id"), nullable=False)
+    reserved_qty = Column(Float, nullable=False, comment="锁定的料盘数量（整盘数量）")
+    status = Column(String, default="active")  # active | consumed | released
+    created_at = Column(DateTime, default=datetime.utcnow)
+    released_at = Column(DateTime)
+
+    __table_args__ = (
+        # Force only one active reservation per reel (partial unique index)
+        Index("idx_res_active_reel", "reel_id", unique=True,
+              sqlite_where=Column("status") == "active"),
+        Index("idx_res_order", "issue_order_id", "status"),
+    )
 
 
 class Transaction(Base):
@@ -297,11 +305,15 @@ class LedCommand(Base):
     shelf_id = Column(Integer, ForeignKey("shelves.id"), nullable=False)
     slot_id = Column(Integer, ForeignKey("shelf_slots.id"), nullable=False)
     color = Column(String, default="green")  # green | red | blue
-    duration = Column(Integer, default=5)
+    duration = Column(Integer, default=5, comment="[DEPRECATED] 旧版亮灯秒数，新版本使用 turn_on_time")
     status = Column(String, default="queued")  # queued | sent | cleared | failed
     created_at = Column(DateTime, default=datetime.utcnow)
     sent_at = Column(DateTime)
     cleared_at = Column(DateTime)
+    # ── 智能料架新字段 ──
+    is_blink = Column(Boolean, default=False, comment="是否闪烁")
+    turn_on_time = Column(Integer, default=0, comment="亮灯秒数（0=常亮）")
+    voice_text = Column(String(255), comment="语音播报文本")
 
     __table_args__ = (
         Index("idx_led_status", "status", "created_at"),

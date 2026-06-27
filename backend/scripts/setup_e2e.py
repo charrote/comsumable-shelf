@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E2E 测试环境初始化脚本 — 操作 PostgreSQL 创建料架+储位。"""
+"""E2E 测试环境初始化脚本 — 操作 PostgreSQL 创建料架+储位（智能料架 HTTP API 版本）。"""
 
 import asyncio
 import sys
@@ -14,7 +14,7 @@ from sqlalchemy import select, text
 
 async def main():
     print("=" * 60)
-    print("E2E 测试环境初始化")
+    print("E2E 测试环境初始化（智能料架 HTTP API）")
     print("=" * 60)
 
     # ── 先独立创建料架并提交 ──
@@ -27,9 +27,6 @@ async def main():
         else:
             shelf = Shelf(
                 code="SMT-01", name="SMT 料架 1号",
-                a_sides=2, b_sides=2, total_slots=80,
-                controller_ip="192.168.1.100", controller_port=502,
-                a_side_count=2, b_side_count=2,
                 location="SMT车间 A区", active=1,
             )
             db.add(shelf)
@@ -37,10 +34,9 @@ async def main():
             await db.refresh(shelf)
             print(f"  ✅ 料架已创建: id={shelf.id} code={shelf.code}")
 
-    # ── 新会话创建储位 ──
+    # ── 新会话创建储位（使用 ORM 批量 INSERT） ──
     print("\n[2/3] 创建储位...")
     async with async_session_factory() as db:
-        # 读取料架
         result = await db.execute(select(Shelf).where(Shelf.code == "SMT-01"))
         shelf = result.scalar_one()
         shelf_id = shelf.id
@@ -50,45 +46,28 @@ async def main():
         await db.commit()
         print(f"  🧹 已清除 shelf_id={shelf_id} 旧储位")
 
-    # 重新开一个会话插入储位（用原始 SQL 避免 ORM 批量 INSERT 问题）
+    # 重新开一个会话批量插入储位
     async with async_session_factory() as db:
         result = await db.execute(select(Shelf).where(Shelf.code == "SMT-01"))
         shelf = result.scalar_one()
         shelf_id = shelf.id
 
+        slots = []
         count = 0
         for side in ["A", "B"]:
-            for board in [1, 2]:
-                for slot_num in range(1, 21):
-                    side_offset = 0 if side == "A" else 40
-                    # NOTE: board 2 的 slot_on_board 偏移 20 避免 UniqueConstraint 冲突
-                    # (约束 "uq_slot_pos" = shelf_id + side + slot_on_board, 缺少 board_address)
-                    db_slot = slot_num + (20 if board == 2 else 0)
-                    global_idx = side_offset + (board - 1) * 20 + slot_num
-                    coil_base = 10000 + (global_idx - 1) * 4
-                    modbus_tcp_id = board if side == "A" else 63 + board
+            for slot_num in range(1, 41):
+                cell_id = f"{shelf.code}{side}{slot_num:04d}".upper()
+                slot = ShelfSlot(
+                    shelf_id=shelf_id,
+                    side=side,
+                    slot_on_board=slot_num,
+                    cell_id=cell_id,
+                    last_sensor_state=0,
+                )
+                slots.append(slot)
+                count += 1
 
-                    await db.execute(
-                        text("""
-                            INSERT INTO shelf_slots
-                                (shelf_id, side, board_address, slot_on_board,
-                                 global_index, modbus_tcp_id, modbus_coil_base,
-                                 last_sensor_state)
-                            VALUES
-                                (:shelf_id, :side, :board, :slot,
-                                 :global_idx, :tcp_id, :coil_base, 0)
-                        """),
-                        {
-                            "shelf_id": shelf_id,
-                            "side": side,
-                            "board": board,
-                            "slot": db_slot,
-                            "global_idx": global_idx,
-                            "tcp_id": modbus_tcp_id,
-                            "coil_base": coil_base,
-                        }
-                    )
-                    count += 1
+        db.add_all(slots)
         await db.commit()
         print(f"  ✅ 创建了 {count} 个储位")
 
@@ -100,13 +79,13 @@ async def main():
         slots_result = await db.execute(
             select(ShelfSlot)
             .where(ShelfSlot.shelf_id == shelf.id)
-            .order_by(ShelfSlot.side, ShelfSlot.board_address, ShelfSlot.slot_on_board)
+            .order_by(ShelfSlot.side, ShelfSlot.slot_on_board)
             .limit(5)
         )
         slots = slots_result.scalars().all()
         for s in slots:
-            print(f"     slot_id={s.id:3d}  {s.side}{s.board_address}-{s.slot_on_board:2d}  "
-                  f"global={s.global_index:3d}  tcp_id={s.modbus_tcp_id:2d}  coil={s.modbus_coil_base:5d}")
+            print(f"     slot_id={s.id:3d}  side={s.side}  slot_on_board={s.slot_on_board:2d}  "
+                  f"cell_id={s.cell_id}")
 
         # System settings
         dup_setting = await db.execute(
@@ -124,7 +103,7 @@ PDA 模拟器操作步骤:
   1. 登录        → admin / admin123
   2. 首页        → 确认 Dashboard 有料架信息
   3. 扫码入库     → 操作员 → 扫条码(如 CUST-R-0402-10K)
-                    → 预览确认 → 入库
+                     → 预览确认 → 入库
   4. 补料上架     → 扫料盘 → 选储位 → 绑定
   5. 扫码出库     → 选 BOM → 计算 → LED → 拣料确认
 """)

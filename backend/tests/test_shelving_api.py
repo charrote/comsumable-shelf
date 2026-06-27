@@ -64,7 +64,6 @@ async def _make_shelf(
     code: str = "SHELF-A",
     side: str = "A",
     slot_on_board: int = 1,
-    global_index: int = 1,
     max_quantity: float = None,
     last_sensor_state: int = 0,
 ) -> tuple[Shelf, ShelfSlot]:
@@ -72,14 +71,12 @@ async def _make_shelf(
     db.add(shelf)
     await db.commit()
 
+    cell_id = f"{code}{side}{slot_on_board:04d}"
     slot = ShelfSlot(
         shelf_id=shelf.id,
         side=side,
-        board_address=1,
         slot_on_board=slot_on_board,
-        global_index=global_index,
-        modbus_tcp_id=1,
-        modbus_coil_base=0,
+        cell_id=cell_id,
         max_quantity=max_quantity,
         last_sensor_state=last_sensor_state,
     )
@@ -231,7 +228,7 @@ class TestBindShelvingSlot:
         """Bind with shelf_id + no shelf_slot_id → auto-find empty slot."""
         shelf, slot = await _make_shelf(
             db_session, code="AUTO-SLOT", side="A",
-            slot_on_board=1, global_index=1, last_sensor_state=0,
+            slot_on_board=1, last_sensor_state=0,
         )
         reel = await _make_reel(
             db_session, sample_material.id, sample_customer.id,

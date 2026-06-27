@@ -68,10 +68,16 @@ export const deleteShelfApi = (id: number) =>
   apiClient.delete(`/shelves/${id}`)
 export const getShelfSlotsApi = (shelfId: number) =>
   apiClient.get(`/shelves/${shelfId}/slots`)
-export const createShelfSlotsApi = (shelfId: number, slots: any[]) =>
-  apiClient.post(`/shelves/${shelfId}/slots`, { slots })
-export const getSlotLedStatusApi = (shelfId: number, side: 'A' | 'B') =>
-  apiClient.get(`/shelves/${shelfId}/led/${side}`)
+export const createSlotApi = (shelfId: number, data: any) =>
+  apiClient.post(`/shelves/${shelfId}/slots`, data)
+export const updateSlotApi = (shelfId: number, slotId: number, data: any) =>
+  apiClient.put(`/shelves/${shelfId}/slots/${slotId}`, data)
+export const deleteSlotApi = (shelfId: number, slotId: number) =>
+  apiClient.delete(`/shelves/${shelfId}/slots/${slotId}`)
+export const rackTestApi = (shelfId: number, testMode: number = 15) =>
+  apiClient.post(`/shelves/${shelfId}/rack-test`, { test_mode: testMode })
+export const getSlotStatesExtendedApi = (shelfId: number) =>
+  apiClient.get(`/shelves/${shelfId}/slots/state-extended`)
 
 // Inventory
 export const getInventoryApi = (params: any) =>
@@ -79,7 +85,6 @@ export const getInventoryApi = (params: any) =>
 export const getTrackingApi = () =>
   apiClient.get('/inventory/tracking')
 export const directOutboundApi = (reelId: number, data: {
-  quantity: number
   operator: string
   note?: string
   release_slot?: boolean
@@ -157,14 +162,18 @@ export const cancelReceiptItemsApi = (receiptId: number, receiptReelIds: number[
 // Issue
 export const getIssueListApi = (params: any) =>
   apiClient.get('/issues', { params })
+export const getIssueApi = (orderId: number) =>
+  apiClient.get(`/issues/${orderId}`)
 export const createIssueApi = (data: any) =>
   apiClient.post('/issues', data)
 export const calculateIssueApi = (orderId: number, data: { strategy: string }) =>
   apiClient.post(`/issues/${orderId}/calculate`, data)
 export const assignLedApi = (orderId: number) =>
   apiClient.post(`/issues/${orderId}/assign`)
-export const confirmPickApi = (orderId: number, data: { barcode: string; reel_id: number }) =>
+export const confirmPickApi = (orderId: number, data: { barcode: string; reel_id?: number; operator?: string }) =>
   apiClient.post(`/issues/${orderId}/confirm-pick`, data)
+export const cancelIssueApi = (orderId: number) =>
+  apiClient.post(`/issues/${orderId}/cancel`)
 
 // XR
 export const getXRListApi = (params: any) =>
@@ -173,7 +182,7 @@ export const uploadXrApi = (data: { reel_id: string; qty: number }) =>
   apiClient.post('/xr/upload', data)
 export const matchXRApi = (batchId: number, data: { reel_id: number }) =>
   apiClient.post(`/xr/${batchId}/match`, data)
-export const confirmXRRestockApi = (batchId: number, data: { shelf_slot_id: number }) =>
+export const confirmXRRestockApi = (batchId: number, data: { shelf_slot_id?: number; cell_id?: string }) =>
   apiClient.post(`/xr/${batchId}/confirm-restock`, data)
 
 // BOM
@@ -271,15 +280,6 @@ export const getSettingsApi = () =>
   apiClient.get('/settings')
 export const updateSettingApi = (key: string, value: string, description?: string) =>
   apiClient.put(`/settings/${key}`, { key, value, description })
-export const getPollingStatusApi = (shelfId: number) =>
-  apiClient.get(`/shelves/${shelfId}/polling`)
-export const startPollingApi = (shelfId: number) =>
-  apiClient.post(`/shelves/${shelfId}/polling/start`)
-export const stopPollingApi = (shelfId: number) =>
-  apiClient.post(`/shelves/${shelfId}/polling/stop`)
-export const clearLedCommandApi = (shelfId: number, slotId: number) =>
-  apiClient.post(`/shelves/${shelfId}/led/clear`, { slot_id: slotId })
-
 // Users
 export const getUsersApi = (params: any) =>
   apiClient.get('/users', { params })
@@ -299,80 +299,6 @@ export const updateCustomerApi = (id: number, data: { name: string; code: string
   apiClient.put(`/customers/${id}`, data)
 export const deleteCustomerApi = (id: number) =>
   apiClient.delete(`/customers/${id}`)
-
-// ── Hardware Debug ──
-export const getHardwareDebugStatusApi = () =>
-  apiClient.get('/hardware-debug/status')
-export const hardwareDebugConnectApi = (ip: string, port: number = 502) =>
-  apiClient.post('/hardware-debug/connect', { ip, port })
-export const hardwareDebugDisconnectApi = () =>
-  apiClient.post('/hardware-debug/disconnect')
-export const hardwareDebugPingApi = () =>
-  apiClient.get('/hardware-debug/ping')
-
-// Mainboard
-export const getMainboardInfoApi = () =>
-  apiClient.get('/hardware-debug/mainboard/info')
-export const getMainboardConfigApi = () =>
-  apiClient.get('/hardware-debug/mainboard/config')
-export const getMainboardRelaysApi = () =>
-  apiClient.get('/hardware-debug/mainboard/relays')
-export const setMainboardRelayApi = (relayNum: number, on: boolean) =>
-  apiClient.post('/hardware-debug/mainboard/relay', { relay_num: relayNum, on })
-export const calibrateMainboardApi = () =>
-  apiClient.post('/hardware-debug/mainboard/calibrate')
-export const resetMainboardApi = () =>
-  apiClient.post('/hardware-debug/mainboard/reset')
-export const saveMainboardConfigApi = () =>
-  apiClient.post('/hardware-debug/mainboard/save-config')
-
-// Raw Modbus
-export const debugReadRegistersApi = (address: number, count: number, funcCode: number = 3, station: number = 200) =>
-  apiClient.post('/hardware-debug/read-registers', { address, count, func_code: funcCode, station })
-export const debugWriteRegisterApi = (address: number, value: number, station: number = 200) =>
-  apiClient.post('/hardware-debug/write-register', { address, value, station })
-export const debugReadCoilsApi = (address: number, count: number, station: number = 200) =>
-  apiClient.post('/hardware-debug/read-coils', { address, count, station })
-export const debugWriteCoilApi = (address: number, on: boolean, station: number = 200) =>
-  apiClient.post('/hardware-debug/write-coil', { address, on, station })
-export const debugWriteCoilsApi = (address: number, values: boolean[], station: number = 200) =>
-  apiClient.post('/hardware-debug/write-coils', { address, values, station })
-export const debugReadDigitalInputsApi = (address: number, count: number, station: number = 200) =>
-  apiClient.post('/hardware-debug/read-digital-inputs', { address, count, station })
-
-// LED Boards
-export const getDebugBoardsApi = () =>
-  apiClient.get('/hardware-debug/boards')
-export const getDebugBoardInfoApi = (station: number) =>
-  apiClient.get(`/hardware-debug/boards/${station}/info`)
-export const getDebugBoardSlotsApi = (station: number, slotCount: number = 20) =>
-  apiClient.get(`/hardware-debug/boards/${station}/slots`, { params: { slot_count: slotCount } })
-export const getDebugBoardAdValuesApi = (station: number) =>
-  apiClient.get(`/hardware-debug/boards/${station}/ad-values`)
-export const getDebugBoardCalibrationApi = (station: number) =>
-  apiClient.get(`/hardware-debug/boards/${station}/calibration`)
-export const debugControlLedApi = (station: number, slotNum: number, color: string) =>
-  apiClient.post(`/hardware-debug/boards/${station}/led`, { slot_num: slotNum, color })
-export const debugControlAllLedsApi = (station: number, colors: string[]) =>
-  apiClient.post(`/hardware-debug/boards/${station}/led-all`, { colors })
-export const debugLedTestApi = (station: number) =>
-  apiClient.post(`/hardware-debug/boards/${station}/led-test`)
-export const debugCalibrateBoardApi = (station: number) =>
-  apiClient.post(`/hardware-debug/boards/${station}/calibrate`)
-export const debugResetBoardApi = (station: number) =>
-  apiClient.post(`/hardware-debug/boards/${station}/reset`)
-export const debugSetJudgmentApi = (station: number, value: number) =>
-  apiClient.post(`/hardware-debug/boards/${station}/set-judgment`, { value })
-
-// Logs
-export const getHardwareDebugLogsApi = (since?: number, level?: string, limit?: number) =>
-  apiClient.get('/hardware-debug/logs', { params: { since, level, limit } })
-export const clearHardwareDebugLogsApi = () =>
-  apiClient.post('/hardware-debug/logs/clear')
-
-// Mainboard slot states (from controller's cache)
-export const getMainboardSlotsApi = (face: 'A' | 'B', count: number = 700) =>
-  apiClient.get('/hardware-debug/mainboard/slots', { params: { face, count } })
 
 // ── Barcode Definition ──
 export const getBarcodeDefinitionsApi = () =>
@@ -395,6 +321,48 @@ export const testBarcodeDefinitionApi = (definitionId: number, barcode: string) 
   apiClient.post('/barcode-definitions/test', { definition_id: definitionId, barcode })
 export const getFieldMappingsApi = () =>
   apiClient.get('/barcode-definitions/field-mappings')
+
+// ── Light Control Debug ──
+export const getDebugShelvesApi = () =>
+  apiClient.get('/light-debug/shelves')
+export const debugSingleLightApi = (data: {
+  cell_id: string
+  led_color: number
+  blink?: boolean
+  turn_on_time?: number
+}) => apiClient.post('/light-debug/single', data)
+export const debugBatchLightApi = (data: {
+  cells: { cell_id: string; led_color: number; blink?: boolean }[]
+  turn_on_time?: number
+  voice_text?: string
+}) => apiClient.post('/light-debug/batch', data)
+export const debugIndicatorApi = (data: {
+  rack_id: string
+  indicator_id?: number
+  indicator_status?: number
+  blink?: boolean
+}) => apiClient.post('/light-debug/indicator', data)
+export const debugRackTestApi = (data: {
+  rack_id: string
+  test_mode?: number
+  interval?: number
+}) => apiClient.post('/light-debug/test', data)
+export const debugCellListApi = (data: {
+  rack_id?: string
+  filter?: string
+  page_index?: number
+  page_size?: number
+}) => apiClient.post('/light-debug/cell-list', data)
+export const debugTurnOffApi = (data: { cell_id: string }) =>
+  apiClient.post('/light-debug/turn-off', data)
+export const debugTurnOffAllApi = (data: { rack_id: string; page_size?: number }) =>
+  apiClient.post('/light-debug/turn-off-all', data)
+export const getCallbackEventsApi = (params?: { limit?: number; shelf_id?: number }) =>
+  apiClient.get('/light-debug/callback-events', { params })
+export const debugSensorTestApi = (data: {
+  rack_id: string
+  interval?: number
+}) => apiClient.post('/light-debug/sensor-test', data)
 
 // ── Data Backup ──
 export const getBackupsApi = () =>

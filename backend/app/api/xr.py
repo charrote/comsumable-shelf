@@ -99,6 +99,9 @@ async def xr_confirm_restock(
     if not batch or batch.matched_reel_id is None:
         raise HTTPException(status_code=400, detail="XR批次未配对")
 
+    if not data.shelf_slot_id:
+        raise HTTPException(status_code=400, detail="shelf_slot_id 为必填")
+
     await confirm_restock(
         db,
         reel_id=batch.matched_reel_id,
@@ -109,5 +112,5 @@ async def xr_confirm_restock(
     return {
         "status": "ok",
         "reel_id": batch.matched_reel_id,
-        "message": "退库完成, 物料盘已上架至储位 " + str(data.shelf_slot_id),
+        "message": f"退库完成, 物料盘已上架至储位",
     }

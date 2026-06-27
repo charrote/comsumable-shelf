@@ -6,8 +6,8 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useAuthStore } from '../store/authStore'
 import { useOperator, OPERATOR_KEY } from '../hooks/useOperator'
-import api, { updateBaseUrl } from '../api'
-import { PersonIcon, GlobeIcon, PrinterIcon, ChartIcon } from '../components/Icons'
+import api, { updateBaseUrl, loadBaseUrl } from '../api'
+import { PersonIcon, GlobeIcon, PrinterIcon } from '../components/Icons'
 
 const Colors = {
   primary: '#0066CC', success: '#00AA55', warning: '#FF9900', danger: '#DD3333',
@@ -18,7 +18,6 @@ const SETTINGS_KEYS = {
   API_URL: 'pda_api_url',
   PRINTER_IP: 'pda_printer_ip',
   PRINTER_PORT: 'pda_printer_port',
-  FIFO_STRATEGY: 'pda_fifo_strategy',
   OPERATOR: OPERATOR_KEY,
 }
 
@@ -27,10 +26,9 @@ export default function SettingsScreen() {
   const logout = useAuthStore((s) => s.logout)
   const { operator, setOperator } = useOperator()
 
-  const [apiUrl, setApiUrl] = useState('http://localhost:8080/api')
+  const [apiUrl, setApiUrl] = useState('')
   const [printerIp, setPrinterIp] = useState('')
   const [printerPort, setPrinterPort] = useState('9100')
-  const [fifoStrategy, setFifoStrategy] = useState('tail_first')
   const [operatorInput, setOperatorInput] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [isTesting, setIsTesting] = useState(false)
@@ -53,13 +51,17 @@ export default function SettingsScreen() {
         SETTINGS_KEYS.API_URL,
         SETTINGS_KEYS.PRINTER_IP,
         SETTINGS_KEYS.PRINTER_PORT,
-        SETTINGS_KEYS.FIFO_STRATEGY,
       ])
       const map = Object.fromEntries(stored)
-      if (map[SETTINGS_KEYS.API_URL]) setApiUrl(map[SETTINGS_KEYS.API_URL])
+      // API URL: 优先 AsyncStorage 中保存的值，无则从 DEFAULT_BASE_URL 加载
+      if (map[SETTINGS_KEYS.API_URL]) {
+        setApiUrl(map[SETTINGS_KEYS.API_URL])
+      } else {
+        const defaultUrl = await loadBaseUrl()
+        setApiUrl(defaultUrl)
+      }
       if (map[SETTINGS_KEYS.PRINTER_IP]) setPrinterIp(map[SETTINGS_KEYS.PRINTER_IP])
       if (map[SETTINGS_KEYS.PRINTER_PORT]) setPrinterPort(map[SETTINGS_KEYS.PRINTER_PORT])
-      if (map[SETTINGS_KEYS.FIFO_STRATEGY]) setFifoStrategy(map[SETTINGS_KEYS.FIFO_STRATEGY])
     } catch {
       // ignore
     }
@@ -73,7 +75,6 @@ export default function SettingsScreen() {
         [SETTINGS_KEYS.API_URL, apiUrl],
         [SETTINGS_KEYS.PRINTER_IP, printerIp],
         [SETTINGS_KEYS.PRINTER_PORT, printerPort],
-        [SETTINGS_KEYS.FIFO_STRATEGY, fifoStrategy],
       ])
       // 同步更新 API 实例
       await updateBaseUrl(apiUrl)
@@ -106,12 +107,6 @@ export default function SettingsScreen() {
       setIsTesting(false)
     }
   }
-
-  const strategies = [
-    { key: 'tail_first', label: '尾数优先（推荐）', desc: '优先出库余量少的盘' },
-    { key: 'time_fifo', label: '时间优先（FIFO）', desc: '严格按入库时间先后出库' },
-    { key: 'mixed', label: '混合模式', desc: '同尾数时按时间排序' },
-  ]
 
   return (
     <View style={styles.container}>
@@ -212,31 +207,6 @@ export default function SettingsScreen() {
           />
         </View>
 
-        {/* FIFO Strategy */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <View style={{ marginRight: 8 }}><ChartIcon size={22} color={Colors.primary} /></View>
-            <Text style={styles.cardTitle}>出库策略</Text>
-          </View>
-          {strategies.map((s) => (
-            <TouchableOpacity
-              key={s.key}
-              style={[styles.strategyItem, fifoStrategy === s.key && styles.strategyItemActive]}
-              onPress={() => setFifoStrategy(s.key)}
-            >
-              <View style={styles.radioOuter}>
-                {fifoStrategy === s.key && <View style={styles.radioInner} />}
-              </View>
-              <View style={styles.strategyContent}>
-                <Text style={[styles.strategyLabel, fifoStrategy === s.key && { color: Colors.primary }]}>
-                  {s.label}
-                </Text>
-                <Text style={styles.strategyDesc}>{s.desc}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
-
         {/* Save */}
         <TouchableOpacity
           style={[styles.button, styles.saveButton]}
@@ -255,7 +225,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
 
         {/* Version */}
-        <Text style={styles.version}>版本 2.0 (Build 2026.06)</Text>
+        <Text style={styles.version}>版本 3.0.0 (Build 2026.06)</Text>
       </ScrollView>
     </View>
   )
@@ -281,13 +251,6 @@ const styles = StyleSheet.create({
   testSuccess: { color: Colors.success },
   testFail: { color: Colors.danger },
   saveSuccess: { textAlign: 'center', color: Colors.success, fontSize: 14, fontWeight: '600' },
-  strategyItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, marginBottom: 6 },
-  strategyItemActive: { backgroundColor: '#e6f0ff' },
-  radioOuter: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: Colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 12 },
-  radioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.primary },
-  strategyContent: { flex: 1 },
-  strategyLabel: { fontSize: 15, fontWeight: '600', color: Colors.text },
-  strategyDesc: { fontSize: 13, color: Colors.textSecondary, marginTop: 1 },
   logoutButton: { marginTop: 12, padding: 16, borderRadius: 8, alignItems: 'center', borderWidth: 1, borderColor: Colors.danger, backgroundColor: '#fff' },
   logoutText: { color: Colors.danger, fontSize: 16, fontWeight: '600' },
   version: { textAlign: 'center', color: Colors.textSecondary, fontSize: 13, marginTop: 16 },

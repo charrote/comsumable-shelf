@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Space, Tag, Modal, Form, InputNumber, message, Descriptions, Tree, Card, Statistic, Row, Col, Select, Typography } from 'antd'
-import { PlusOutlined, CalculatorOutlined, CheckCircleOutlined, CloseCircleOutlined, FileTextOutlined, SwapOutlined } from '@ant-design/icons'
+import { Table, Button, Space, Tag, Modal, Form, InputNumber, message, Descriptions, Tree, Card, Statistic, Row, Col, Select, Typography, Tooltip } from 'antd'
+import { PlusOutlined, CalculatorOutlined, CheckCircleOutlined, CloseCircleOutlined, FileTextOutlined, SwapOutlined, BulbOutlined } from '@ant-design/icons'
 import type { DataNode } from 'antd/es/tree'
 import { getIssueListApi, createIssueApi, calculateIssueApi } from '../api'
 import { getBomListApi, getBomApi } from '../api'
@@ -19,6 +19,36 @@ const statusColors: Record<string, string> = {
   assigned: 'blue',
   picking: 'orange',
   completed: 'green',
+}
+
+// ── 储位灯颜色映射 ──
+const PICKING_COLOR_MAP: Record<string, { label: string; hex: string; textColor: string }> = {
+  red: { label: '红色', hex: '#ff4d4f', textColor: '#fff' },
+  green: { label: '绿色', hex: '#52c41a', textColor: '#fff' },
+  yellow: { label: '黄色', hex: '#faad14', textColor: '#000' },
+  blue: { label: '蓝色', hex: '#1677ff', textColor: '#fff' },
+  magenta: { label: '品红', hex: '#eb2f96', textColor: '#fff' },
+  cyan: { label: '青色', hex: '#13c2c2', textColor: '#fff' },
+  white: { label: '白色', hex: '#ffffff', textColor: '#000' },
+}
+
+function ColorBadge({ color }: { color: string }) {
+  const info = PICKING_COLOR_MAP[color]
+  if (!info) return null
+  return (
+    <Tooltip title={`储位灯颜色：${info.label}`}>
+      <Tag
+        color={info.hex}
+        style={{
+          color: info.textColor,
+          border: color === 'white' ? '1px solid #d9d9d9' : 'none',
+        }}
+      >
+        <BulbOutlined style={{ marginRight: 4 }} />
+        {info.label}
+      </Tag>
+    </Tooltip>
+  )
 }
 
 export function IssueOrderPage() {
@@ -78,13 +108,16 @@ export function IssueOrderPage() {
   const handleCalculate = async (orderId: number) => {
     setCalcLoading(prev => ({ ...prev, [orderId]: true }))
     try {
-      await calculateIssueApi(orderId, { strategy: 'config' })
-      message.success('FIFO计算完成')
-      if (currentIssue?.id === orderId) {
-        await viewDetail(orderId)
+      const res = await calculateIssueApi(orderId, { strategy: 'config' })
+      // 检查是否有缺料
+      const hasShortage = res.data?.materials?.some((m: any) => (m.shortage || 0) > 0)
+      if (hasShortage) {
+        message.warning('FIFO计算完成，但部分物料库存不足，订单仍为待计算状态')
       } else {
-        loadData()
+        message.success('FIFO计算完成，物料已全部锁定')
       }
+      // 始终打开详情弹窗，让用户看到每条物料的分配/缺料情况
+      await viewDetail(orderId)
     } catch (e: any) {
       message.error(e.response?.data?.detail || '计算失败')
     } finally {
@@ -144,6 +177,10 @@ export function IssueOrderPage() {
     { title: '生产数量', dataIndex: 'production_quantity', key: 'production_quantity', width: 100 },
     { title: '明细数', dataIndex: 'detail_count', key: 'detail_count', width: 80 },
     {
+      title: '储位灯颜色', dataIndex: 'assigned_color', key: 'assigned_color', width: 110,
+      render: (val: string) => val ? <ColorBadge color={val} /> : '-',
+    },
+    {
       title: '状态', dataIndex: 'status', key: 'status', width: 100,
       render: (val: string) => <Tag color={statusColors[val]}>{statusLabels[val]}</Tag>,
     },
@@ -175,7 +212,7 @@ export function IssueOrderPage() {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2 style={{ margin: 0 }}>发料管理</h2>
+        <Title level={3} style={{ margin: 0 }}>发料管理</Title>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateModal(true)}>新建发料单</Button>
       </div>
 
@@ -228,7 +265,10 @@ export function IssueOrderPage() {
               <Descriptions.Item label="版本">v{currentIssue.version || '-'}</Descriptions.Item>
               <Descriptions.Item label="生产数量">{currentIssue.production_quantity}</Descriptions.Item>
               <Descriptions.Item label="状态">
-                <Tag color={statusColors[currentIssue.status]}>{statusLabels[currentIssue.status]}</Tag>
+                <Space>
+                  <Tag color={statusColors[currentIssue.status]}>{statusLabels[currentIssue.status]}</Tag>
+                  {currentIssue.assigned_color && <ColorBadge color={currentIssue.assigned_color} />}
+                </Space>
               </Descriptions.Item>
             </Descriptions>
 

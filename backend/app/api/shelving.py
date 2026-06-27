@@ -7,7 +7,8 @@ Supports two modes:
 
 import re
 from typing import Optional
-from sqlalchemy import select, update
+from datetime import datetime
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -103,6 +104,12 @@ async def scan_reel_for_shelving(
             slot_code = f"{slot.side}{slot.slot_on_board}"
 
     status = "already_bound" if slot_id else "ok"
+
+    # ── 智能料架模式：标记为待上架，等待回调自动绑定 ──
+    if not slot_id and reel.status != "pending_shelving":
+        reel.status = "pending_shelving"
+        reel.updated_at = datetime.utcnow()
+        await db.commit()
 
     return ShelvingScanResponse(
         status=status,
@@ -281,7 +288,7 @@ async def bind_shelving_slot(
                 ShelfSlot.shelf_id == data.shelf_id,
                 ShelfSlot.last_sensor_state == 0,  # sensor says empty
             )
-            .order_by(ShelfSlot.side, ShelfSlot.board_address, ShelfSlot.slot_on_board)
+            .order_by(ShelfSlot.side, ShelfSlot.slot_on_board)
             .limit(1)
         )
         empty_slot = slots_result.scalar_one_or_none()

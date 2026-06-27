@@ -69,7 +69,9 @@ async def get_daily_report(
                 customer_name="",
                 summary=DailyReportSummary(
                     total_materials=0, total_in=0, total_out=0,
-                    total_balance=0, total_reels_on_shelf=0, total_reels_tracking=0,
+                    total_balance=0, total_reels_on_shelf=0,
+                    total_reels_pending_shelving=0, total_reels_physical_inventory=0,
+                    total_reels_tracking=0,
                 ),
                 details=[],
             )
@@ -78,6 +80,7 @@ async def get_daily_report(
         total_in = 0.0
         total_out = 0.0
         total_reels_on_shelf = 0
+        total_reels_pending_shelving = 0
         total_reels_tracking = 0
 
         for mat_id in sorted(material_ids_in_txns):
@@ -127,8 +130,9 @@ async def get_daily_report(
             # Closing balance = opening + in - out
             closing_balance = opening_balance + day_in - day_out
 
-            # --- Current on-shelf / tracking pallet counts ---
+            # --- Current on-shelf / pending_shelving / tracking pallet counts ---
             shelf_count = 0
+            pending_shelving_count = 0
             tracking_count = 0
 
             shelf_result = await db.execute(
@@ -140,6 +144,15 @@ async def get_daily_report(
             )
             shelf_count = shelf_result.scalar_one() or 0
 
+            pending_shelving_result = await db.execute(
+                select(func.count())
+                .where(
+                    InventoryReel.material_id == mat_id,
+                    InventoryReel.status == "pending_shelving",
+                )
+            )
+            pending_shelving_count = pending_shelving_result.scalar_one() or 0
+
             tracking_result = await db.execute(
                 select(func.count())
                 .where(
@@ -150,6 +163,7 @@ async def get_daily_report(
             tracking_count = tracking_result.scalar_one() or 0
 
             total_reels_on_shelf += shelf_count
+            total_reels_pending_shelving += pending_shelving_count
             total_reels_tracking += tracking_count
 
             details.append(DailyReportDetail(
@@ -161,6 +175,8 @@ async def get_daily_report(
                 out_qty=day_out,
                 closing_balance=max(0, closing_balance),
                 reels_on_shelf=shelf_count,
+                reels_pending_shelving=pending_shelving_count,
+                reels_physical_inventory=shelf_count + pending_shelving_count,
                 reels_tracking=tracking_count,
             ))
 
@@ -180,6 +196,8 @@ async def get_daily_report(
             total_out=total_out,
             total_balance=total_balance,
             total_reels_on_shelf=total_reels_on_shelf,
+            total_reels_pending_shelving=total_reels_pending_shelving,
+            total_reels_physical_inventory=total_reels_on_shelf + total_reels_pending_shelving,
             total_reels_tracking=total_reels_tracking,
         )
 

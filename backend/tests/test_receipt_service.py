@@ -327,11 +327,8 @@ class TestFinalizeReceiptReel:
         slot = ShelfSlot(
             shelf_id=shelf.id,
             side="A",
-            board_address=1,
             slot_on_board=1,
-            global_index=1,
-            modbus_tcp_id=1,
-            modbus_coil_base=0,
+            cell_id=f"{shelf.code}A0001",
             last_sensor_state=0,
         )
         db.add(slot)
@@ -400,7 +397,7 @@ class TestFinalizeReceiptReel:
         self, db_session: AsyncSession, sample_material: MaterialMaster,
         sample_customer: Customer,
     ):
-        """auto_assign_slot=True finds and binds empty slot."""
+        """auto_assign_slot=True 在智能料架架构中等待回调绑定，不立即分配。"""
         receipt = await self._setup_receipt(db_session, sample_customer.id)
         shelf, slot = await self._setup_shelf(db_session)
 
@@ -415,11 +412,13 @@ class TestFinalizeReceiptReel:
             auto_assign_slot=True,
         )
 
-        assert result["assigned_slot"] is not None
+        # 新架构：不立即分配，等待料架回调自动绑定
+        assert result["assigned_slot"] is None
 
-        # Verify reel has shelf_slot_id set
+        # Verify reel is pending_shelving with no slot assigned
         reel = await db_session.get(InventoryReel, result["reel_id"])
-        assert reel.shelf_slot_id is not None
+        assert reel.status == "pending_shelving"
+        assert reel.shelf_slot_id is None
 
     async def test_skip_auto_assign_when_disabled(
         self, db_session: AsyncSession, sample_material: MaterialMaster,
@@ -449,7 +448,7 @@ class TestFinalizeReceiptReel:
         self, db_session: AsyncSession, sample_material: MaterialMaster,
         sample_customer: Customer,
     ):
-        """Slot with max_quantity < quantity is skipped."""
+        """Slot with max_quantity < quantity — 新架构等待回调，不立即分配。"""
         receipt = await self._setup_receipt(db_session, sample_customer.id)
         shelf = Shelf(code="CAP-SHELF", name="容量测试", active=1)
         db_session.add(shelf)
@@ -457,22 +456,20 @@ class TestFinalizeReceiptReel:
 
         # Small slot (capacity 5)
         small_slot = ShelfSlot(
-            shelf_id=shelf.id, side="A", board_address=1,
-            slot_on_board=1, global_index=1,
-            modbus_tcp_id=1, modbus_coil_base=0,
+            shelf_id=shelf.id, side="A",
+            slot_on_board=1, cell_id=f"{shelf.code}A0001",
             last_sensor_state=0, max_quantity=5.0,
         )
         # Large slot (capacity 100)
         large_slot = ShelfSlot(
-            shelf_id=shelf.id, side="A", board_address=2,
-            slot_on_board=2, global_index=2,
-            modbus_tcp_id=2, modbus_coil_base=1,
+            shelf_id=shelf.id, side="A",
+            slot_on_board=2, cell_id=f"{shelf.code}A0002",
             last_sensor_state=0, max_quantity=100.0,
         )
         db_session.add_all([small_slot, large_slot])
         await db_session.commit()
 
-        # Real quantity = 50 — should skip small_slot (cap 5) and assign large_slot
+        # 新架构：不立即分配，等待料架回调自动绑定
         result = await finalize_receipt_reel(
             db=db_session,
             receipt_id=receipt.id,
@@ -484,9 +481,13 @@ class TestFinalizeReceiptReel:
             auto_assign_slot=True,
         )
 
-        assert result["assigned_slot"] is not None
-        # Should be assigned to large_slot (global_index=2) not small_slot (global_index=1)
-        assert result["assigned_slot"] == 2
+        # 新架构不立即分配储位
+        assert result["assigned_slot"] is None
+
+        # Verify reel is pending_shelving with no slot assigned
+        reel = await db_session.get(InventoryReel, result["reel_id"])
+        assert reel.status == "pending_shelving"
+        assert reel.shelf_slot_id is None
 
     async def test_no_available_slot_returns_none(
         self, db_session: AsyncSession, sample_material: MaterialMaster,

@@ -1,17 +1,76 @@
-"""Shelf management API routes — CRUD + slot sensor polling + events."""
+"""Shelf management API routes — CRUD + smart shelf operations."""
 
 from typing import Optional, List
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from app.schemas import (
-    ShelfCreate, ShelfResponse, ShelfSlotCreate, ShelfSlotResponse,
-    ShelfSlotEventResponse, SlotSensorState,
+    ShelfCreate, ShelfUpdate, ShelfResponse,
+    ShelfSlotCreate, ShelfSlotUpdate, ShelfSlotResponse,
 )
+from app.services.rack_api_client import RackApiClient, get_rack_api_config
 from app.utils.database import get_db
-from app.models import Shelf, ShelfSlot, ShelfSlotEvent, InventoryReel
+from app.models import Shelf, ShelfSlot
 
 router = APIRouter(prefix="/shelves", tags=["Shelf Management"])
+
+
+# ── 辅助函数 ──────────────────────────────────────────────────────────
+
+
+def _compute_cell_id(shelf_code: str, side: str, slot_on_board: int) -> str:
+    """自动生成 cell_id: UPPER(code + side + slot_on_board)"""
+    return f"{shelf_code}{side}{slot_on_board:04d}".upper()
+
+
+async def _get_shelf_or_404(shelf_id: int, db: AsyncSession) -> Shelf:
+    result = await db.execute(select(Shelf).where(Shelf.id == shelf_id))
+    shelf = result.scalar_one_or_none()
+    if not shelf:
+        raise HTTPException(status_code=404, detail="料架不存在")
+    return shelf
+
+
+async def _get_slot_or_404(slot_id: int, shelf_id: int, db: AsyncSession) -> ShelfSlot:
+    result = await db.execute(
+        select(ShelfSlot).where(
+            ShelfSlot.id == slot_id,
+            ShelfSlot.shelf_id == shelf_id,
+        )
+    )
+    slot = result.scalar_one_or_none()
+    if not slot:
+        raise HTTPException(status_code=404, detail="储位不存在")
+    return slot
+
+
+def _shelf_to_response(shelf: Shelf, slot_count: int = 0) -> ShelfResponse:
+    return ShelfResponse(
+        id=shelf.id,
+        code=shelf.code,
+        name=shelf.name,
+        location=shelf.location,
+        active=shelf.active,
+        slot_count=slot_count,
+    )
+
+
+def _slot_to_response(slot: ShelfSlot) -> ShelfSlotResponse:
+    return ShelfSlotResponse(
+        id=slot.id,
+        shelf_id=slot.shelf_id,
+        side=slot.side,
+        slot_on_board=slot.slot_on_board,
+        code=slot.code,
+        name=slot.name,
+        cell_id=slot.cell_id,
+        max_quantity=slot.max_quantity,
+        last_event_at=slot.last_event_at,
+        last_sensor_state=slot.last_sensor_state,
+    )
+
+
+# ── 料架 CRUD ─────────────────────────────────────────────────────────
 
 
 @router.get("")
@@ -25,13 +84,23 @@ async def list_shelves(
     query = query.order_by(Shelf.code)
     result = await db.execute(query)
     shelves = result.scalars().all()
-    return [ShelfResponse(
-        id=s.id, code=s.code, name=s.name,
-        a_sides=s.a_sides, b_sides=s.b_sides, total_slots=s.total_slots,
-        controller_ip=s.controller_ip, controller_port=s.controller_port,
-        a_side_count=s.a_side_count, b_side_count=s.b_side_count,
-        location=s.location, active=s.active,
-    ) for s in shelves]
+
+    # 批量查询 slot_count
+    shelf_ids = [s.id for s in shelves]
+    if shelf_ids:
+        count_query = (
+            select(ShelfSlot.shelf_id, func.count(ShelfSlot.id))
+            .where(ShelfSlot.shelf_id.in_(shelf_ids))
+            .group_by(ShelfSlot.shelf_id)
+        )
+        count_result = await db.execute(count_query)
+        slot_counts = dict(count_result.all())
+    else:
+        slot_counts = {}
+
+    return [
+        _shelf_to_response(s, slot_counts.get(s.id, 0)) for s in shelves
+    ]
 
 
 @router.post("")
@@ -40,25 +109,15 @@ async def create_shelf(
     db: AsyncSession = Depends(get_db),
 ):
     shelf = Shelf(
-        code=data.code, name=data.name,
-        a_sides=data.a_sides, b_sides=data.b_sides,
-        total_slots=(data.a_sides + data.b_sides) * 20,
-        controller_ip=data.controller_ip,
-        controller_port=data.controller_port,
-        a_side_count=data.a_sides, b_side_count=data.b_sides,
-        location=data.location, active=1,
+        code=data.code,
+        name=data.name,
+        location=data.location,
+        active=1,
     )
     db.add(shelf)
     await db.commit()
     await db.refresh(shelf)
-    return ShelfResponse(
-        id=shelf.id, code=shelf.code, name=shelf.name,
-        a_sides=shelf.a_sides, b_sides=shelf.b_sides,
-        total_slots=shelf.total_slots,
-        controller_ip=shelf.controller_ip, controller_port=shelf.controller_port,
-        a_side_count=shelf.a_side_count, b_side_count=shelf.b_side_count,
-        location=shelf.location, active=shelf.active,
-    )
+    return _shelf_to_response(shelf)
 
 
 @router.get("/{shelf_id}")
@@ -66,50 +125,45 @@ async def get_shelf(
     shelf_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Shelf).where(Shelf.id == shelf_id))
-    shelf = result.scalar_one_or_none()
-    if not shelf:
-        raise HTTPException(status_code=404, detail="料架不存在")
-    return ShelfResponse(
-        id=shelf.id, code=shelf.code, name=shelf.name,
-        a_sides=shelf.a_sides, b_sides=shelf.b_sides,
-        total_slots=shelf.total_slots,
-        controller_ip=shelf.controller_ip, controller_port=shelf.controller_port,
-        a_side_count=shelf.a_side_count, b_side_count=shelf.b_side_count,
-        location=shelf.location, active=shelf.active,
+    shelf = await _get_shelf_or_404(shelf_id, db)
+    # 查储位数量
+    count_result = await db.execute(
+        select(func.count(ShelfSlot.id))
+        .where(ShelfSlot.shelf_id == shelf_id)
     )
+    slot_count = count_result.scalar() or 0
+    return _shelf_to_response(shelf, slot_count)
 
 
 @router.put("/{shelf_id}")
 async def update_shelf(
     shelf_id: int,
-    data: ShelfCreate,
+    data: ShelfUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    shelf = await db.execute(select(Shelf).where(Shelf.id == shelf_id))
-    shelf = shelf.scalar_one_or_none()
-    if not shelf:
-        raise HTTPException(status_code=404, detail="料架不存在")
-    shelf.code = data.code
-    shelf.name = data.name
-    shelf.a_sides = data.a_sides
-    shelf.b_sides = data.b_sides
-    shelf.total_slots = (data.a_sides + data.b_sides) * 20
-    shelf.controller_ip = data.controller_ip
-    shelf.controller_port = data.controller_port
-    shelf.a_side_count = data.a_sides
-    shelf.b_side_count = data.b_sides
-    shelf.location = data.location
+    shelf = await _get_shelf_or_404(shelf_id, db)
+    old_code = shelf.code
+
+    if data.code is not None:
+        shelf.code = data.code
+    if data.name is not None:
+        shelf.name = data.name
+    if data.location is not None:
+        shelf.location = data.location
+
     await db.commit()
+
+    # 如果 code 变了，重新生成所有关联储位的 cell_id
+    if data.code is not None and data.code != old_code:
+        slots_result = await db.execute(
+            select(ShelfSlot).where(ShelfSlot.shelf_id == shelf_id)
+        )
+        for slot in slots_result.scalars().all():
+            slot.cell_id = _compute_cell_id(shelf.code, slot.side, slot.slot_on_board)
+        await db.commit()
+
     await db.refresh(shelf)
-    return ShelfResponse(
-        id=shelf.id, code=shelf.code, name=shelf.name,
-        a_sides=shelf.a_sides, b_sides=shelf.b_sides,
-        total_slots=shelf.total_slots,
-        controller_ip=shelf.controller_ip, controller_port=shelf.controller_port,
-        a_side_count=shelf.a_side_count, b_side_count=shelf.b_side_count,
-        location=shelf.location, active=shelf.active,
-    )
+    return _shelf_to_response(shelf)
 
 
 @router.delete("/{shelf_id}")
@@ -117,13 +171,13 @@ async def delete_shelf(
     shelf_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    shelf = await db.execute(select(Shelf).where(Shelf.id == shelf_id))
-    shelf = shelf.scalar_one_or_none()
-    if not shelf:
-        raise HTTPException(status_code=404, detail="料架不存在")
+    shelf = await _get_shelf_or_404(shelf_id, db)
     shelf.active = 0
     await db.commit()
     return {"status": "ok", "message": "料架已禁用"}
+
+
+# ── 储位管理 ──────────────────────────────────────────────────────────
 
 
 @router.get("/{shelf_id}/slots")
@@ -131,186 +185,168 @@ async def list_slots(
     shelf_id: int,
     db: AsyncSession = Depends(get_db),
 ):
+    await _get_shelf_or_404(shelf_id, db)
     result = await db.execute(
-        select(ShelfSlot).where(ShelfSlot.shelf_id == shelf_id)
-        .order_by(ShelfSlot.side, ShelfSlot.board_address, ShelfSlot.slot_on_board)
-    )
-    slots = result.scalars().all()
-    return [ShelfSlotResponse(
-        id=s.id, shelf_id=s.shelf_id, side=s.side,
-        board_address=s.board_address, slot_on_board=s.slot_on_board,
-        global_index=s.global_index, modbus_tcp_id=s.modbus_tcp_id,
-        modbus_coil_base=s.modbus_coil_base,
-        max_quantity=s.max_quantity,
-        last_event_at=s.last_event_at,
-        last_sensor_state=s.last_sensor_state,
-    ) for s in slots]
-
-
-# ═══════════════════════════════════════════════
-# Slot Sensor & Polling Endpoints
-# ═══════════════════════════════════════════════
-
-@router.get("/{shelf_id}/slots/state")
-async def get_slot_states(
-    shelf_id: int,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """Get live sensor states for all slots on a shelf.
-
-    Returns hardware sensor reading + DB binding info.
-    """
-    slot_service = getattr(request.app.state, "slot_service", None)
-    if not slot_service or not slot_service.is_running:
-        # Fallback: return DB-only state without live sensor data
-        slots_result = await db.execute(
-            select(ShelfSlot).where(ShelfSlot.shelf_id == shelf_id)
-            .order_by(ShelfSlot.side, ShelfSlot.board_address, ShelfSlot.slot_on_board)
-        )
-        slots = slots_result.scalars().all()
-        result = []
-        for s in slots:
-            pallet = await db.execute(
-                select(InventoryReel).where(
-                    InventoryReel.shelf_slot_id == s.id,
-                    InventoryReel.status == "on_shelf",
-                ).limit(1)
-            )
-            p = pallet.scalar_one_or_none()
-            result.append({
-                "slot_id": s.id,
-                "side": s.side,
-                "board_address": s.board_address,
-                "slot_on_board": s.slot_on_board,
-                "has_material": bool(s.last_sensor_state),
-                "last_event_at": s.last_event_at.isoformat() if s.last_event_at else None,
-                "bound_reel_id": p.id if p else None,
-            })
-        return {"shelf_id": shelf_id, "polling_active": False, "slots": result}
-
-    # Live sensor data
-    live = await slot_service.get_live_state()
-    return {"shelf_id": shelf_id, "polling_active": True, "slots": live}
-
-
-@router.get("/{shelf_id}/events")
-async def list_slot_events(
-    shelf_id: int,
-    limit: int = Query(50, ge=1, le=500),
-    db: AsyncSession = Depends(get_db),
-):
-    """List recent sensor events for a shelf's slots."""
-    result = await db.execute(
-        select(ShelfSlotEvent)
-        .join(ShelfSlot, ShelfSlotEvent.shelf_slot_id == ShelfSlot.id)
+        select(ShelfSlot)
         .where(ShelfSlot.shelf_id == shelf_id)
-        .order_by(ShelfSlotEvent.created_at.desc())
-        .limit(limit)
+        .order_by(ShelfSlot.side, ShelfSlot.slot_on_board)
     )
-    events = result.scalars().all()
-    return [ShelfSlotEventResponse(
-        id=e.id,
-        shelf_slot_id=e.shelf_slot_id,
-        event_type=e.event_type,
-        reel_id=e.reel_id,
-        source=e.source,
-        old_state=e.old_state,
-        new_state=e.new_state,
-        created_at=e.created_at,
-    ) for e in events]
+    return [_slot_to_response(s) for s in result.scalars().all()]
 
 
-@router.get("/{shelf_id}/polling")
-async def get_polling_status(
+@router.post("/{shelf_id}/slots")
+async def create_slot(
     shelf_id: int,
-    request: Request,
+    data: ShelfSlotCreate,
+    db: AsyncSession = Depends(get_db),
 ):
-    """Get the polling status for a shelf."""
-    slot_service = getattr(request.app.state, "slot_service", None)
-    return {
-        "shelf_id": shelf_id,
-        "polling_active": slot_service.is_running if slot_service else False,
-    }
+    """新增储位，自动生成 cell_id = UPPER(code + side + slot_on_board)"""
+    shelf = await _get_shelf_or_404(shelf_id, db)
+
+    cell_id = _compute_cell_id(shelf.code, data.side, data.slot_on_board)
+
+    # 全局 cell_id 唯一性检查
+    dup_global = await db.execute(
+        select(ShelfSlot).where(ShelfSlot.cell_id == cell_id).limit(1)
+    )
+    if dup_global.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail=f"生成的 cell_id {cell_id} 已被其他储位使用")
+
+    slot = ShelfSlot(
+        shelf_id=shelf_id,
+        side=data.side,
+        slot_on_board=data.slot_on_board,
+        code=data.code,
+        name=data.name,
+        cell_id=cell_id,
+        max_quantity=data.max_quantity,
+    )
+    db.add(slot)
+    await db.commit()
+    await db.refresh(slot)
+    return _slot_to_response(slot)
 
 
-@router.post("/{shelf_id}/polling/start")
-async def start_polling(
+@router.put("/{shelf_id}/slots/{slot_id}")
+async def update_slot(
     shelf_id: int,
-    request: Request,
+    slot_id: int,
+    data: ShelfSlotUpdate,
+    db: AsyncSession = Depends(get_db),
 ):
-    """Start the slot sensor polling service for a shelf."""
-    slot_service = getattr(request.app.state, "slot_service", None)
-    if not slot_service:
-        raise HTTPException(status_code=500, detail="Slot service not initialized")
-    if slot_service.is_running:
-        return {"status": "ok", "message": "Polling already running"}
+    """更新储位信息，若 slot_on_board/side 改变则重新生成 cell_id"""
+    shelf = await _get_shelf_or_404(shelf_id, db)
+    slot = await _get_slot_or_404(slot_id, shelf_id, db)
 
-    await slot_service.start(shelf_id)
-    return {"status": "ok", "message": f"Polling started for shelf {shelf_id}"}
+    if data.code is not None:
+        slot.code = data.code
+    if data.name is not None:
+        slot.name = data.name
+    if data.max_quantity is not None:
+        slot.max_quantity = data.max_quantity
+
+    # 如果 code/side/slot_on_board 之一变了或 cell_id 为空，重新生成
+    if not slot.cell_id:
+        slot.cell_id = _compute_cell_id(shelf.code, slot.side, slot.slot_on_board)
+
+    await db.commit()
+    await db.refresh(slot)
+    return _slot_to_response(slot)
 
 
-@router.post("/{shelf_id}/polling/stop")
-async def stop_polling(
+@router.delete("/{shelf_id}/slots/{slot_id}")
+async def delete_slot(
     shelf_id: int,
-    request: Request,
+    slot_id: int,
+    db: AsyncSession = Depends(get_db),
 ):
-    """Stop the slot sensor polling service."""
-    slot_service = getattr(request.app.state, "slot_service", None)
-    if not slot_service:
-        raise HTTPException(status_code=500, detail="Slot service not initialized")
-    if not slot_service.is_running:
-        return {"status": "ok", "message": "Polling already stopped"}
-
-    await slot_service.stop()
-    return {"status": "ok", "message": f"Polling stopped for shelf {shelf_id}"}
+    """删除储位"""
+    await _get_shelf_or_404(shelf_id, db)
+    slot = await _get_slot_or_404(slot_id, shelf_id, db)
+    await db.delete(slot)
+    await db.commit()
+    return {"status": "ok", "message": "储位已删除"}
 
 
-@router.post("/{shelf_id}/auto-assign")
-async def manual_auto_assign(
+# ═══════════════════════════════════════════════
+# 智能料架硬件功能
+# ═══════════════════════════════════════════════
+
+@router.post("/{shelf_id}/rack-test")
+async def rack_test(
+    shelf_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+):
+    """料架硬件灯测试
+
+    请求体::
+
+        {"test_mode": 15, "interval": 1000}
+
+    test_mode:
+        - 0: 取消测试
+        - 1: RGB 灯珠测试
+        - 2: 灯序测试
+        - 4: 警示灯测试
+        - 8: 感应传感器测试
+        - 15: 全部测试
+    """
+    shelf = await _get_shelf_or_404(shelf_id, db)
+
+    api_config = await get_rack_api_config(db)
+    if not api_config:
+        raise HTTPException(status_code=400, detail="未配置控灯服务地址（请在系统设置中配置 rack_api_base_url）")
+
+    test_mode = data.get("test_mode", 15)
+    interval = data.get("interval", 1000)
+
+    try:
+        client = RackApiClient(
+            base_url=api_config["base_url"],
+            user_id=api_config["user_id"],
+            client_id=api_config["client_id"],
+        )
+        result = client.rack_test(rack_id=shelf.code, test_mode=test_mode, interval=interval)
+        return {
+            "status": "ok",
+            "shelf_id": shelf_id,
+            "rackNo": shelf.code,
+            "test_mode": test_mode,
+            "result": result,
+            "message": f"灯测试指令已发送 (mode={test_mode})",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"控灯 API 调用失败: {e}")
+
+
+@router.get("/{shelf_id}/slots/state-extended")
+async def get_slot_states_extended(
     shelf_id: int,
     db: AsyncSession = Depends(get_db),
 ):
-    """Manually trigger auto-assign: bind unassigned reels to occupied slots.
+    """获取储位扩展状态（含电池电量、灯色等）
 
-    Scans all slots on the shelf: for each slot where sensor says occupied
-    but no reel is bound, find the most recent unassigned reel and bind it.
+    通过 rackNo 调用 GetCellList 获取实时储位数据。
     """
-    from app.services.shelf_service import _find_unbound_reel
+    shelf = await _get_shelf_or_404(shelf_id, db)
 
-    slots_result = await db.execute(
-        select(ShelfSlot).where(ShelfSlot.shelf_id == shelf_id)
-        .order_by(ShelfSlot.side, ShelfSlot.board_address, ShelfSlot.slot_on_board)
-    )
-    slots = slots_result.scalars().all()
+    api_config = await get_rack_api_config(db)
+    if not api_config:
+        raise HTTPException(status_code=400, detail="未配置控灯服务地址（请在系统设置中配置 rack_api_base_url）")
 
-    bound = 0
-    for slot in slots:
-        # Check if slot is occupied (by sensor or manual state)
-        if not slot.last_sensor_state:
-            continue
-        # Check if already bound
-        existing = await db.execute(
-            select(InventoryReel).where(
-                InventoryReel.shelf_slot_id == slot.id,
-                InventoryReel.status == "on_shelf",
-            ).limit(1)
+    try:
+        client = RackApiClient(
+            base_url=api_config["base_url"],
+            user_id=api_config["user_id"],
+            client_id=api_config["client_id"],
         )
-        if existing.scalar_one_or_none():
-            continue
-        # Find unbound reel
-        reel = await _find_unbound_reel(db, shelf_id)
-        if not reel:
-            break
-        reel.shelf_slot_id = slot.id
-        bound += 1
-
-    if bound > 0:
-        await db.commit()
-
-    return {
-        "status": "ok",
-        "shelf_id": shelf_id,
-        "bound": bound,
-        "message": f"已自动绑定 {bound} 个盘料",
-    }
+        result = client.get_cell_list(rack_id=shelf.code, page_size=200)
+        cells = result.get("data", [])
+        return {
+            "shelf_id": shelf_id,
+            "rackNo": shelf.code,
+            "cells": cells,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"控灯 API 调用失败: {e}")

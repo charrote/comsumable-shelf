@@ -167,13 +167,20 @@ async def confirm_restock(
     counted_qty: float,
 ):
     """Confirm restocking a pallet after XR count.
-    
-    Updates inventory and creates restock transaction.
+
+    更新料盘状态为 on_shelf，并创建退库交易记录。
+
+    Args:
+        db: 数据库会话
+        reel_id: 料盘 ID
+        shelf_slot_id: 储位 ID
+        counted_qty: 盘点数量
     """
+
     # Update pallet
     await db.execute(
         update(InventoryReel)
-        .where(InventoryReel.id == pallet_id)
+        .where(InventoryReel.id == reel_id)
         .values(
             quantity=counted_qty,
             original_quantity=counted_qty,
@@ -187,7 +194,7 @@ async def confirm_restock(
     # Create restock transaction
     pallet = (
         await db.execute(
-            select(InventoryReel).where(InventoryReel.id == pallet_id)
+            select(InventoryReel).where(InventoryReel.id == reel_id)
         )
     ).scalar_one()
 
@@ -198,7 +205,7 @@ async def confirm_restock(
         type="restock",
         quantity=counted_qty,
         balance_after=counted_qty,
-        reel_id=pallet_id,
+        reel_id=reel_id,
         source_type="xr_transfer",
     )
     db.add(txn)

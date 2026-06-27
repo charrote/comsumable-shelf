@@ -203,6 +203,77 @@ async def init_db():
             """)
         )
 
+        # ════════════════════════════════════════════════════════════════
+        # 新料架 Schema 迁移（code + side + slot_on_board → cell_id）
+        # ════════════════════════════════════════════════════════════════
+
+        # -- shelf_slots 表：添加 code / name --
+        for col, col_type in [
+            ("code", "VARCHAR(64)"),
+            ("name", "VARCHAR(128)"),
+        ]:
+            await conn.execute(text(f"""
+                DO $$ BEGIN
+                    ALTER TABLE shelf_slots ADD COLUMN IF NOT EXISTS {col} {col_type};
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            """))
+
+        # -- led_commands 表新增字段（保留） --
+        for col, col_type in [
+            ("is_blink", "BOOLEAN DEFAULT FALSE"),
+            ("turn_on_time", "INTEGER DEFAULT 0"),
+            ("voice_text", "VARCHAR(255)"),
+        ]:
+            await conn.execute(text(f"""
+                DO $$ BEGIN
+                    ALTER TABLE led_commands ADD COLUMN IF NOT EXISTS {col} {col_type};
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            """))
+
+        # -- shelf_slot_events 表新增字段（保留） --
+        for col, col_type in [
+            ("cell_id", "VARCHAR(32)"),
+            ("raw_data", "TEXT"),
+        ]:
+            await conn.execute(text(f"""
+                DO $$ BEGIN
+                    ALTER TABLE shelf_slot_events ADD COLUMN IF NOT EXISTS {col} {col_type};
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            """))
+
+        # -- cell_id 唯一索引 --
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes
+                    WHERE tablename = 'shelf_slots' AND indexname = 'ix_shelf_slots_cell_id'
+                ) THEN
+                    CREATE UNIQUE INDEX ix_shelf_slots_cell_id
+                    ON shelf_slots (cell_id) WHERE cell_id IS NOT NULL;
+                END IF;
+            END $$;
+        """))
+
+        # -- Migration: add assigned_color to issue_order --
+        try:
+            await conn.execute(text(
+                "ALTER TABLE issue_order ADD COLUMN assigned_color VARCHAR(50)"
+            ))
+        except Exception:
+            # Column might already exist (PostgreSQL: use IF NOT EXISTS)
+            try:
+                await conn.execute(text("""
+                    DO $$ BEGIN
+                        ALTER TABLE issue_order ADD COLUMN IF NOT EXISTS assigned_color VARCHAR(50);
+                    EXCEPTION WHEN duplicate_column THEN NULL;
+                    END $$;
+                """))
+            except Exception:
+                pass  # Column already exists, ignore
+
 
 async def seed_db():
     """Seed default data (admin user, default customer, system settings)."""
@@ -263,6 +334,26 @@ async def seed_db():
                 "key": "default_slot_capacity",
                 "value": "",
                 "description": "全局默认储位容量（空=不限制；各储位可单独覆盖）",
+            },
+            {
+                "key": "rack_api_base_url",
+                "value": "",
+                "description": "智能料架服务器地址（如 http://192.168.1.200:8080）",
+            },
+            {
+                "key": "rack_api_user_id",
+                "value": "",
+                "description": "智能料架 API 用户（全局默认，可被料架级配置覆盖）",
+            },
+            {
+                "key": "rack_api_client_id",
+                "value": "",
+                "description": "智能料架 API 终端设备 ID（全局默认，可被料架级配置覆盖）",
+            },
+            {
+                "key": "picking_task_colors",
+                "value": '["red","green","yellow","blue"]',
+                "description": "储位灯任务颜色配置（JSON数组，仅勾选的颜色可用于发料单亮灯任务）",
             },
         ]
         for s in default_settings:

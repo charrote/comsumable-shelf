@@ -99,7 +99,7 @@ async def get_inventory(
     customer_ids: Optional[List[int]] = Query(None, description="按客户ID筛选（可多选）"),
     material_id: Optional[int] = Query(None),
     status: Optional[str] = Query(None, description="（已废弃，请使用 statuses）"),
-    statuses: Optional[List[str]] = Query(None, description="按状态筛选（可多选）: pending_shelving / on_shelf / in_use / tracking / exhausted"),
+    statuses: Optional[List[str]] = Query(None, description="按状态筛选（可多选）: pending_shelving / on_shelf / in_use / tracking / exhausted / ready_restock"),
     keyword: Optional[str] = Query(None, description="搜索关键词（物料编号 / Reel 编码 / Reel ID）"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -235,7 +235,7 @@ async def update_inventory_pallet(
 
     # 3. Update status (if provided)
     if data.status is not None:
-        valid_statuses = {"pending_shelving", "on_shelf", "in_use", "tracking", "exhausted"}
+        valid_statuses = {"pending_shelving", "on_shelf", "in_use", "tracking", "exhausted", "ready_restock"}
         if data.status not in valid_statuses:
             raise HTTPException(
                 status_code=400,
@@ -293,7 +293,7 @@ async def update_inventory_pallet(
 
     return InventoryUpdateResponse(
         status="ok",
-        reel_id=pallet_id,
+        reel_id=reel_id,
         updated_fields=updated_fields,
         message=f"库存托盘 #{reel_id} 已更新: {', '.join(updated_fields) if updated_fields else '无变更'}",
     )
@@ -358,6 +358,7 @@ async def export_inventory(
     status_labels = {
         "pending_shelving": "待上架", "on_shelf": "在架",
         "in_use": "使用中", "tracking": "跟踪中", "exhausted": "已耗尽",
+        "ready_restock": "待退库",
     }
 
     for row in rows:
@@ -400,16 +401,14 @@ async def direct_outbound(
     data: DirectOutRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Direct outbound — scan & release reel without BOM / IssueOrder.
+    """Direct outbound — scan & release an entire reel without BOM / IssueOrder.
 
-    This is a simplified outbound flow for urgent picks or waste disposal.
-    It reduces the reel's quantity, creates a Transaction record,
-    and optionally releases the shelf slot when fully consumed.
+    Inventory is managed in Reel units — outbound always removes the full reel.
+    This is a simplified outbound flow for urgent picks, waste disposal, etc.
     """
     result = await direct_out(
         db=db,
         reel_id=reel_id,
-        quantity=data.quantity,
         operator=data.operator,
         note=data.note,
         release_slot=data.release_slot,
@@ -422,7 +421,7 @@ async def direct_outbound(
         status=result["status"],
         reel_id=result["reel_id"],
         quantity_before=result["quantity_before"],
-        quantity_after=max(0, result["quantity_after"]),
+        quantity_after=result["quantity_after"],
         reel_status=result["reel_status"],
         slot_released=result["slot_released"],
         message=result["message"],

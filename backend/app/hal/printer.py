@@ -15,8 +15,6 @@ Label format (SMT Reel):
 import asyncio
 import logging
 
-from app.config import settings
-
 logger = logging.getLogger(__name__)
 
 
@@ -91,14 +89,6 @@ async def print_label(
         customer_material_code=customer_material_code,
         reel_barcode=reel_barcode,
     )
-
-    # ── Simulation mode: skip real TCP connection ──
-    if settings.HARDWARE_SIMULATION:
-        logger.info(
-            "SIM: label printed %s QTY=%s reel=%s (no hardware)",
-            material_code, quantity, reel_barcode,
-        )
-        return True
 
     try:
         reader, writer = await asyncio.wait_for(

@@ -73,8 +73,8 @@ class TestShelfSlotCapacity:
         await db_session.commit()
 
         slot = ShelfSlot(
-            shelf_id=shelf.id, side="A", board_address=1,
-            slot_on_board=1, global_index=1, modbus_coil_base=0,
+            shelf_id=shelf.id, side="A",
+            slot_on_board=1, cell_id="CAP-TESTA0001",
         )
         db_session.add(slot)
         await db_session.commit()
@@ -89,8 +89,8 @@ class TestShelfSlotCapacity:
         await db_session.commit()
 
         slot = ShelfSlot(
-            shelf_id=shelf.id, side="A", board_address=1,
-            slot_on_board=1, global_index=1, modbus_coil_base=0,
+            shelf_id=shelf.id, side="A",
+            slot_on_board=1, cell_id="CAP-TEST2A0001",
             max_quantity=100.0,
         )
         db_session.add(slot)

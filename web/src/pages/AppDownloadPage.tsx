@@ -11,10 +11,9 @@ import { getAppName } from '../store/configStore'
 
 const { Title, Text, Paragraph } = Typography
 
-const APP_VERSION = '2.1'
-const BUILD_NUMBER = 'release-20260624'
+const APP_VERSION = '3.0.0'
+const BUILD_NUMBER = 'release-20260627'
 const APK_PATH = '/apk/app-release.apk'
-const APK_SIZE = '57 MB'
 
 export function AppDownloadPage() {
   const appName = getAppName()
@@ -88,7 +87,7 @@ export function AppDownloadPage() {
                 block
                 style={{ height: 48, fontSize: 16, borderRadius: 8 }}
               >
-                下载 APK ({APK_SIZE})
+                下载 APK
               </Button>
               <Alert
                 message="正式发布版本"
@@ -177,15 +176,15 @@ export function AppDownloadPage() {
         }
         style={{ borderRadius: 12 }}
       >
-        {/* v2.1 — 默认展开 */}
+        {/* v3.0.0 — 默认展开 */}
         <Divider orientation="left" plain>
-          v2.1 (2026-06-24)
+          v3.0.0 (2026-06-27)
         </Divider>
         <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
-          <li>Release 重新构建：包含最新源码，优化 R8 混淆与资源压缩，APK 体积 29MB</li>
-          <li>库存盘号修复：WEB 库存管理页库存盘号列显示正确的 Reel 编码格式（REEL-YYYYMMDD-XXXX）</li>
-          <li>前端缓存优化：Vite 构建产物启用内容哈希文件名，解决浏览器缓存不更新的问题</li>
-          <li>后端 API 增强：库存列表接口增加 reel_code 字段返回</li>
+          <li>全版本号升级至 3.0.0：统一 PDA 端首页/设置页/登录页版本号显示</li>
+          <li>出库策略管理移至 Web 管理端：移动端不再允许修改出库策略，由后台统一控制</li>
+          <li>登录页新增版本号显示：登录页底部显示当前版本信息</li>
+          <li>修复出库策略不生效：FIFO 计算时正确传入用户在设置页选择的策略参数</li>
         </ul>
 
         {/* 历史版本 — 折叠 */}
@@ -193,6 +192,18 @@ export function AppDownloadPage() {
           ghost
           size="small"
           items={[
+            {
+              key: 'v2.1',
+              label: 'v2.1 (2026-06-24)',
+              children: (
+                <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
+                  <li>Release 重新构建：包含最新源码，优化 R8 混淆与资源压缩，APK 体积 29MB</li>
+                  <li>库存盘号修复：WEB 库存管理页库存盘号列显示正确的 Reel 编码格式（REEL-YYYYMMDD-XXXX）</li>
+                  <li>前端缓存优化：Vite 构建产物启用内容哈希文件名，解决浏览器缓存不更新的问题</li>
+                  <li>后端 API 增强：库存列表接口增加 reel_code 字段返回</li>
+                </ul>
+              ),
+            },
             {
               key: 'v2.0',
               label: 'v2.0 (2026-06-24)',

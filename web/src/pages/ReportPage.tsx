@@ -34,9 +34,12 @@ export function ReportPage() {
   const columns = [
     { title: '物料编码', dataIndex: 'material_code', key: 'material_code' },
     { title: '期初库存', dataIndex: 'opening_balance', key: 'opening_balance', width: 120 },
-    { title: '入库数量', dataIndex: 'in_qty', key: 'in_qty', width: 120 },
-    { title: '出库数量', dataIndex: 'out_qty', key: 'out_qty', width: 120 },
+    { title: '入库数量', dataIndex: 'in_qty', key: 'in_qty', width: 100 },
+    { title: '出库数量', dataIndex: 'out_qty', key: 'out_qty', width: 100 },
     { title: '期末库存', dataIndex: 'closing_balance', key: 'closing_balance', width: 120 },
+    { title: '在架盘数', dataIndex: 'reels_on_shelf', key: 'reels_on_shelf', width: 100 },
+    { title: '待上架盘数', dataIndex: 'reels_pending_shelving', key: 'reels_pending_shelving', width: 100 },
+    { title: '物理在库', dataIndex: 'reels_physical_inventory', key: 'reels_physical_inventory', width: 100 },
   ]
 
   return (
@@ -63,7 +66,16 @@ export function ReportPage() {
               <Statistic title="出库总量" value={summary.total_out} />
             </Card>
             <Card>
-              <Statistic title="期末库存" value={summary.total_balance} />
+              <Statistic title="期末库存(金额)" value={summary.total_balance} />
+            </Card>
+            <Card>
+              <Statistic title="在架盘数" value={summary.total_reels_on_shelf} />
+            </Card>
+            <Card>
+              <Statistic title="待上架盘数" value={summary.total_reels_pending_shelving} />
+            </Card>
+            <Card>
+              <Statistic title="物理在库" value={summary.total_reels_physical_inventory} />
             </Card>
           </Space>
         )}

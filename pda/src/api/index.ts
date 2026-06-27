@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore'
 import * as t from '../types/api'
 
 const API_URL_KEY = 'pda_api_url'
-const DEFAULT_BASE_URL = 'http://101.34.63.68:8080/api'
+const DEFAULT_BASE_URL = 'http://10.0.2.2:8080/api'
 
 let api: AxiosInstance = axios.create({
   baseURL: DEFAULT_BASE_URL,
@@ -208,11 +208,6 @@ export async function getInventoryApi(params?: {
   return res.data
 }
 
-export async function getTrackingInventoryApi(): Promise<{ pallets: t.TrackingReelResponse[] }> {
-  const res = await api.get('/inventory/tracking')
-  return res.data
-}
-
 // ──── Materials ────
 export async function getMaterialsApi(params?: {
   customer_id?: number
@@ -231,11 +226,6 @@ export async function getShelvesApi(): Promise<t.ShelfResponse[]> {
 
 export async function getShelfSlotsApi(shelfId: number): Promise<t.ShelfSlotResponse[]> {
   const res = await api.get(`/shelves/${shelfId}/slots`)
-  return res.data
-}
-
-export async function getSlotStatesApi(shelfId: number): Promise<{ shelf_id: number; polling_active: boolean; slots: t.SlotSensorState[] }> {
-  const res = await api.get(`/shelves/${shelfId}/slots/state`)
   return res.data
 }
 

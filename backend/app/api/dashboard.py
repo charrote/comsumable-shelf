@@ -63,12 +63,26 @@ async def get_dashboard_summary(
     )
     pending_receipts = pending_receipts_result.scalar() or 0
 
+    # Pending shelving pallets (received but not yet shelved)
+    pending_shelving_result = await db.execute(
+        select(func.count(InventoryReel.id)).where(
+            InventoryReel.status == "pending_shelving",
+            InventoryReel.quantity > 0,
+        )
+    )
+    pending_shelving_pallets = pending_shelving_result.scalar() or 0
+
+    # 物理在库总量 = 待上架 + 在架
+    physical_inventory = pending_shelving_pallets + on_shelf_pallets
+
     return {
         "app_name": settings.APP_NAME,
         "today_inbound": today_inbound,
         "today_outbound": today_outbound,
         "pending_issues": pending_issues,
         "on_shelf_pallets": on_shelf_pallets,
+        "pending_shelving_pallets": pending_shelving_pallets,
+        "physical_inventory": physical_inventory,
         "tracking_pallets": tracking_pallets,
         "pending_receipts": pending_receipts,
     }

@@ -15,7 +15,8 @@ interface DashboardData {
   totalMaterials: number
   totalShelves: number
   onShelfReels: number
-  trackingReels: number
+  pendingShelvingReels: number
+  physicalInventory: number
   pendingReceipts: number
   pendingIssues: number
 }
@@ -46,7 +47,8 @@ export function DashboardPage() {
     totalMaterials: 0,
     totalShelves: 0,
     onShelfReels: 0,
-    trackingReels: 0,
+    pendingShelvingReels: 0,
+    physicalInventory: 0,
     pendingReceipts: 0,
     pendingIssues: 0,
   })
@@ -118,15 +120,16 @@ export function DashboardPage() {
       const onShelfReels = pallets.filter(
         (item: any) => item.status === 'on_shelf',
       ).length
-      const trackingReels = pallets.filter(
-        (item: any) => item.status === 'tracking',
+      const pendingShelvingReels = pallets.filter(
+        (item: any) => item.status === 'pending_shelving',
       ).length
 
       setData({
         totalMaterials: materials.length,
         totalShelves: shelves.length,
         onShelfReels,
-        trackingReels,
+        pendingShelvingReels,
+        physicalInventory: onShelfReels + pendingShelvingReels,
         pendingReceipts: pendingReceiptsCount,
         pendingIssues: pendingIssuesCount,
       })
@@ -208,22 +211,25 @@ export function DashboardPage() {
             <Col span={6}>
               <Card>
                 <Statistic
-                  title="在架库存盘"
-                  value={data.onShelfReels}
+                  title="物理在库"
+                  value={data.physicalInventory}
                   suffix="盘"
                   prefix={<ArrowUpOutlined />}
                   valueStyle={{ color: '#3f8600' }}
                 />
+                <div style={{ fontSize: 12, color: '#999', marginTop: 4, textAlign: 'center' }}>
+                  在架 {data.onShelfReels} · 待上架 {data.pendingShelvingReels}
+                </div>
               </Card>
             </Col>
             <Col span={6}>
               <Card>
                 <Statistic
-                  title="跟踪中"
-                  value={data.trackingReels}
+                  title="待上架"
+                  value={data.pendingShelvingReels}
                   suffix="盘"
-                  prefix={<ArrowDownOutlined />}
-                  valueStyle={{ color: '#cf1322' }}
+                  prefix={<WarningOutlined />}
+                  valueStyle={{ color: data.pendingShelvingReels > 0 ? '#faad14' : '#3f8600' }}
                 />
               </Card>
             </Col>
@@ -274,6 +280,9 @@ export function DashboardPage() {
                 <div>
                   <p><FileTextOutlined style={{ marginRight: 8 }} />待确认入库: {data.pendingReceipts} 单</p>
                   <p><InboxOutlined style={{ marginRight: 8 }} />待执行发料: {data.pendingIssues} 单</p>
+                  {data.pendingShelvingReels > 0 && (
+                    <p><WarningOutlined style={{ marginRight: 8, color: '#faad14' }} />待上架料盘: {data.pendingShelvingReels} 盘</p>
+                  )}
                 </div>
               </Card>
             </Col>
