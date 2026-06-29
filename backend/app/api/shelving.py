@@ -145,14 +145,25 @@ def _parse_slot_barcode(barcode: str) -> Optional[dict]:
     """Parse shelf slot barcode into shelf_code and slot_on_board.
 
     Supported formats (case-insensitive):
-      - A0010001    (shelf_code + 4-digit slot)
-      - A001-0001   (with dash)
+      - A0010001    (shelf_code + 4-digit slot / zero-padded)
+      - A001-0001   (with dash, variable-length slot)
+
+    NOTE: the non-dash format uses non-greedy matching + requires exactly
+    4 trailing digits to disambiguate where the shelf code ends and the
+    slot number begins.  If your slot numbers are <4 digits, use the
+    dash-separated format (e.g. ``A001-5``).
     """
     b = barcode.strip().upper()
     if not b:
         return None
 
-    m = re.match(r'^([A-Z0-9]+)-?(\d+)$', b)
+    # Format with explicit dash separator: A001-0001 or A001-5
+    m = re.match(r'^([A-Z0-9]+)-(\d+)$', b)
+    if m:
+        return {"shelf_code": m.group(1), "slot_on_board": int(m.group(2))}
+
+    # Format without dash: A0010001  (non-greedy prefix + exactly 4-digit slot)
+    m = re.match(r'^([A-Z0-9]+?)(\d{4})$', b)
     if m:
         return {"shelf_code": m.group(1), "slot_on_board": int(m.group(2))}
 

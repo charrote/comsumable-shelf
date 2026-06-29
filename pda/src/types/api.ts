@@ -425,6 +425,15 @@ export interface SlotSensorState {
   bound_reel_id?: number
 }
 
+// App Version
+export interface AppVersionResponse {
+  latest_version: string
+  min_version: string
+  download_url: string
+  release_notes: string
+  checked_at: string
+}
+
 // Dashboard
 export interface DashboardSummary {
   app_name?: string

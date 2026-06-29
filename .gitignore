@@ -42,3 +42,6 @@ web/public/apk/
 
 # PDA test files — unit tests not shipped to production
 pda/app/src/test/
+
+# Local scripts — contains deploy passwords, local-only utilities
+/script/

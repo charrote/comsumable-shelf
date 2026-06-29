@@ -229,4 +229,18 @@ export async function getShelfSlotsApi(shelfId: number): Promise<t.ShelfSlotResp
   return res.data
 }
 
+// ──── App Version ────
+export interface AppVersionInfo {
+  latest_version: string
+  min_version: string
+  download_url: string
+  release_notes: string
+  checked_at: string
+}
+
+export async function checkAppVersionApi(): Promise<AppVersionInfo> {
+  const res = await api.get('/app/version')
+  return res.data
+}
+
 export default api

@@ -449,6 +449,27 @@ async def seed_db():
                 "value": '["red","green","yellow","blue"]',
                 "description": "储位灯任务颜色配置（JSON数组，仅勾选的颜色可用于发料单亮灯任务）",
             },
+            # ── App version (PDA update check) ──
+            {
+                "key": "app_latest_version",
+                "value": "3.0.0",
+                "description": "PDA App 最新版本号",
+            },
+            {
+                "key": "app_min_version",
+                "value": "3.0.0",
+                "description": "PDA App 最低兼容版本号（低于此版本的 APP 将被强制更新）",
+            },
+            {
+                "key": "app_download_url",
+                "value": "",
+                "description": "PDA App APK 下载地址",
+            },
+            {
+                "key": "app_release_notes",
+                "value": "",
+                "description": "PDA App 更新说明",
+            },
         ]
         for s in default_settings:
             existing = await session.execute(

@@ -1,13 +1,18 @@
 import React, { useState, useCallback } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, Alert,
-  ScrollView, ActivityIndicator,
+  ScrollView, ActivityIndicator, Linking,
 } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useAuthStore } from '../store/authStore'
 import { useOperator, OPERATOR_KEY } from '../hooks/useOperator'
-import api, { updateBaseUrl, loadBaseUrl } from '../api'
-import { PersonIcon, GlobeIcon, PrinterIcon } from '../components/Icons'
+import api, { updateBaseUrl, loadBaseUrl, checkAppVersionApi } from '../api'
+import type { AppVersionInfo } from '../api'
+import { PersonIcon, GlobeIcon, PrinterIcon, UpdateIcon } from '../components/Icons'
+
+// ── 当前 APP 版本（与 app.json / package.json 保持一致） ──
+const APP_VERSION = '3.0.0'
+const APP_BUILD = '2026.06'
 
 const Colors = {
   primary: '#0066CC', success: '#00AA55', warning: '#FF9900', danger: '#DD3333',
@@ -19,6 +24,65 @@ const SETTINGS_KEYS = {
   PRINTER_IP: 'pda_printer_ip',
   PRINTER_PORT: 'pda_printer_port',
   OPERATOR: OPERATOR_KEY,
+}
+
+/**
+ * Simple semver compare: returns >0 if v1>v2, <0 if v1<v2, 0 if equal.
+ * Supports "x.y.z" format only (no pre-release).
+ */
+function cmpVer(v1: string, v2: string): number {
+  const p1 = v1.split('.').map(Number)
+  const p2 = v2.split('.').map(Number)
+  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+    const a = p1[i] || 0
+    const b = p2[i] || 0
+    if (a !== b) return a - b
+  }
+  return 0
+}
+
+function showUpdateAlert(info: AppVersionInfo, isForce: boolean) {
+  const notes = info.release_notes
+    ? `更新说明:\n${info.release_notes}`
+    : ''
+
+  const buttons: any[] = [
+    { text: '取消', style: 'cancel' },
+  ]
+
+  // 如果有下载链接则显示「立即更新」
+  if (info.download_url) {
+    buttons.push({
+      text: '立即更新',
+      onPress: () => {
+        Linking.openURL(info.download_url).catch(() =>
+          Alert.alert('无法打开下载链接', info.download_url)
+        )
+      },
+    })
+  }
+
+  if (isForce) {
+    // 强制更新 — 只有「立即更新」按钮
+    buttons.length = 0
+    if (info.download_url) {
+      buttons.push({
+        text: '立即更新',
+        onPress: () => {
+          Linking.openURL(info.download_url).catch(() =>
+            Alert.alert('无法打开下载链接', info.download_url)
+          )
+        },
+      })
+    }
+  }
+
+  Alert.alert(
+    isForce ? '需要强制更新' : '发现新版本',
+    `当前版本: v${APP_VERSION}\n最新版本: v${info.latest_version}\n\n${notes}`.trim(),
+    buttons,
+    { cancelable: !isForce },
+  )
 }
 
 export default function SettingsScreen() {
@@ -34,6 +98,10 @@ export default function SettingsScreen() {
   const [isTesting, setIsTesting] = useState(false)
   const [saveSuccess, setSaveSuccess] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
+
+  // ── 版本更新 ──
+  const [isChecking, setIsChecking] = useState(false)
+  const [updateMsg, setUpdateMsg] = useState<string | null>(null)
 
   // Load settings on mount
   React.useEffect(() => {
@@ -107,6 +175,37 @@ export default function SettingsScreen() {
       setIsTesting(false)
     }
   }
+
+  // ── 检查更新 ──
+  const handleCheckUpdate = useCallback(async () => {
+    setIsChecking(true)
+    setUpdateMsg(null)
+    try {
+      const info = await checkAppVersionApi()
+
+      if (!info.latest_version) {
+        setUpdateMsg('服务器未配置版本信息')
+        return
+      }
+
+      const cmp = cmpVer(APP_VERSION, info.latest_version)
+      const minCmp = info.min_version ? cmpVer(APP_VERSION, info.min_version) : 0
+      const isForce = minCmp < 0  // 当前版本低于最低兼容版本 → 强制更新
+
+      if (cmp >= 0 && !isForce) {
+        setUpdateMsg(`已是最新版本 (v${APP_VERSION})`)
+        return
+      }
+
+      // 有新版本 → 弹出更新提示
+      showUpdateAlert(info, isForce)
+      setUpdateMsg(`发现新版本 v${info.latest_version}，请在弹窗中操作`)
+    } catch (e: any) {
+      setUpdateMsg('检查失败: ' + (e?.message || '网络错误'))
+    } finally {
+      setIsChecking(false)
+    }
+  }, [])
 
   return (
     <View style={styles.container}>
@@ -207,6 +306,32 @@ export default function SettingsScreen() {
           />
         </View>
 
+        {/* App Update */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={{ marginRight: 8 }}><UpdateIcon size={22} color={Colors.primary} /></View>
+            <Text style={styles.cardTitle}>App 更新</Text>
+          </View>
+          <Text style={styles.label}>当前版本</Text>
+          <Text style={styles.versionBadge}>v{APP_VERSION} (Build {APP_BUILD})</Text>
+          <TouchableOpacity
+            style={[styles.button, styles.updateButton]}
+            onPress={handleCheckUpdate}
+            disabled={isChecking}
+          >
+            {isChecking ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>检查更新</Text>
+            )}
+          </TouchableOpacity>
+          {updateMsg && (
+            <Text style={[styles.testResult, updateMsg.includes('最新') ? styles.testSuccess : styles.testFail]}>
+              {updateMsg}
+            </Text>
+          )}
+        </View>
+
         {/* Save */}
         <TouchableOpacity
           style={[styles.button, styles.saveButton]}
@@ -225,7 +350,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
 
         {/* Version */}
-        <Text style={styles.version}>版本 3.0.0 (Build 2026.06)</Text>
+        <Text style={styles.version}>版本 {APP_VERSION} (Build {APP_BUILD})</Text>
       </ScrollView>
     </View>
   )
@@ -245,6 +370,8 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#fff', padding: 12, borderRadius: 8, marginBottom: 10, fontSize: 16, borderWidth: 1, borderColor: '#ddd' },
   button: { padding: 14, borderRadius: 8, alignItems: 'center', marginBottom: 8 },
   testButton: { backgroundColor: Colors.info },
+  updateButton: { backgroundColor: Colors.warning },
+  versionBadge: { fontSize: 16, fontWeight: '700', color: Colors.text, marginBottom: 8 },
   saveButton: { backgroundColor: Colors.primary, marginBottom: 4 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   testResult: { textAlign: 'center', fontSize: 14, marginTop: 4 },
