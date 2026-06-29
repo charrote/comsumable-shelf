@@ -108,6 +108,7 @@ async def get_inventory(
         InventoryReel,
         MaterialMaster.code.label("material_code"),
         Shelf.code.label("shelf_code"),
+        ShelfSlot.code.label("slot_code"),
         Customer.name.label("customer_name"),
         Customer.code.label("customer_code"),
     ).join(
@@ -162,8 +163,9 @@ async def get_inventory(
             "original_quantity": pallet.original_quantity,
             "shelf_slot_id": pallet.shelf_slot_id,
             "shelf_code": row[2],
-            "customer_name": row[3],
-            "customer_code": row[4],
+            "slot_code": row[3],
+            "customer_name": row[4],
+            "customer_code": row[5],
             "customer_id": pallet.customer_id,
             "first_in_time": pallet.first_in_time,
             "last_in_time": pallet.last_in_time,
@@ -312,6 +314,7 @@ async def export_inventory(
         MaterialMaster.code.label("material_code"),
         MaterialMaster.name.label("material_name"),
         Shelf.code.label("shelf_code"),
+        ShelfSlot.code.label("slot_code"),
         Customer.name.label("customer_name"),
         Customer.code.label("customer_code"),
     ).join(
@@ -346,7 +349,7 @@ async def export_inventory(
     # Headers
     headers = [
         "库存盘号", "物料编号", "物料名称", "数量", "原始数量",
-        "客户名称", "客户编码", "储位编号", "储架编码",
+        "客户名称", "客户编码", "储位编码", "储架编码",
         "状态", "首次入库时间", "最近入库时间"
     ]
     ws.append(headers)
@@ -369,9 +372,9 @@ async def export_inventory(
             row[2],  # material_name
             pallet.quantity,
             pallet.original_quantity,
-            row[4],  # customer_name
-            row[5],  # customer_code
-            pallet.shelf_slot_id or "",
+            row[5],  # customer_name
+            row[6],  # customer_code
+            row[4] or "",  # slot_code
             row[3] or "",  # shelf_code
             status_labels.get(pallet.status, pallet.status),
             pallet.first_in_time.strftime("%Y-%m-%d %H:%M:%S") if pallet.first_in_time else "",

@@ -133,6 +133,9 @@ class ManualEntryRequest(BaseModel):
     batch_no: Optional[str] = Field(None, description="批次号")
     date_code: Optional[str] = Field(None, description="生产日期/周期")
     supplier_code: Optional[str] = Field(None, description="供应商代码")
+    scanned_reel_code: Optional[str] = Field(
+        None, description="预打印的卷盘条码（提供此值时跳过自动生成，使用此值作为 reel_code）"
+    )
     print_label: Optional[bool] = Field(False, description="是否打印标签")
     printer_ip: Optional[str] = Field(None, description="标签打印机 IP")
     printer_port: Optional[int] = Field(None, description="标签打印机端口")
@@ -200,6 +203,11 @@ class ReceiptScanRequest(BaseModel):
     )
     new_material_name: Optional[str] = Field(
         None, description="新物料名称（is_new_material 时使用）"
+    )
+
+    # ── Reel code mode: auto-generate vs scan pre-printed label ──
+    scanned_reel_code: Optional[str] = Field(
+        None, description="预打印的卷盘条码（提供此值时跳过自动生成，使用此值作为 reel_code）"
     )
 
     # ── Printer configuration ──

@@ -12,6 +12,8 @@ interface InventoryItem {
   quantity: number
   first_in_time: string
   shelf_slot_id: number | null
+  shelf_code?: string
+  slot_code?: string
   status: string
   customer_name?: string
   customer_code?: string
@@ -141,10 +143,13 @@ export function InventoryPage() {
     { title: '入库时间', dataIndex: 'first_in_time', key: 'first_in_time', width: 155 },
     {
       title: '储位',
-      dataIndex: 'shelf_slot_id',
-      key: 'shelf_slot_id',
-      width: 80,
-      render: (val: any) => (val ? `Slot #${val}` : '-'),
+      key: 'slot',
+      width: 120,
+      render: (_: any, record: InventoryItem) => {
+        if (!record.slot_code && !record.shelf_code) return '-'
+        if (record.shelf_code && record.slot_code) return `${record.shelf_code}-${record.slot_code}`
+        return record.slot_code || record.shelf_code || '-'
+      },
     },
     {
       title: '状态',

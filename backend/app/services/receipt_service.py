@@ -176,10 +176,15 @@ async def finalize_receipt_reel(
     printer_port: Optional[int] = None,
     batch_no: Optional[str] = None,
     date_code: Optional[str] = None,
+    scanned_reel_code: Optional[str] = None,
 ) -> dict:
     """Create InventoryReel + ReceiptReel records and optionally print label.
 
     This is the shared finalizer called by all scan paths (auto / human-review / new-material).
+
+    Args:
+        scanned_reel_code: If provided, use this as the reel_code instead of auto-generating.
+                          Must be unique across all InventoryReel records.
 
     Returns:
         dict with pallet_id, assigned_slot, etc.
@@ -187,16 +192,28 @@ async def finalize_receipt_reel(
     now = datetime.now()
     today = date.today()
 
-    # ── Generate reel_code: REEL-YYYYMMDD-XXXX ──
-    date_prefix = today.strftime("%Y%m%d")
-    pattern = f"REEL-{date_prefix}-%"
-    count_result = await db.execute(
-        select(func.count()).select_from(InventoryReel).where(
-            InventoryReel.reel_code.like(pattern)
+    # ── Reel code: use pre-printed label or auto-generate ──
+    if scanned_reel_code:
+        reel_code = scanned_reel_code.strip()
+        if not reel_code:
+            raise ValueError("扫入的卷盘条码不能为空")
+        # Validate uniqueness
+        existing = await db.execute(
+            select(InventoryReel).where(InventoryReel.reel_code == reel_code)
         )
-    )
-    seq = (count_result.scalar() or 0) + 1
-    reel_code = f"REEL-{date_prefix}-{seq:04d}"
+        if existing.scalar_one_or_none():
+            raise ValueError(f"卷盘条码 '{reel_code}' 已存在，请检查是否重复扫码")
+    else:
+        # Auto-generate: REEL-YYYYMMDD-XXXX
+        date_prefix = today.strftime("%Y%m%d")
+        pattern = f"REEL-{date_prefix}-%"
+        count_result = await db.execute(
+            select(func.count()).select_from(InventoryReel).where(
+                InventoryReel.reel_code.like(pattern)
+            )
+        )
+        seq = (count_result.scalar() or 0) + 1
+        reel_code = f"REEL-{date_prefix}-{seq:04d}"
 
     # ── 1. Create InventoryReel (pending shelving) ──
     pallet = InventoryReel(

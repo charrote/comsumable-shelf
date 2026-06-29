@@ -14,6 +14,7 @@ import { CustomerPage } from './pages/CustomerPage'
 import { SupplierPage } from './pages/SupplierPage'
 import { ReportPage } from './pages/ReportPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
+import { AppVersionUpdatePage } from './pages/AppVersionUpdatePage'
 import { UserManagementPage } from './pages/UserManagementPage'
 import { AppDownloadPage } from './pages/AppDownloadPage'
 import { BarcodeDefinitionPage } from './pages/BarcodeDefinitionPage'
@@ -47,6 +48,7 @@ export default function App() {
                 <Route path="suppliers" element={<SupplierPage />} />
                 <Route path="report" element={<ReportPage />} />
                 <Route path="settings" element={<SystemSettingsPage />} />
+                <Route path="app-version" element={<AppVersionUpdatePage />} />
                 <Route path="barcode-definitions" element={<BarcodeDefinitionPage />} />
                 <Route path="users" element={<UserManagementPage />} />
                 <Route path="app-download" element={<AppDownloadPage />} />

@@ -42,6 +42,7 @@ const menuItems = [
     label: '系统管理',
     children: [
       { key: '/settings', label: '系统设置' },
+      { key: '/app-version', icon: <DownloadOutlined />, label: 'APP版本更新' },
       { key: '/barcode-definitions', label: '条码定义' },
       { key: '/users', label: '用户管理' },
       { key: '/customers', label: '客户管理' },

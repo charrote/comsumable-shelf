@@ -750,6 +750,7 @@ async def manual_entry(
         printer_port=printer_port,
         batch_no=data.batch_no,
         date_code=data.date_code,
+        scanned_reel_code=data.scanned_reel_code,
     )
 
     spec_str = data.spec or ""
@@ -871,6 +872,7 @@ async def scan_receipt(
             printer_port=printer_port,
             batch_no=data.batch_no or bd_batch_no or supplier_info.get("batch_no"),
             date_code=data.date_code or bd_date_code or supplier_info.get("date_code"),
+            scanned_reel_code=data.scanned_reel_code,
         )
         return ReceiptScanResponse(
             status="ok",
@@ -999,6 +1001,7 @@ async def _handle_human_confirmation(
         printer_port=printer_port,
         batch_no=data.batch_no or bd_batch_no or supplier_info.get("batch_no"),
         date_code=data.date_code or bd_date_code or supplier_info.get("date_code"),
+        scanned_reel_code=data.scanned_reel_code,
     )
 
     action_label = "new_material" if data.is_new_material else "first_in"

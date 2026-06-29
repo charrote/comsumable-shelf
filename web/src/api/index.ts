@@ -119,6 +119,7 @@ export const manualEntryApi = (
     date_code?: string
     supplier_code?: string
     print_label?: boolean
+    scanned_reel_code?: string
   }
 ) => apiClient.post(`/receipts/${receiptId}/manual-entry`, data)
 export const scanReceiptApi = (
@@ -127,6 +128,8 @@ export const scanReceiptApi = (
     barcode: string
     operator: string
     qty?: number
+    batch_no?: string
+    date_code?: string
     manual_material_id?: number
     is_new_material?: boolean
     new_material_code?: string
@@ -134,6 +137,7 @@ export const scanReceiptApi = (
     printer_ip?: string
     printer_port?: number
     print_label?: boolean
+    scanned_reel_code?: string
   }
 ) => apiClient.post(`/receipts/${receiptId}/scan`, data)
 export const scanPreviewApi = (receiptId: number, data: { barcode: string; operator: string; qty?: number }) =>

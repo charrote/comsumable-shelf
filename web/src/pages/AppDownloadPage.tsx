@@ -1,4 +1,5 @@
-import { Card, Button, Typography, Space, Tag, Steps, Alert, QRCode, Divider, Collapse } from 'antd'
+import { useEffect, useState, useCallback } from 'react'
+import { Card, Button, Typography, Space, Tag, Steps, Alert, QRCode, Divider, Collapse, Spin, message } from 'antd'
 import {
   DownloadOutlined,
   AndroidOutlined,
@@ -6,18 +7,62 @@ import {
   InfoCircleOutlined,
   CheckCircleOutlined,
   SmileOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 import { getAppName } from '../store/configStore'
 
 const { Title, Text, Paragraph } = Typography
 
-const APP_VERSION = '3.0.0'
-const BUILD_NUMBER = 'release-20260627'
-const APK_PATH = `/apk/smes-pda.${APP_VERSION}.apk`
+/** latest-apk.json 的响应结构 */
+interface ApkManifest {
+  version: string
+  buildNumber: string
+  apkPath: string
+  updatedAt: string
+}
+
+/** 默认回退值（当 latest-apk.json 不存在时使用） */
+const FALLBACK: ApkManifest = {
+  version: '3.0.0',
+  buildNumber: 'release-20260627',
+  apkPath: '/apk/smes-pda.3.0.0.apk',
+  updatedAt: '',
+}
+
+const MANIFEST_URL = '/apk/latest-apk.json'
 
 export function AppDownloadPage() {
   const appName = getAppName()
-  const downloadUrl = `${window.location.origin}${APK_PATH}`
+
+  const [manifest, setManifest] = useState<ApkManifest>(FALLBACK)
+  const [loading, setLoading] = useState(true)
+
+  /** 从服务器获取 latest-apk.json */
+  const fetchLatestManifest = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(MANIFEST_URL, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data: ApkManifest = await res.json()
+      if (data?.version && data?.apkPath) {
+        setManifest(data)
+      } else {
+        throw new Error('清单数据不完整')
+      }
+    } catch {
+      // 静默回退到 FALLBACK，用 message 提示但不阻塞页面
+      setManifest(FALLBACK)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchLatestManifest()
+  }, [fetchLatestManifest])
+
+  const { version, buildNumber, apkPath } = manifest
+  const downloadUrl = `${window.location.origin}${apkPath}`
 
   return (
     <div style={{ maxWidth: 800, margin: '0 auto' }}>
@@ -44,11 +89,20 @@ export function AppDownloadPage() {
         <Text type="secondary" style={{ fontSize: 16 }}>
           SMT 车间物料管理 — 移动端
         </Text>
-        <div style={{ marginTop: 8 }}>
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <Spin spinning={loading} size="small" />
           <Tag color="blue" style={{ fontSize: 13, padding: '2px 12px' }}>
-            v{APP_VERSION}
+            v{version}
           </Tag>
-          <Tag style={{ fontSize: 13, padding: '2px 12px' }}>{BUILD_NUMBER}</Tag>
+          <Tag style={{ fontSize: 13, padding: '2px 12px' }}>{buildNumber}</Tag>
+          <Button
+            type="text"
+            size="small"
+            icon={<ReloadOutlined />}
+            loading={loading}
+            onClick={fetchLatestManifest}
+            title="重新检测最新版本"
+          />
         </div>
       </div>
 
@@ -82,12 +136,13 @@ export function AppDownloadPage() {
                 type="primary"
                 size="large"
                 icon={<DownloadOutlined />}
-                href={APK_PATH}
-                download={`smes-pda.${APP_VERSION}.apk`}
+                href={apkPath}
+                download={`smes-pda.${version}.apk`}
                 block
+                disabled={loading}
                 style={{ height: 48, fontSize: 16, borderRadius: 8 }}
               >
-                下载 APK
+                {loading ? '检测中...' : `下载 APK v${version}`}
               </Button>
               <Alert
                 message="正式发布版本"
@@ -153,7 +208,7 @@ export function AppDownloadPage() {
             {
               title: '打开 APK 文件安装',
               description:
-                '在文件管理器中找到下载的 app-debug.apk，点击安装即可。',
+                '在文件管理器中找到下载的 smes-pda.apk，点击安装即可。',
               icon: <AndroidOutlined />,
             },
             {
@@ -259,7 +314,7 @@ export function AppDownloadPage() {
       {/* 底部 */}
       <div style={{ textAlign: 'center', marginTop: 24, paddingBottom: 16 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          {appName} · PDA 移动端 · Build {BUILD_NUMBER}
+          {appName} · PDA 移动端 · Build {buildNumber}
         </Text>
       </div>
     </div>

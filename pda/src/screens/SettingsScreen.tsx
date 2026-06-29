@@ -11,7 +11,7 @@ import type { AppVersionInfo } from '../api'
 import { PersonIcon, GlobeIcon, PrinterIcon, UpdateIcon } from '../components/Icons'
 
 // ── 当前 APP 版本（与 app.json / package.json 保持一致） ──
-const APP_VERSION = '3.0.0'
+const APP_VERSION = '3.1.0'
 const APP_BUILD = '2026.06'
 
 const Colors = {

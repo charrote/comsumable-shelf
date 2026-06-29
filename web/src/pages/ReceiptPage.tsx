@@ -50,6 +50,10 @@ export function ReceiptPage() {
   const [printLabel, setPrintLabel] = useState(false)
   const [barcodeFocused, setBarcodeFocused] = useState(false)
 
+  // ── Reel code mode: auto-generate vs scan pre-printed label ──
+  const [reelCodeMode, setReelCodeMode] = useState<'auto' | 'scan'>('scan')
+  const [scannedReelCode, setScannedReelCode] = useState('')
+
   // ── Manual Entry Mode (no-barcode labels) ──
   const [manualEntryMode, setManualEntryMode] = useState(false)
   const [manualMaterialCode, setManualMaterialCode] = useState('')
@@ -127,6 +131,8 @@ export function ReceiptPage() {
     setManualBatch('')
     setManualDateCode('')
     setManualSupplierCode('')
+    setReelCodeMode('scan')
+    setScannedReelCode('')
     setShowScanModal(true)
   }
 
@@ -191,6 +197,7 @@ export function ReceiptPage() {
         batch_no: editBatch || undefined,
         date_code: editDateCode || undefined,
         print_label: printLabel,
+        scanned_reel_code: (reelCodeMode === 'scan' && scannedReelCode.trim()) ? scannedReelCode.trim() : undefined,
       }
 
       const codeChanged = editMaterialCode && previewData?.material_code &&
@@ -356,6 +363,7 @@ export function ReceiptPage() {
         date_code: manualDateCode.trim() || undefined,
         supplier_code: manualSupplierCode.trim() || undefined,
         print_label: printLabel,
+        scanned_reel_code: (reelCodeMode === 'scan' && scannedReelCode.trim()) ? scannedReelCode.trim() : undefined,
       })
       const data = res.data
       const reelCode = data.reel_code || `REEL#${data.reel_id}`
@@ -399,6 +407,7 @@ export function ReceiptPage() {
     setNewCode('')
     setNewName('')
     setScanBarcode('')
+    setScannedReelCode('')
     setTimeout(() => barcodeInputRef.current?.focus(), 100)
   }
 
@@ -596,6 +605,8 @@ export function ReceiptPage() {
           setManualBatch('')
           setManualDateCode('')
           setManualSupplierCode('')
+          setReelCodeMode('scan')
+          setScannedReelCode('')
         }}
         destroyOnClose
         width={720}
@@ -603,13 +614,6 @@ export function ReceiptPage() {
           previewData ? (
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
               <Space>
-                <Checkbox
-                  checked={printLabel}
-                  onChange={e => setPrintLabel(e.target.checked)}
-                  disabled={scanning}
-                >
-                  打印标签
-                </Checkbox>
                 <Button
                   icon={<ReloadOutlined />}
                   onClick={handleRescan}
@@ -688,28 +692,59 @@ export function ReceiptPage() {
             )}
           </div>
 
-          {/* 扫码输入（仅扫码模式） */}
+          {/* 扫码输入 + 标签模式（仅扫码模式） */}
           {!manualEntryMode && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <div style={{ flex: 1 }}>
-                <Input.Search
-                  key={showScanModal && !manualEntryMode ? 'barcode-input-active' : 'barcode-input-hidden'}
-                  ref={barcodeInputRef}
-                  placeholder="扫描供应商条码..."
-                  enterButton={<ScanOutlined />}
-                  loading={scanning}
-                  value={scanBarcode}
-                  onChange={e => setScanBarcode(e.target.value)}
-                  onSearch={val => {
-                    setScanBarcode(val)
-                    handleBarcodeScan(val)
-                  }}
-                  onFocus={() => setBarcodeFocused(true)}
-                  onBlur={() => setBarcodeFocused(false)}
-                  autoFocus
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <Input.Search
+                    key={showScanModal && !manualEntryMode ? 'barcode-input-active' : 'barcode-input-hidden'}
+                    ref={barcodeInputRef}
+                    placeholder="扫描供应商条码..."
+                    enterButton={<ScanOutlined />}
+                    loading={scanning}
+                    value={scanBarcode}
+                    onChange={e => setScanBarcode(e.target.value)}
+                    onSearch={val => {
+                      setScanBarcode(val)
+                      handleBarcodeScan(val)
+                    }}
+                    onFocus={() => setBarcodeFocused(true)}
+                    onBlur={() => setBarcodeFocused(false)}
+                    autoFocus
+                    size="large"
+                  />
+                </div>
+                <Select
+                  value={reelCodeMode}
+                  onChange={val => setReelCodeMode(val)}
+                  style={{ width: 155, flexShrink: 0 }}
                   size="large"
+                  options={[
+                    { value: 'auto', label: '自动生成内部标签' },
+                    { value: 'scan', label: '使用预打印标签' },
+                  ]}
                 />
+                <Checkbox
+                  checked={printLabel}
+                  onChange={e => setPrintLabel(e.target.checked)}
+                  style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+                >
+                  打印标签
+                </Checkbox>
               </div>
+              {reelCodeMode === 'scan' && (
+                <div style={{ marginTop: 8 }}>
+                  <Input
+                    placeholder="扫描预打印的卷盘条码..."
+                    value={scannedReelCode}
+                    onChange={e => setScannedReelCode(e.target.value)}
+                    size="large"
+                    style={{ maxWidth: 420 }}
+                    addonBefore="卷盘条码"
+                  />
+                </div>
+              )}
             </div>
           )}
 
