@@ -101,7 +101,7 @@ async def scan_reel_for_shelving(
         if row:
             slot, sc = row
             shelf_code = sc
-            slot_code = f"{slot.side}{slot.slot_on_board}"
+            slot_code = slot.code or str(slot.slot_on_board)
 
     status = "already_bound" if slot_id else "ok"
 
@@ -136,40 +136,25 @@ class ShelvingScanSlotResponse(BaseModel):
     shelf_id: int
     shelf_code: str
     slot_code: str
-    side: str = ""
     slot_on_board: int = 0
     is_occupied: bool = False
     message: str = ""
 
 
 def _parse_slot_barcode(barcode: str) -> Optional[dict]:
-    """Parse shelf slot barcode into shelf_code, side, slot_on_board.
+    """Parse shelf slot barcode into shelf_code and slot_on_board.
 
     Supported formats (case-insensitive):
-      - A1A05       (shelf + side + 2-digit slot)
-      - A1-A05      (with dash before slot)
-      - A1A-05      (dash between side and slot)
-      - A1-A-05     (fully separated)
-      - a1a05       (lowercase)
+      - A0010001    (shelf_code + 4-digit slot)
+      - A001-0001   (with dash)
     """
     b = barcode.strip().upper()
     if not b:
         return None
 
-    # Try fully separated: A1-A-05 → groups: A1, A, 05
-    m = re.match(r'^([A-Z0-9]+)-([A-B])(\d+)$', b)
+    m = re.match(r'^([A-Z0-9]+)-?(\d+)$', b)
     if m:
-        return {"shelf_code": m.group(1), "side": m.group(2), "slot_on_board": int(m.group(3))}
-
-    # Try: A1-A05 or A1A-05 → split on dash to find side
-    m = re.match(r'^([A-Z0-9]+)-?([A-B])-?(\d+)$', b)
-    if m:
-        return {"shelf_code": m.group(1), "side": m.group(2), "slot_on_board": int(m.group(3))}
-
-    # Try compact: A1A05 → split shelf_code from side+slot
-    m = re.match(r'^([A-Z]+\d+)([A-B])(\d+)$', b)
-    if m:
-        return {"shelf_code": m.group(1), "side": m.group(2), "slot_on_board": int(m.group(3))}
+        return {"shelf_code": m.group(1), "slot_on_board": int(m.group(2))}
 
     return None
 
@@ -179,14 +164,14 @@ async def scan_slot_for_shelving(
     data: ShelvingScanSlotRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Scan a shelf slot barcode to identify the slot (manual mode).
+    """Scan a shelf slot barcode to identify the slot.
 
-    Barcode format: {SHELF_CODE}{SIDE}{SLOT_NUMBER}
-    Examples: A1A05, A1-A05, A1-A-05
+    Barcode format: {SHELF_CODE}{SLOT_NUMBER}
+    Examples: A0010001, A001-0001
     """
     parsed = _parse_slot_barcode(data.barcode)
     if not parsed:
-        raise HTTPException(status_code=400, detail="储位条码格式无效，示例: A1A05")
+        raise HTTPException(status_code=400, detail="储位条码格式无效，示例: A0010001")
 
     # Look up shelf by code
     shelf_result = await db.execute(
@@ -196,17 +181,16 @@ async def scan_slot_for_shelving(
     if not shelf:
         raise HTTPException(status_code=404, detail=f"未找到料架 {parsed['shelf_code']}")
 
-    # Look up slot
+    # Look up slot by shelf_id + slot_on_board
     slot_result = await db.execute(
         select(ShelfSlot).where(
             ShelfSlot.shelf_id == shelf.id,
-            ShelfSlot.side == parsed["side"],
             ShelfSlot.slot_on_board == parsed["slot_on_board"],
         )
     )
     slot = slot_result.scalar_one_or_none()
     if not slot:
-        raise HTTPException(status_code=404, detail=f"未找到储位 {parsed['shelf_code']}-{parsed['side']}{parsed['slot_on_board']}")
+        raise HTTPException(status_code=404, detail=f"未找到储位 {parsed['shelf_code']}-{parsed['slot_on_board']}")
 
     # Check if slot is already occupied
     occupied = await db.execute(
@@ -217,7 +201,7 @@ async def scan_slot_for_shelving(
     )
     is_occupied = occupied.scalar_one_or_none() is not None
 
-    slot_code = f"{slot.side}{slot.slot_on_board}"
+    slot_code = slot.code or str(parsed["slot_on_board"])
 
     return ShelvingScanSlotResponse(
         status="occupied" if is_occupied else "ok",
@@ -225,8 +209,7 @@ async def scan_slot_for_shelving(
         shelf_id=shelf.id,
         shelf_code=shelf.code,
         slot_code=slot_code,
-        side=slot.side,
-        slot_on_board=slot.slot_on_board,
+        slot_on_board=parsed["slot_on_board"],
         is_occupied=is_occupied,
         message=f"已识别储位: {shelf.code}/{slot_code}" if not is_occupied
                  else f"储位 {shelf.code}/{slot_code} 已被占用",
@@ -288,7 +271,7 @@ async def bind_shelving_slot(
                 ShelfSlot.shelf_id == data.shelf_id,
                 ShelfSlot.last_sensor_state == 0,  # sensor says empty
             )
-            .order_by(ShelfSlot.side, ShelfSlot.slot_on_board)
+            .order_by(ShelfSlot.slot_on_board)
             .limit(1)
         )
         empty_slot = slots_result.scalar_one_or_none()
@@ -313,7 +296,7 @@ async def bind_shelving_slot(
     row = slot_info_result.one_or_none()
     shelf_code = row[1] if row else ""
     slot_obj = row[0] if row else None
-    slot_code = f"{slot_obj.side}{slot_obj.slot_on_board}" if slot_obj else ""
+    slot_code = slot_obj.code or str(slot_obj.slot_on_board) if slot_obj else ""
 
     # Record event
     event = ShelfSlotEvent(

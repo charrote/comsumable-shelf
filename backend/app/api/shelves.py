@@ -1,9 +1,13 @@
 """Shelf management API routes — CRUD + smart shelf operations."""
 
 from typing import Optional, List
-from sqlalchemy import select, func, delete, text
+from sqlalchemy import select, func, delete, text, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from fastapi import APIRouter, Depends, HTTPException, Query
+import structlog
+
+logger = structlog.get_logger()
 from app.schemas import (
     ShelfCreate, ShelfUpdate, ShelfResponse,
     ShelfSlotCreate, ShelfSlotUpdate, ShelfSlotResponse,
@@ -18,9 +22,9 @@ router = APIRouter(prefix="/shelves", tags=["Shelf Management"])
 # ── 辅助函数 ──────────────────────────────────────────────────────────
 
 
-def _compute_cell_id(shelf_code: str, side: str, slot_on_board: int) -> str:
-    """自动生成 cell_id: UPPER(code + side + slot_on_board)"""
-    return f"{shelf_code}{side}{slot_on_board:04d}".upper()
+def _compute_cell_id(shelf_code: str, slot_code: str) -> str:
+    """自动生成 cell_id: UPPER(shelf_code + slot_code)"""
+    return f"{shelf_code}{slot_code}".upper()
 
 
 async def _get_shelf_or_404(shelf_id: int, db: AsyncSession) -> Shelf:
@@ -59,8 +63,6 @@ def _slot_to_response(slot: ShelfSlot) -> ShelfSlotResponse:
     return ShelfSlotResponse(
         id=slot.id,
         shelf_id=slot.shelf_id,
-        side=slot.side,
-        slot_on_board=slot.slot_on_board,
         code=slot.code,
         name=slot.name,
         cell_id=slot.cell_id,
@@ -159,7 +161,7 @@ async def update_shelf(
             select(ShelfSlot).where(ShelfSlot.shelf_id == shelf_id)
         )
         for slot in slots_result.scalars().all():
-            slot.cell_id = _compute_cell_id(shelf.code, slot.side, slot.slot_on_board)
+            slot.cell_id = _compute_cell_id(shelf.code, slot.code)
         await db.commit()
 
     await db.refresh(shelf)
@@ -287,7 +289,7 @@ async def list_slots(
     result = await db.execute(
         select(ShelfSlot)
         .where(ShelfSlot.shelf_id == shelf_id)
-        .order_by(ShelfSlot.side, ShelfSlot.slot_on_board)
+        .order_by(ShelfSlot.slot_on_board)
     )
     return [_slot_to_response(s) for s in result.scalars().all()]
 
@@ -298,29 +300,58 @@ async def create_slot(
     data: ShelfSlotCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    """新增储位，自动生成 cell_id = UPPER(code + side + slot_on_board)"""
+    """新增储位，自动生成 cell_id = UPPER(shelf_code + 4位补零code)"""
     shelf = await _get_shelf_or_404(shelf_id, db)
 
-    cell_id = _compute_cell_id(shelf.code, data.side, data.slot_on_board)
+    padded_code = str(int(data.code)).zfill(4)
+    cell_id = f"{shelf.code}{padded_code}".upper()
 
     # 全局 cell_id 唯一性检查
-    dup_global = await db.execute(
+    dup = await db.execute(
         select(ShelfSlot).where(ShelfSlot.cell_id == cell_id).limit(1)
     )
-    if dup_global.scalar_one_or_none():
-        raise HTTPException(status_code=409, detail=f"生成的 cell_id {cell_id} 已被其他储位使用")
+    dup = dup.scalar_one_or_none()
+    if dup:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"cell_id {cell_id} 已被占用"
+                f"（料架 {dup.shelf_id}"
+                f"{', 编号 ' + dup.code if dup.code else ''}"
+                f"{', 名称 ' + dup.name if dup.name else ''}）"
+            ),
+        )
+
+    # 自动分配 slot_on_board 避免 uq_slot_pos 唯一约束冲突
+    max_board = await db.execute(
+        select(func.max(ShelfSlot.slot_on_board)).where(ShelfSlot.shelf_id == shelf_id)
+    )
+    slot_on_board = (max_board.scalar() or 0) + 1
 
     slot = ShelfSlot(
         shelf_id=shelf_id,
-        side=data.side,
-        slot_on_board=data.slot_on_board,
-        code=data.code,
+        slot_on_board=slot_on_board,
+        code=padded_code,
         name=data.name,
         cell_id=cell_id,
         max_quantity=data.max_quantity,
     )
     db.add(slot)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        error_str = str(e)
+        logger.warning("create_slot integrity_error", cell_id=cell_id, error=error_str)
+        if "violates not-null constraint" in error_str:
+            raise HTTPException(
+                status_code=400,
+                detail="储位创建失败：数据库缺少必要字段，请联系管理员",
+            )
+        raise HTTPException(
+            status_code=409,
+            detail=f"cell_id {cell_id} 已被其他储位使用（并发冲突），请重试",
+        )
     await db.refresh(slot)
     return _slot_to_response(slot)
 
@@ -332,7 +363,7 @@ async def update_slot(
     data: ShelfSlotUpdate,
     db: AsyncSession = Depends(get_db),
 ):
-    """更新储位信息，若 slot_on_board/side 改变则重新生成 cell_id"""
+    """更新储位信息，若 code 改变则重新生成 cell_id"""
     shelf = await _get_shelf_or_404(shelf_id, db)
     slot = await _get_slot_or_404(slot_id, shelf_id, db)
 
@@ -343,9 +374,9 @@ async def update_slot(
     if data.max_quantity is not None:
         slot.max_quantity = data.max_quantity
 
-    # 如果 code/side/slot_on_board 之一变了或 cell_id 为空，重新生成
-    if not slot.cell_id:
-        slot.cell_id = _compute_cell_id(shelf.code, slot.side, slot.slot_on_board)
+    # 如果 code 变了或 cell_id 为空，重新生成
+    if data.code is not None or not slot.cell_id:
+        slot.cell_id = _compute_cell_id(shelf.code, slot.code)
 
     await db.commit()
     await db.refresh(slot)
@@ -400,12 +431,12 @@ async def rack_test(
     interval = data.get("interval", 1000)
 
     try:
-        client = RackApiClient(
+        async with RackApiClient(
             base_url=api_config["base_url"],
             user_id=api_config["user_id"],
             client_id=api_config["client_id"],
-        )
-        result = client.rack_test(rack_id=shelf.code, test_mode=test_mode, interval=interval)
+        ) as client:
+            result = await client.rack_test(rack_id=shelf.code, test_mode=test_mode, interval=interval)
         return {
             "status": "ok",
             "shelf_id": shelf_id,
@@ -434,12 +465,12 @@ async def get_slot_states_extended(
         raise HTTPException(status_code=400, detail="未配置控灯服务地址（请在系统设置中配置 rack_api_base_url）")
 
     try:
-        client = RackApiClient(
+        async with RackApiClient(
             base_url=api_config["base_url"],
             user_id=api_config["user_id"],
             client_id=api_config["client_id"],
-        )
-        result = client.get_cell_list(rack_id=shelf.code, page_size=200)
+        ) as client:
+            result = await client.get_cell_list(rack_id=shelf.code, page_size=200)
         cells = result.get("data", [])
         return {
             "shelf_id": shelf_id,

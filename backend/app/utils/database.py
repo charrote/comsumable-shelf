@@ -73,6 +73,21 @@ async def init_db():
             END $$;
         """))
 
+        # Cleanup orphaned composite types from failed DDL transactions.
+        # PostgreSQL creates a composite type in pg_type when a table is created.
+        # If create_all() fails mid-transaction, the type may remain orphaned
+        # (table doesn't exist) and block future create_all() calls.
+        for tbl in ["reel_reservations", "led_commands", "data_backups"]:
+            await conn.execute(text(f"""
+                DO $$ BEGIN
+                    IF NOT EXISTS (SELECT FROM pg_class WHERE relname = '{tbl}' AND relkind = 'r')
+                       AND EXISTS (SELECT 1 FROM pg_type WHERE typname = '{tbl}')
+                    THEN
+                        DROP TYPE IF EXISTS {tbl} CASCADE;
+                    END IF;
+                END $$;
+            """))
+
         await conn.run_sync(
             lambda sync_session: Base.metadata.create_all(
                 sync_session, checkfirst=True
@@ -275,6 +290,14 @@ async def init_db():
                 END $$;
             """))
 
+        # -- shelf_slots 表：添加 cell_id --
+        await conn.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE shelf_slots ADD COLUMN IF NOT EXISTS cell_id VARCHAR(32);
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+        """))
+
         # -- shelf_slot_events 表新增字段（保留） --
         for col, col_type in [
             ("cell_id", "VARCHAR(32)"),
@@ -300,6 +323,15 @@ async def init_db():
             END $$;
         """))
 
+        # -- Migration: add defaults for modbus-related NOT NULL columns --
+        for col in ["board_address", "global_index", "modbus_tcp_id", "modbus_coil_base"]:
+            await conn.execute(text(f"""
+                DO $$ BEGIN
+                    ALTER TABLE shelf_slots ALTER COLUMN {col} SET DEFAULT 0;
+                EXCEPTION WHEN undefined_column THEN NULL;
+                END $$;
+            """))
+
         # -- Migration: add assigned_color to issue_order --
         # NOTE: Must use DO $$ ... $$ block with IF NOT EXISTS from the start,
         # because a bare ALTER TABLE that fails will abort the entire transaction,
@@ -316,6 +348,20 @@ async def init_db():
             DO $$ BEGIN
                 ALTER TABLE material_master ADD COLUMN IF NOT EXISTS supplier_code VARCHAR(100);
             EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$;
+        """))
+
+        # -- Drop side column and unique constraint from shelf_slots --
+        await conn.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE shelf_slots DROP CONSTRAINT IF EXISTS uq_slot_pos;
+            EXCEPTION WHEN undefined_object THEN NULL;
+            END $$;
+        """))
+        await conn.execute(text("""
+            DO $$ BEGIN
+                ALTER TABLE shelf_slots DROP COLUMN IF EXISTS side;
+            EXCEPTION WHEN undefined_column THEN NULL;
             END $$;
         """))
 

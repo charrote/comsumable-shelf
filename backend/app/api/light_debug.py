@@ -107,7 +107,7 @@ async def debug_light_up_single(
 
     client = await _get_client(db)
     try:
-        raw = client.light_up_cell(
+        raw = await client.light_up_cell(
             cell_id=cell_id,
             led_color=led_color,
             is_blink=blink,
@@ -166,7 +166,7 @@ async def debug_light_up_batch(
 
     client = await _get_client(db)
     try:
-        raw = client.light_up_cells_batch(
+        raw = await client.light_up_cells_batch(
             cells=formatted_cells,
             turn_on_time=turn_on_time,
             voice_text=voice_text,
@@ -215,7 +215,7 @@ async def debug_set_indicator(
 
     client = await _get_client(db)
     try:
-        raw = client.set_indicator_status(
+        raw = await client.set_indicator_status(
             rack_id=rack_id,
             indicator_id=indicator_id,
             indicator_status=indicator_status,
@@ -270,7 +270,7 @@ async def debug_rack_test(
 
     client = await _get_client(db)
     try:
-        raw = client.rack_test(
+        raw = await client.rack_test(
             rack_id=rack_id,
             test_mode=test_mode,
             interval=interval,
@@ -314,7 +314,7 @@ async def debug_get_cell_list(
 
     client = await _get_client(db)
     try:
-        raw = client.get_cell_list(
+        raw = await client.get_cell_list(
             rack_id=rack_id,
             cell_filter=cell_filter,
             page_index=page_index,
@@ -356,7 +356,7 @@ async def debug_turn_off(
 
     client = await _get_client(db)
     try:
-        raw = client.light_up_cell(
+        raw = await client.light_up_cell(
             cell_id=cell_id,
             led_color=0,
             is_blink=False,
@@ -395,7 +395,7 @@ async def debug_turn_off_all(
 
     # 第一步：查询料架所有储位
     try:
-        cell_data = client.get_cell_list(rack_id=rack_id, page_size=page_size)
+        cell_data = await client.get_cell_list(rack_id=rack_id, page_size=page_size)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"查询储位列表失败: {e}")
 
@@ -422,7 +422,7 @@ async def debug_turn_off_all(
     errors = []
     for cid in cell_ids:
         try:
-            client.light_up_cell(cell_id=cid, led_color=0, is_blink=False, turn_on_time=0)
+            await client.light_up_cell(cell_id=cid, led_color=0, is_blink=False, turn_on_time=0)
             success_count += 1
         except Exception as e:
             errors.append({"cell_id": cid, "error": str(e)})
@@ -527,7 +527,7 @@ async def debug_sensor_test(
 
     client = await _get_client(db)
     try:
-        raw = client.rack_test(
+        raw = await client.rack_test(
             rack_id=rack_id,
             test_mode=8,  # 传感器测试
             interval=interval,

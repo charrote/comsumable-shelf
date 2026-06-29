@@ -338,7 +338,7 @@ async def calculate_issue(
                 )
                 slot = slot_result.scalar_one_or_none()
                 if slot:
-                    slot_code = f"S{slot.shelf_id}-{slot.side}{slot.slot_on_board}"
+                    slot_code = slot.code or str(slot.slot_on_board)
 
             ra = ReelAssignment(
                 reel_id=r["reel_id"],
@@ -542,15 +542,15 @@ async def assign_led(
     else:
         for shelf_id, info in cells_by_shelf.items():
             try:
-                client = RackApiClient(
+                async with RackApiClient(
                     base_url=api_config["base_url"],
                     user_id=api_config["user_id"],
                     client_id=api_config["client_id"],
-                )
-                client.light_up_cells_batch(
-                    cells=info["cells"],
-                    voice_text="请取料",
-                )
+                ) as client:
+                    await client.light_up_cells_batch(
+                        cells=info["cells"],
+                        voice_text="请取料",
+                    )
                 logger.info("LED batch light OK: shelf=%d, cells=%d, color=%s",
                             shelf_id, len(info["cells"]), assigned_color)
             except Exception as e:
@@ -728,12 +728,12 @@ async def confirm_pick(
             api_config = await get_rack_api_config(db)
             if api_config:
                 try:
-                    client = RackApiClient(
+                    async with RackApiClient(
                         base_url=api_config["base_url"],
                         user_id=api_config["user_id"],
                         client_id=api_config["client_id"],
-                    )
-                    client.light_up_cell(cell_id=slot.cell_id, led_color=0)  # 灭灯
+                    ) as client:
+                        await client.light_up_cell(cell_id=slot.cell_id, led_color=0)  # 灭灯
                     logger.info("Clear LED OK: cell=%s", slot.cell_id)
                 except Exception as e:
                     logger.warning("Clear LED failed: cell=%s, error=%s",

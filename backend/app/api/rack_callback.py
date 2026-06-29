@@ -116,7 +116,7 @@ async def cell_change_callback(
                         row = slot_info.one_or_none()
                         shelf_code = row[1] if row else ""
                         slot_obj = row[0] if row else None
-                        slot_code = f"{slot_obj.side}{slot_obj.slot_on_board}" if slot_obj else ""
+                        slot_code = slot_obj.code or str(slot_obj.slot_on_board) if slot_obj else ""
 
                         # 获取物料信息
                         material_info = await db.execute(

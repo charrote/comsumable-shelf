@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Table, Button, Modal, Form, Input, InputNumber, Space, Tag, Popconfirm, Spin, message, Drawer, Select } from 'antd'
+import { Table, Button, Modal, Form, Input, InputNumber, Space, Tag, Popconfirm, Spin, message, Drawer } from 'antd'
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { getShelvesApi, createShelfApi, updateShelfApi, deleteShelfApi, getShelfSlotsApi, createSlotApi, updateSlotApi, deleteSlotApi, rackTestApi, getSlotStatesExtendedApi } from '../api'
 
@@ -132,7 +132,6 @@ export function ShelfManagementPage() {
   const openCreateSlot = () => {
     setEditingSlot(null)
     slotForm.resetFields()
-    slotForm.setFieldsValue({ side: 'A' })
     setSlotModalOpen(true)
   }
 
@@ -209,8 +208,7 @@ export function ShelfManagementPage() {
   ]
 
   const slotColumns = [
-    { title: '面', dataIndex: 'side', key: 'side', width: 50 },
-    { title: '板上编号', dataIndex: 'slot_on_board', key: 'slot_on_board', width: 80 },
+    { title: '储位编号', dataIndex: 'code', key: 'code', width: 100 },
     { title: 'cell_id', dataIndex: 'cell_id', key: 'cell_id', width: 150 },
     { title: '最大容量', dataIndex: 'max_quantity', key: 'max_quantity', width: 80 },
     {
@@ -331,13 +329,7 @@ export function ShelfManagementPage() {
         width={480}
       >
         <Form form={slotForm} layout="vertical" onFinish={handleSaveSlot}>
-          <Form.Item name="side" label="面" rules={[{ required: true }]}>
-            <Select>
-              <Select.Option value="A">A 面</Select.Option>
-              <Select.Option value="B">B 面</Select.Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="slot_on_board" label="板上编号" rules={[{ required: true }]}>
+          <Form.Item name="code" label="储位编号" rules={[{ required: true, message: '请输入储位编号' }]}>
             <InputNumber min={1} style={{ width: '100%' }} placeholder="如 1, 2, 3..." />
           </Form.Item>
           <Form.Item name="max_quantity" label="最大容量">
@@ -345,7 +337,7 @@ export function ShelfManagementPage() {
           </Form.Item>
           {selectedShelf && !editingSlot && (
             <div style={{ color: '#888', fontSize: 12, marginBottom: 12 }}>
-              cell_id 将自动生成为: <strong>{selectedShelf.code || '?'}{slotForm.getFieldValue('side') || '?'}{String(slotForm.getFieldValue('slot_on_board') || '').padStart(4, '0')}</strong>
+              cell_id 将自动生成为: <strong>{selectedShelf.code || '?'}{String(slotForm.getFieldValue('code') || '').padStart(4, '0')}</strong>
             </div>
           )}
           <Form.Item>

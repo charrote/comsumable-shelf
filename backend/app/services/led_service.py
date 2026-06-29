@@ -61,9 +61,11 @@ class LedService:
             )
             commands = result.scalars().all()
 
+            api_config = await get_rack_api_config(session)
+
             for cmd in commands:
                 try:
-                    # 查 slot + shelf 获取控灯 API 配置
+                    # 查 slot + shelf
                     slot = await session.get(ShelfSlot, cmd.slot_id)
                     if not slot:
                         cmd.status = "failed"
@@ -76,27 +78,26 @@ class LedService:
                         logger.warning("led_shelf_not_found", shelf_id=cmd.shelf_id)
                         continue
 
-                    api_config = await get_rack_api_config(session)
                     if not api_config:
                         cmd.status = "failed"
                         logger.warning("led_no_api_config",
                                        shelf_id=cmd.shelf_id, slot_id=cmd.slot_id)
                         continue
 
-                    # 用 RackApiClient 亮灯
-                    client = RackApiClient(
+                    color_int = RackApiClient.LED_COLORS.get(cmd.color, 2)
+
+                    # 每个命令创建独立 client（不同 cmd 可能目标不同）
+                    async with RackApiClient(
                         base_url=api_config["base_url"],
                         user_id=api_config["user_id"],
                         client_id=api_config["client_id"],
-                    )
-
-                    color_int = RackApiClient.LED_COLORS.get(cmd.color, 2)
-                    client.light_up_cell(
-                        cell_id=slot.cell_id,
-                        led_color=color_int,
-                        is_blink=cmd.is_blink or False,
-                        turn_on_time=cmd.turn_on_time or 0,
-                    )
+                    ) as client:
+                        await client.light_up_cell(
+                            cell_id=slot.cell_id,
+                            led_color=color_int,
+                            is_blink=cmd.is_blink or False,
+                            turn_on_time=cmd.turn_on_time or 0,
+                        )
 
                     cmd.status = "sent"
                     cmd.sent_at = datetime.utcnow()

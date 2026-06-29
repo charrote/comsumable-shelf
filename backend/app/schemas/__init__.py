@@ -621,9 +621,7 @@ class ShelfResponse(BaseModel):
 
 
 class ShelfSlotCreate(BaseModel):
-    side: str = Field(..., description="面（A/B）")
-    slot_on_board: int = Field(..., description="板上编号")
-    code: Optional[str] = Field(None, description="储位编号")
+    code: str = Field(..., description="储位编号（数字，自动补零到4位）")
     name: Optional[str] = Field(None, description="储位名称")
     max_quantity: Optional[float] = Field(None, ge=0, description="储位最大容量（null=不限制）")
 
@@ -637,8 +635,6 @@ class ShelfSlotUpdate(BaseModel):
 class ShelfSlotResponse(BaseModel):
     id: int
     shelf_id: int
-    side: str
-    slot_on_board: int
     code: Optional[str] = None
     name: Optional[str] = None
     cell_id: Optional[str] = None
@@ -663,7 +659,6 @@ class ShelfSlotEventResponse(BaseModel):
 class SlotSensorState(BaseModel):
     """Live sensor state for a single slot."""
     slot_id: int
-    side: str
     cell_id: Optional[str] = None
     has_material: bool
     last_event_at: Optional[datetime] = None

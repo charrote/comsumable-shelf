@@ -2,18 +2,18 @@
 料架控灯 HTTP API 客户端。
 
 封装所有与新智能料架的 HTTP REST 通信。
-所有方法同步阻塞，由上层 async 服务在 executor 中调用。
+所有方法均为 async，由上层 async 服务直接 await 调用。
 """
 
 import uuid
+import asyncio
 import logging
-import time
 from typing import Optional, List, Dict, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class RackApiError(Exception):
 
 
 class RackApiClient:
-    """料架控灯 HTTP API 客户端
+    """料架控灯 HTTP API 客户端（异步版本）
 
     用法::
 
@@ -33,7 +33,7 @@ class RackApiClient:
             user_id="admin",
             client_id="smes-001",
         )
-        client.light_up_cell("A0010001", led_color=2)
+        await client.light_up_cell("A0010001", led_color=2)
 
     容错机制:
         - API 不可达: 记录 ERROR 日志，标记料架"控灯离线"，业务继续
@@ -86,7 +86,16 @@ class RackApiClient:
         self.client_id = client_id
         self.timeout = timeout
         self.max_retries = max_retries
-        self.session = requests.Session()
+        self.client = httpx.AsyncClient(timeout=timeout)
+
+    async def close(self):
+        await self.client.aclose()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        await self.close()
 
     # ── 内部方法 ──────────────────────────────────────────────────────
 
@@ -98,19 +107,29 @@ class RackApiClient:
             "Content-Type": "application/json;charset=utf-8",
         }
 
-    def _post(self, path: str, data: dict) -> dict:
-        """通用 POST 请求（含重试与指数退避）"""
+    async def _post(self, path: str, data: dict) -> dict:
+        """通用 POST 请求（含重试与指数退避）
+
+        4xx 错误（除 429 限流外）不重试，直接抛出。
+        5xx 和网络错误会重试。
+        """
         url = f"{self.base_url}{path}"
         last_error: Optional[Exception] = None
 
         for attempt in range(self.max_retries):
             try:
-                resp = self.session.post(
+                resp = await self.client.post(
                     url,
                     json=data,
                     headers=self._get_headers(),
-                    timeout=self.timeout,
                 )
+
+                # 4xx 错误（除 429）不重试，立即失败
+                if 400 <= resp.status_code < 500 and resp.status_code != 429:
+                    raise RackApiError(
+                        f"Request failed: {resp.status_code} {resp.reason_phrase} for url: {url}"
+                    )
+
                 resp.raise_for_status()
                 result = resp.json()
 
@@ -122,7 +141,10 @@ class RackApiClient:
                     )
                 return result
 
-            except requests.Timeout as e:
+            except RackApiError:
+                raise
+
+            except httpx.TimeoutException as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
                     sleep_time = 2 ** attempt  # 1s, 2s, 4s
@@ -130,9 +152,9 @@ class RackApiClient:
                         "RackApi timeout (attempt %d/%d), retrying in %ds | %s",
                         attempt + 1, self.max_retries, sleep_time, path,
                     )
-                    time.sleep(sleep_time)
+                    await asyncio.sleep(sleep_time)
 
-            except requests.RequestException as e:
+            except httpx.RequestError as e:
                 last_error = e
                 if attempt < self.max_retries - 1:
                     sleep_time = 2 ** attempt
@@ -140,7 +162,17 @@ class RackApiClient:
                         "RackApi request error (attempt %d/%d), retrying in %ds | %s: %s",
                         attempt + 1, self.max_retries, sleep_time, path, str(e),
                     )
-                    time.sleep(sleep_time)
+                    await asyncio.sleep(sleep_time)
+
+            except Exception as e:
+                last_error = e
+                if attempt < self.max_retries - 1:
+                    sleep_time = 2 ** attempt
+                    logger.warning(
+                        "RackApi unexpected error (attempt %d/%d), retrying in %ds | %s: %s",
+                        attempt + 1, self.max_retries, sleep_time, path, str(e),
+                    )
+                    await asyncio.sleep(sleep_time)
 
         raise RackApiError(
             f"Request failed after {self.max_retries} retries: {last_error}"
@@ -148,7 +180,7 @@ class RackApiClient:
 
     # ── 公共 API ──────────────────────────────────────────────────────
 
-    def light_up_cell(
+    async def light_up_cell(
         self,
         cell_id: str,
         led_color: int,
@@ -166,14 +198,14 @@ class RackApiClient:
         Returns:
             API 响应 dict
         """
-        return self._post("/api/RackCellMgr/LightUpCellLed", {
+        return await self._post("/api/RackCellMgr/LightUpCellLed", {
             "cellId": cell_id,
             "ledColor": led_color,
             "blink": is_blink,
             "turnOnTime": turn_on_time,
         })
 
-    def light_up_cells_batch(
+    async def light_up_cells_batch(
         self,
         cells: List[Dict[str, Any]],
         turn_on_time: int = 0,
@@ -192,13 +224,13 @@ class RackApiClient:
         Returns:
             API 响应 dict
         """
-        return self._post("/api/RackCellMgr/LightUpCellLedList", {
+        return await self._post("/api/RackCellMgr/LightUpCellLedList", {
             "cells": cells,
             "turnOnTime": turn_on_time,
             "voiceText": voice_text,
         })
 
-    def set_indicator_status(
+    async def set_indicator_status(
         self,
         rack_id: str,
         indicator_id: int,
@@ -216,14 +248,14 @@ class RackApiClient:
         Returns:
             API 响应 dict
         """
-        return self._post("/api/RackCellMgr/SetWarningLed", {
+        return await self._post("/api/RackCellMgr/SetWarningLed", {
             "rackId": rack_id,
             "indicatorId": indicator_id,
             "indicatorStatus": indicator_status,
             "blink": is_blink,
         })
 
-    def rack_test(
+    async def rack_test(
         self,
         rack_id: str,
         test_mode: int,
@@ -247,13 +279,13 @@ class RackApiClient:
         Returns:
             API 响应 dict
         """
-        return self._post("/api/RackMgr/RackTest", {
+        return await self._post("/api/RackMgr/RackTest", {
             "id": rack_id,
             "testMode": test_mode,
             "interval": interval,
         })
 
-    def get_cell_list(
+    async def get_cell_list(
         self,
         rack_id: Optional[str] = None,
         cell_filter: Optional[str] = None,
@@ -279,7 +311,7 @@ class RackApiClient:
             data["rackId"] = rack_id
         if cell_filter:
             data["filter"] = cell_filter
-        return self._post("/api/RackCellMgr/GetCellList", data)
+        return await self._post("/api/RackCellMgr/GetCellList", data)
 
 
 # ── 辅助函数 ──────────────────────────────────────────────────────────

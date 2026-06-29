@@ -79,7 +79,7 @@ class RackSlotPoller:
             await asyncio.sleep(self.POLL_INTERVAL)
 
     async def _poll_once(self):
-        """单次轮询：遍历所有活跃料架（有 API 配置的）"""
+        """单次轮询：并发遍历所有活跃料架（有 API 配置的）"""
         async with async_session_factory() as db:
             result = await db.execute(
                 select(Shelf).where(Shelf.active == 1)
@@ -89,12 +89,12 @@ class RackSlotPoller:
             if not shelves:
                 return
 
-            for shelf in shelves:
+            async def _poll_one(shelf: Shelf):
                 try:
                     api_config = await get_rack_api_config(db)
                     if not api_config:
                         logger.info("Rack API not configured for shelf %s, skipping", shelf.name)
-                        continue
+                        return
 
                     client = RackApiClient(
                         base_url=api_config["base_url"],
@@ -102,9 +102,14 @@ class RackSlotPoller:
                         client_id=api_config["client_id"],
                         timeout=5.0,
                     )
-                    await self._sync_shelf_cells(db, shelf.id, client)
+                    try:
+                        await self._sync_shelf_cells(db, shelf.id, client)
+                    finally:
+                        await client.close()
                 except Exception as e:
                     logger.warning("Poll shelf %d failed: %s", shelf.id, e)
+
+            await asyncio.gather(*[_poll_one(s) for s in shelves])
 
     async def _sync_shelf_cells(self, db, shelf_id: int, client: RackApiClient):
         """同步单个料架的所有储位
@@ -115,7 +120,7 @@ class RackSlotPoller:
         page_size = 100
 
         while True:
-            resp = client.get_cell_list(
+            resp = await client.get_cell_list(
                 rack_id=None,
                 page_index=page_index,
                 page_size=page_size,
