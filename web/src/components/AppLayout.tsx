@@ -18,41 +18,20 @@ import {
   CloudUploadOutlined,
   BugOutlined,
 } from '@ant-design/icons'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../store/authStore'
 import { getAppName } from '../store/configStore'
 
 const { Header, Sider, Content } = Layout
-const { Title } = Typography
 
-const menuItems = [
-  { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘' },
-  { key: '/material', icon: <BoxPlotOutlined />, label: '物料主数据' },
-  { key: '/shelf', icon: <DatabaseOutlined />, label: '料架管理' },
-  { key: '/inventory', icon: <ContainerOutlined />, label: '库存管理' },
-  { key: '/receipt', icon: <ReadOutlined />, label: '入库收料' },
-  { key: '/issue', icon: <SendOutlined />, label: '发料管理' },
-  { key: '/xr', icon: <DesktopOutlined />, label: '点料机管理' },
-  { key: '/bom', icon: <FileExcelOutlined />, label: 'BOM管理' },
-  { key: '/report', icon: <BarChartOutlined />, label: '报表统计' },
-  {
-    key: 'admin',
-    icon: <SettingOutlined />,
-    label: '系统管理',
-    children: [
-      { key: '/settings', label: '系统设置' },
-      { key: '/barcode-definitions', label: '条码定义' },
-      { key: '/users', label: '用户管理' },
-      { key: '/customers', label: '客户管理' },
-      { key: '/suppliers', label: '供应商管理' },
-      { key: '/app-download', icon: <DownloadOutlined />, label: 'PDA下载' },
-      { key: '/app-version', icon: <DownloadOutlined />, label: 'APP版本更新' },
-      { key: '/backup', icon: <CloudUploadOutlined />, label: '数据备份' },
-      { key: '/light-debug', icon: <BugOutlined />, label: '灯控调试' },
-    ],
-  },
-]
+interface MenuItem {
+  key: string
+  icon?: React.ReactNode
+  label: string
+  children?: MenuItem[]
+  permission?: string
+}
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
@@ -60,7 +39,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   const [passwordInput, setPasswordInput] = useState('')
   const navigate = useNavigate()
   const location = useLocation()
-  const { user, logout } = useAuthStore()
+  const { user, logout, hasPermission } = useAuthStore()
 
   const getTodayPassword = () => {
     const today = new Date()
@@ -69,6 +48,53 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     const dd = String(today.getDate()).padStart(2, '0')
     return `${yyyy}${mm}${dd}`
   }
+
+  const allMenuItems: MenuItem[] = [
+    { key: '/dashboard', icon: <DashboardOutlined />, label: '仪表盘', permission: 'dashboard:read' },
+    { key: '/material', icon: <BoxPlotOutlined />, label: '物料主数据', permission: 'material:read' },
+    { key: '/shelf', icon: <DatabaseOutlined />, label: '料架管理', permission: 'shelf:read' },
+    { key: '/inventory', icon: <ContainerOutlined />, label: '库存管理', permission: 'inventory:read' },
+    { key: '/receipt', icon: <ReadOutlined />, label: '入库收料', permission: 'receipt:read' },
+    { key: '/issue', icon: <SendOutlined />, label: '发料管理', permission: 'issue:read' },
+    { key: '/xr', icon: <DesktopOutlined />, label: '点料机管理', permission: 'xr:read' },
+    { key: '/bom', icon: <FileExcelOutlined />, label: 'BOM管理', permission: 'bom:read' },
+    { key: '/report', icon: <BarChartOutlined />, label: '报表统计', permission: 'report:read' },
+    {
+      key: 'admin',
+      icon: <SettingOutlined />,
+      label: '系统管理',
+      children: [
+        { key: '/settings', label: '系统设置', permission: 'settings:read' },
+        { key: '/barcode-definitions', label: '条码定义', permission: 'barcode:read' },
+        { key: '/users', label: '用户管理', permission: 'user:read' },
+        { key: '/roles', label: '角色管理', permission: 'role:read' },
+        { key: '/customers', label: '客户管理', permission: 'customer:read' },
+        { key: '/suppliers', label: '供应商管理', permission: 'supplier:read' },
+        { key: '/app-download', icon: <DownloadOutlined />, label: 'PDA下载', permission: 'app-download:read' },
+        { key: '/app-version', icon: <DownloadOutlined />, label: 'APP版本更新', permission: 'app-version:read' },
+        { key: '/backup', icon: <CloudUploadOutlined />, label: '数据备份', permission: 'backup:read' },
+        { key: '/light-debug', icon: <BugOutlined />, label: '灯控调试', permission: 'light-debug:read' },
+      ],
+    },
+  ]
+
+  // Filter menu items based on permissions
+  const menuItems = useMemo(() => {
+    return allMenuItems
+      .map((item) => {
+        if (item.children) {
+          const filteredChildren = item.children.filter((child) => {
+            if (!child.permission) return true
+            return hasPermission(child.permission)
+          })
+          if (filteredChildren.length === 0) return null
+          return { ...item, children: filteredChildren }
+        }
+        if (item.permission && !hasPermission(item.permission)) return null
+        return item
+      })
+      .filter(Boolean) as any
+  }, [user?.permissions])
 
   const handleMenuClick = (key: string) => {
     if (key === '/app-version') {
@@ -100,6 +126,9 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录' },
   ]
 
+  // Find selected key - if current path starts with a menu key, select it
+  const selectedKey = location.pathname
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider
@@ -126,7 +155,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[location.pathname]}
+          selectedKeys={[selectedKey]}
+          defaultOpenKeys={['admin']}
           items={menuItems}
           onClick={({ key }) => handleMenuClick(key)}
         />
@@ -153,6 +183,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
               <Space style={{ cursor: 'pointer' }}>
                 <Avatar icon={<UserOutlined />} />
                 <span>{user?.username || '管理员'}</span>
+                {user?.role && (
+                  <span style={{ fontSize: 12, color: '#999' }}>
+                    ({user.role === 'admin' ? '管理员' : user.role === 'supervisor' ? '主管' : user.role === 'operator' ? '操作员' : user.role})
+                  </span>
+                )}
               </Space>
             </Dropdown>
           </Space>

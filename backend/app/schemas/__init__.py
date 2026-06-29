@@ -822,6 +822,71 @@ class BackupRestoreResponse(BaseModel):
     message: str
 
 
+# ---------- Role & Permission ----------
+class RoleCreate(BaseModel):
+    name: str
+    code: str
+    description: Optional[str] = ""
+    permission_ids: List[int] = []
+
+
+class RoleUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    active: Optional[int] = None
+    permission_ids: Optional[List[int]] = None
+
+
+class RoleResponse(BaseModel):
+    id: int
+    name: str
+    code: str
+    description: str = ""
+    is_system: int = 0
+    active: int = 1
+    created_at: Optional[datetime] = None
+    permission_count: int = 0
+    user_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class RoleDetailResponse(BaseModel):
+    id: int
+    name: str
+    code: str
+    description: str = ""
+    is_system: int = 0
+    active: int = 1
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    permissions: List[str] = []  # permission codes
+    permission_ids: List[int] = []
+    user_count: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class PermissionResponse(BaseModel):
+    id: int
+    code: str
+    name: str
+    module: str
+    description: str = ""
+
+    model_config = {"from_attributes": True}
+
+
+class PermissionGroup(BaseModel):
+    """Permission grouped by module."""
+    module: str
+    permissions: List[PermissionResponse]
+
+
+class RolePermissionUpdate(BaseModel):
+    permission_ids: List[int]
+
+
 # ---------- General ----------
 class PaginatedResponse(BaseModel):
     items: list

@@ -365,34 +365,287 @@ async def init_db():
             END $$;
         """))
 
+        # ════════════════════════════════════════════════════════════════
+        # 角色权限系统迁移 — roles, permissions, role_permissions 表由
+        # Base.metadata.create_all() 自动创建，这里只迁移 users.role_id
+        # ════════════════════════════════════════════════════════════════
+
+        # Add role_id to users table (FK to roles)
+        await conn.execute(
+            text("""
+                DO $$ BEGIN
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS role_id INTEGER REFERENCES roles(id);
+                EXCEPTION WHEN duplicate_column THEN NULL;
+                END $$;
+            """)
+        )
+
         # Note: suppliers table is auto-created by Base.metadata.create_all()
         # via the Supplier model, so no raw CREATE TABLE is needed here.
 
 
 async def seed_db():
-    """Seed default data (admin user, default customer, system settings)."""
-    from app.models import User, SystemSetting, Customer
+    """Seed default data (admin user, default customer, system settings, roles & permissions)."""
+    from app.models import User, SystemSetting, Customer, Role, Permission, RolePermission
     from app.services.auth_service import get_password_hash
     from sqlalchemy import select
 
     async with async_session() as session:
         # ====================================================================
-        # 1. Admin user
+        # 1. Permissions
+        # ====================================================================
+        all_permissions = [
+            # Dashboard
+            {"code": "dashboard:read", "name": "查看仪表盘", "module": "dashboard"},
+            # Material
+            {"code": "material:read", "name": "查看物料", "module": "material"},
+            {"code": "material:create", "name": "新建物料", "module": "material"},
+            {"code": "material:update", "name": "编辑物料", "module": "material"},
+            {"code": "material:delete", "name": "删除物料", "module": "material"},
+            {"code": "material:import", "name": "导入物料", "module": "material"},
+            {"code": "material:mapping", "name": "物料映射管理", "module": "material"},
+            # Shelf
+            {"code": "shelf:read", "name": "查看料架", "module": "shelf"},
+            {"code": "shelf:create", "name": "新建料架", "module": "shelf"},
+            {"code": "shelf:update", "name": "编辑料架", "module": "shelf"},
+            {"code": "shelf:delete", "name": "删除料架", "module": "shelf"},
+            # Inventory
+            {"code": "inventory:read", "name": "查看库存", "module": "inventory"},
+            {"code": "inventory:update", "name": "编辑库存", "module": "inventory"},
+            {"code": "inventory:export", "name": "导出库存", "module": "inventory"},
+            {"code": "inventory:direct-out", "name": "直接出库", "module": "inventory"},
+            # Receipt
+            {"code": "receipt:read", "name": "查看入库单", "module": "receipt"},
+            {"code": "receipt:create", "name": "新建入库单", "module": "receipt"},
+            {"code": "receipt:update", "name": "编辑入库单", "module": "receipt"},
+            {"code": "receipt:delete", "name": "删除入库单", "module": "receipt"},
+            {"code": "receipt:scan", "name": "扫码入库", "module": "receipt"},
+            {"code": "receipt:manual-entry", "name": "手工录入", "module": "receipt"},
+            # Issue
+            {"code": "issue:read", "name": "查看发料单", "module": "issue"},
+            {"code": "issue:create", "name": "新建发料单", "module": "issue"},
+            {"code": "issue:update", "name": "编辑发料单", "module": "issue"},
+            {"code": "issue:delete", "name": "删除发料单", "module": "issue"},
+            {"code": "issue:assign", "name": "分配亮灯", "module": "issue"},
+            {"code": "issue:pick", "name": "确认捡料", "module": "issue"},
+            # XR
+            {"code": "xr:read", "name": "查看点料机", "module": "xr"},
+            {"code": "xr:upload", "name": "上传点料数据", "module": "xr"},
+            {"code": "xr:match", "name": "匹配料盘", "module": "xr"},
+            # BOM
+            {"code": "bom:read", "name": "查看BOM", "module": "bom"},
+            {"code": "bom:create", "name": "新建BOM", "module": "bom"},
+            {"code": "bom:update", "name": "编辑BOM", "module": "bom"},
+            {"code": "bom:delete", "name": "删除BOM", "module": "bom"},
+            {"code": "bom:import", "name": "导入BOM", "module": "bom"},
+            {"code": "bom:export", "name": "导出BOM", "module": "bom"},
+            # Report
+            {"code": "report:read", "name": "查看报表", "module": "report"},
+            # Settings
+            {"code": "settings:read", "name": "查看设置", "module": "settings"},
+            {"code": "settings:update", "name": "编辑设置", "module": "settings"},
+            # Barcode
+            {"code": "barcode:read", "name": "查看条码定义", "module": "barcode"},
+            {"code": "barcode:create", "name": "新建条码定义", "module": "barcode"},
+            {"code": "barcode:update", "name": "编辑条码定义", "module": "barcode"},
+            {"code": "barcode:delete", "name": "删除条码定义", "module": "barcode"},
+            # User
+            {"code": "user:read", "name": "查看用户", "module": "user"},
+            {"code": "user:create", "name": "新建用户", "module": "user"},
+            {"code": "user:update", "name": "编辑用户", "module": "user"},
+            {"code": "user:delete", "name": "删除用户", "module": "user"},
+            # Customer
+            {"code": "customer:read", "name": "查看客户", "module": "customer"},
+            {"code": "customer:create", "name": "新建客户", "module": "customer"},
+            {"code": "customer:update", "name": "编辑客户", "module": "customer"},
+            {"code": "customer:delete", "name": "删除客户", "module": "customer"},
+            # Supplier
+            {"code": "supplier:read", "name": "查看供应商", "module": "supplier"},
+            {"code": "supplier:create", "name": "新建供应商", "module": "supplier"},
+            {"code": "supplier:update", "name": "编辑供应商", "module": "supplier"},
+            {"code": "supplier:delete", "name": "删除供应商", "module": "supplier"},
+            {"code": "supplier:import", "name": "导入供应商", "module": "supplier"},
+            # App Download
+            {"code": "app-download:read", "name": "查看PDA下载", "module": "app-download"},
+            # App Version
+            {"code": "app-version:read", "name": "查看APP版本", "module": "app-version"},
+            {"code": "app-version:update", "name": "更新APP版本", "module": "app-version"},
+            # Backup
+            {"code": "backup:read", "name": "查看备份", "module": "backup"},
+            {"code": "backup:create", "name": "创建备份", "module": "backup"},
+            {"code": "backup:restore", "name": "恢复备份", "module": "backup"},
+            {"code": "backup:delete", "name": "删除备份", "module": "backup"},
+            # Light Debug
+            {"code": "light-debug:read", "name": "查看灯控调试", "module": "light-debug"},
+            {"code": "light-debug:control", "name": "灯控调试操作", "module": "light-debug"},
+            # Role
+            {"code": "role:read", "name": "查看角色", "module": "role"},
+            {"code": "role:create", "name": "新建角色", "module": "role"},
+            {"code": "role:update", "name": "编辑角色", "module": "role"},
+            {"code": "role:delete", "name": "删除角色", "module": "role"},
+            # Permission
+            {"code": "permission:read", "name": "查看权限", "module": "permission"},
+        ]
+
+        # Insert permissions if not exist
+        permission_map = {}
+        for p_def in all_permissions:
+            existing = await session.execute(
+                select(Permission).where(Permission.code == p_def["code"])
+            )
+            perm = existing.scalar_one_or_none()
+            if perm is None:
+                perm = Permission(
+                    code=p_def["code"],
+                    name=p_def["name"],
+                    module=p_def["module"],
+                    description=p_def["name"],
+                )
+                session.add(perm)
+                await session.flush()
+            permission_map[p_def["code"]] = perm.id
+
+        # ====================================================================
+        # 2. Default Roles
+        # ====================================================================
+        admin_permissions = [p["code"] for p in all_permissions]
+
+        supervisor_permissions = [
+            "dashboard:read",
+            "material:read", "material:create", "material:update",
+            "shelf:read", "shelf:create", "shelf:update",
+            "inventory:read", "inventory:update", "inventory:export", "inventory:direct-out",
+            "receipt:read", "receipt:create", "receipt:scan", "receipt:manual-entry",
+            "issue:read", "issue:create", "issue:update", "issue:assign", "issue:pick",
+            "xr:read", "xr:upload", "xr:match",
+            "bom:read", "bom:create", "bom:update",
+            "report:read",
+            "settings:read",
+            "barcode:read",
+            "customer:read",
+            "supplier:read", "supplier:create", "supplier:update",
+            "user:read",
+            "role:read",
+            "permission:read",
+            "app-download:read",
+            "backup:read",
+        ]
+
+        operator_permissions = [
+            "dashboard:read",
+            "material:read",
+            "shelf:read",
+            "inventory:read", "inventory:update", "inventory:export",
+            "receipt:read", "receipt:create", "receipt:scan", "receipt:manual-entry",
+            "issue:read", "issue:create", "issue:update", "issue:assign", "issue:pick",
+            "xr:read", "xr:upload", "xr:match",
+            "bom:read",
+            "report:read",
+        ]
+
+        readonly_permissions = [
+            "dashboard:read",
+            "material:read",
+            "shelf:read",
+            "inventory:read",
+            "receipt:read",
+            "issue:read",
+            "xr:read",
+            "bom:read",
+            "report:read",
+            "customer:read",
+            "supplier:read",
+            "settings:read",
+            "barcode:read",
+            "app-download:read",
+            "backup:read",
+        ]
+
+        role_defs = [
+            {
+                "name": "管理员",
+                "code": "admin",
+                "description": "系统管理员，拥有全部权限",
+                "is_system": 1,
+                "perms": admin_permissions,
+            },
+            {
+                "name": "主管",
+                "code": "supervisor",
+                "description": "主管，拥有大部分管理和操作权限",
+                "is_system": 1,
+                "perms": supervisor_permissions,
+            },
+            {
+                "name": "操作员",
+                "code": "operator",
+                "description": "操作员，拥有日常操作所需权限",
+                "is_system": 1,
+                "perms": operator_permissions,
+            },
+            {
+                "name": "只读用户",
+                "code": "readonly",
+                "description": "只读用户，仅可查看数据",
+                "is_system": 1,
+                "perms": readonly_permissions,
+            },
+        ]
+
+        role_id_map = {}
+        for rd in role_defs:
+            existing = await session.execute(
+                select(Role).where(Role.code == rd["code"])
+            )
+            role = existing.scalar_one_or_none()
+            if role is None:
+                role = Role(
+                    name=rd["name"],
+                    code=rd["code"],
+                    description=rd["description"],
+                    is_system=rd["is_system"],
+                    active=1,
+                )
+                session.add(role)
+                await session.flush()
+            role_id_map[rd["code"]] = role.id
+
+            # Assign permissions to role (only if role was just created)
+            if role:
+                # Check if permissions already assigned
+                existing_rp = await session.execute(
+                    select(RolePermission).where(RolePermission.role_id == role.id).limit(1)
+                )
+                if existing_rp.scalar_one_or_none() is None:
+                    for perm_code in rd["perms"]:
+                        perm_id = permission_map.get(perm_code)
+                        if perm_id:
+                            session.add(RolePermission(
+                                role_id=role.id,
+                                permission_id=perm_id,
+                            ))
+
+        # ====================================================================
+        # 3. Admin user
         # ====================================================================
         result = await session.execute(
             select(User).where(User.username == "admin")
         )
-        if result.scalar_one_or_none() is None:
-            admin = User(
+        admin_user = result.scalar_one_or_none()
+        if admin_user is None:
+            admin_user = User(
                 username="admin",
                 password_hash=get_password_hash("admin123"),
                 role="admin",
+                role_id=role_id_map.get("admin"),
                 active=1,
             )
-            session.add(admin)
+            session.add(admin_user)
+        elif admin_user.role_id is None:
+            admin_user.role_id = role_id_map.get("admin")
 
         # ====================================================================
-        # 2. Default customer
+        # 4. Default customer
         # ====================================================================
         result = await session.execute(
             select(Customer).where(Customer.code == "DEFAULT")
@@ -411,7 +664,7 @@ async def seed_db():
             session.expunge(customer)
 
         # ====================================================================
-        # 3. System settings
+        # 5. System settings
         # ====================================================================
         default_settings = [
             {

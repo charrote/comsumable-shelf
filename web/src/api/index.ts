@@ -412,6 +412,28 @@ export const downloadSupplierTemplateApi = async () => {
   window.URL.revokeObjectURL(url)
 }
 
+// ── Roles & Permissions ──
+export const getRolesApi = () =>
+  apiClient.get('/roles')
+export const getRoleApi = (id: number) =>
+  apiClient.get(`/roles/${id}`)
+export const createRoleApi = (data: {
+  name: string
+  code: string
+  description?: string
+  permission_ids?: number[]
+}) => apiClient.post('/roles', data)
+export const updateRoleApi = (id: number, data: any) =>
+  apiClient.put(`/roles/${id}`, data)
+export const deleteRoleApi = (id: number) =>
+  apiClient.delete(`/roles/${id}`)
+export const getPermissionsGroupedApi = () =>
+  apiClient.get('/roles/permissions/all')
+export const getPermissionsFlatApi = () =>
+  apiClient.get('/roles/permissions/flat')
+export const updateRolePermissionsApi = (id: number, permissionIds: number[]) =>
+  apiClient.put(`/roles/${id}/permissions`, { permission_ids: permissionIds })
+
 // ── Data Backup ──
 export const getBackupsApi = () =>
   apiClient.get('/backups')

@@ -1,11 +1,14 @@
 import { create } from 'zustand'
 import api from '../api/client'
 
-interface User {
+export interface User {
+  id: number
   username: string
   role: string
+  role_id?: number
   customer_id?: number
   customer_name?: string
+  permissions?: string[]
 }
 
 interface AuthState {
@@ -13,10 +16,12 @@ interface AuthState {
   user: User | null
   setAuth: (token: string, user: User) => void
   logout: () => void
+  hasPermission: (code: string) => boolean
+  hasAnyPermission: (codes: string[]) => boolean
 }
 
 export const useAuthStore = create<AuthState>()(
-  (set) => ({
+  (set, get) => ({
     token: localStorage.getItem('token'),
     user: null,
     setAuth: (token, user) => {
@@ -27,6 +32,19 @@ export const useAuthStore = create<AuthState>()(
       localStorage.removeItem('token')
       set({ token: null, user: null })
       window.location.href = '/login'
+    },
+    hasPermission: (code: string) => {
+      const { user } = get()
+      if (!user) return false
+      // Admin always has all permissions
+      if (user.role === 'admin') return true
+      return user.permissions?.includes(code) ?? false
+    },
+    hasAnyPermission: (codes: string[]) => {
+      const { user } = get()
+      if (!user) return false
+      if (user.role === 'admin') return true
+      return codes.some(code => user.permissions?.includes(code))
     },
   }),
 )
@@ -40,4 +58,13 @@ export async function login(username: string, password: string) {
   })
   useAuthStore.getState().setAuth(access_token, me.data)
   return me.data
+}
+
+// Helper to check permission in components
+export function usePermission(code: string): boolean {
+  return useAuthStore.getState().hasPermission(code)
+}
+
+export function useAnyPermission(codes: string[]): boolean {
+  return useAuthStore.getState().hasAnyPermission(codes)
 }

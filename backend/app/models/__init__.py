@@ -511,6 +511,52 @@ class DataBackup(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Role(Base):
+    """角色表"""
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False, comment="角色显示名称")
+    code = Column(String, unique=True, nullable=False, index=True, comment="角色编码（如 admin, supervisor）")
+    description = Column(String, default="", comment="角色描述")
+    is_system = Column(Integer, default=0, comment="系统内置角色（不可删除）")
+    active = Column(Integer, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    users = relationship("User", back_populates="role_obj")
+    permissions = relationship("RolePermission", back_populates="role", cascade="all, delete-orphan")
+
+
+class Permission(Base):
+    """权限表"""
+    __tablename__ = "permissions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String, unique=True, nullable=False, index=True, comment="权限编码（如 user:read, material:create）")
+    name = Column(String, nullable=False, comment="权限显示名称")
+    module = Column(String, nullable=False, comment="所属模块（如 user, material, shelf）")
+    description = Column(String, default="", comment="权限描述")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RolePermission(Base):
+    """角色-权限关联表"""
+    __tablename__ = "role_permissions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    role_id = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    permission_id = Column(Integer, ForeignKey("permissions.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    role = relationship("Role", back_populates="permissions")
+    permission = relationship("Permission")
+
+    __table_args__ = (
+        UniqueConstraint("role_id", "permission_id", name="uq_role_permission"),
+    )
+
+
 class Supplier(Base):
     __tablename__ = "suppliers"
 
@@ -531,9 +577,12 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    role = Column(String, nullable=False)  # admin | supervisor | operator | readonly
+    role = Column(String, nullable=False)  # admin | supervisor | operator | readonly (legacy)
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=True, comment="关联角色ID")
     customer_id = Column(Integer, ForeignKey("customers.id"))
     customer_name = Column(String)
     active = Column(Integer, default=1)
     last_login_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    role_obj = relationship("Role", back_populates="users")

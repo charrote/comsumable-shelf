@@ -1,46 +1,27 @@
 """Authentication API routes."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.schemas import LoginRequest, TokenResponse, UserResponse
-from app.services.auth_service import verify_password, create_access_token, decode_access_token
+from app.services.auth_service import verify_password, create_access_token
 from app.utils.database import get_db
 from app.models import User
+from app.api.deps import get_current_user, get_user_permissions
+
+
+class UserPermissionsResponse(UserResponse):
+    """User info with permissions."""
+    role_id: Optional[int] = None
+    permissions: List[str] = []
+
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
-security = HTTPBearer()
-
-
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    """Get current user from JWT token."""
-    payload = decode_access_token(credentials.credentials)
-    if not payload:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
-    username = payload.get("sub")
-    if not username:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token payload",
-        )
-    result = await db.execute(select(User).where(User.username == username))
-    user = result.scalar_one_or_none()
-    if not user or not user.active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
-        )
-    return user
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -69,13 +50,28 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/me", response_model=UserResponse)
-async def get_me(user: User = Depends(get_current_user)):
-    """Get current user info."""
-    return UserResponse(
+@router.get("/me", response_model=UserPermissionsResponse)
+async def get_me(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current user info with permissions."""
+    permissions = await get_user_permissions(user, db)
+    return UserPermissionsResponse(
         id=user.id,
         username=user.username,
         role=user.role,
+        role_id=user.role_id,
         customer_id=user.customer_id,
         customer_name=user.customer_name,
+        permissions=permissions,
     )
+
+
+@router.get("/permissions", response_model=List[str])
+async def get_my_permissions(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current user's permission codes."""
+    return await get_user_permissions(user, db)

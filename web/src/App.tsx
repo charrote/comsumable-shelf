@@ -16,6 +16,7 @@ import { ReportPage } from './pages/ReportPage'
 import { SystemSettingsPage } from './pages/SystemSettingsPage'
 import { AppVersionUpdatePage } from './pages/AppVersionUpdatePage'
 import { UserManagementPage } from './pages/UserManagementPage'
+import { RoleManagementPage } from './pages/RoleManagementPage'
 import { AppDownloadPage } from './pages/AppDownloadPage'
 import { BarcodeDefinitionPage } from './pages/BarcodeDefinitionPage'
 import { BackupManagePage } from './pages/BackupManagePage'
@@ -51,6 +52,7 @@ export default function App() {
                 <Route path="app-version" element={<AppVersionUpdatePage />} />
                 <Route path="barcode-definitions" element={<BarcodeDefinitionPage />} />
                 <Route path="users" element={<UserManagementPage />} />
+                <Route path="roles" element={<RoleManagementPage />} />
                 <Route path="app-download" element={<AppDownloadPage />} />
                 <Route path="backup" element={<BackupManagePage />} />
                 <Route path="light-debug" element={<LightDebugPage />} />
