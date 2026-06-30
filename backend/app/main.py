@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import sys
 import structlog
 import logging
 from fastapi import FastAPI
@@ -34,6 +35,13 @@ from app.api.changelog import router as changelog_router
 from app.api.roles import router as roles_router
 from app.services.led_service import LedService
 from app.services.rack_slot_poller import RackSlotPoller
+
+_log_handler = logging.StreamHandler(sys.stderr)
+_log_handler.setLevel(logging.INFO)
+_log_handler.setFormatter(logging.Formatter("%(message)s"))
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.addHandler(_log_handler)
 
 structlog.configure(
     processors=[
