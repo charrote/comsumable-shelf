@@ -77,16 +77,27 @@ async def init_db():
         # PostgreSQL creates a composite type in pg_type when a table is created.
         # If create_all() fails mid-transaction, the type may remain orphaned
         # (table doesn't exist) and block future create_all() calls.
-        for tbl in ["reel_reservations", "led_commands", "data_backups"]:
-            await conn.execute(text(f"""
-                DO $$ BEGIN
-                    IF NOT EXISTS (SELECT FROM pg_class WHERE relname = '{tbl}' AND relkind = 'r')
-                       AND EXISTS (SELECT 1 FROM pg_type WHERE typname = '{tbl}')
-                    THEN
-                        DROP TYPE IF EXISTS {tbl} CASCADE;
-                    END IF;
-                END $$;
-            """))
+        # This dynamically finds ALL orphaned types rather than listing each table.
+        await conn.execute(text("""
+            DO $$ DECLARE
+                rec RECORD;
+            BEGIN
+                FOR rec IN
+                    SELECT t.typname
+                    FROM pg_type t
+                    WHERE t.typtype = 'c'
+                      AND t.typnamespace = (
+                          SELECT oid FROM pg_namespace WHERE nspname = 'public'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM pg_class c
+                          WHERE c.relname = t.typname AND c.relkind = 'r'
+                      )
+                LOOP
+                    EXECUTE 'DROP TYPE IF EXISTS ' || quote_ident(rec.typname) || ' CASCADE';
+                END LOOP;
+            END $$;
+        """))
 
         await conn.run_sync(
             lambda sync_session: Base.metadata.create_all(

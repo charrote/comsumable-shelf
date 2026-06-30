@@ -53,8 +53,17 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     """Application startup/shutdown."""
     logger.info("Starting up ConsumableShelf backend")
-    await init_db()
-    await seed_db()
+    if settings.DB_AUTO_MIGRATE:
+        try:
+            await init_db()
+            logger.info("Schema migration completed")
+        except Exception as e:
+            logger.error(f"Schema migration failed: {e}")
+            logger.warning("Continuing startup — seed_db will attempt to run anyway")
+    try:
+        await seed_db()
+    except Exception as e:
+        logger.error(f"Seed data failed (tables may not exist yet): {e}")
     logger.info("Database initialized")
 
     # ── LED service ──

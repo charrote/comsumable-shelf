@@ -34,6 +34,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://postgres:${PG_PASSWORD:-postgres}@db:5432/smes
       XR_MATCH_WINDOW_SECONDS: ${XR_MATCH_WINDOW_SECONDS:-10}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      DB_AUTO_MIGRATE: ${DB_AUTO_MIGRATE:-true}
       BACKUP_DIR: /app/backups
       BACKUP_DB_HOST: db
       BACKUP_DB_PORT: 5432

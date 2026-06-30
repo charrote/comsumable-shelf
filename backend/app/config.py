@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "changeme-secret-key"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
+    # Auto-run schema migrations on startup (disable in production)
+    DB_AUTO_MIGRATE: bool = True
+
     LOG_LEVEL: str = "info"
 
     # Backup
