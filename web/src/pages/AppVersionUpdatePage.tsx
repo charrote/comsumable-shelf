@@ -1,10 +1,18 @@
 import { useState, useEffect } from 'react'
-import { Card, Button, Input, Spin, message, Typography, Tooltip, Space, Divider } from 'antd'
-import { DownloadOutlined, CheckOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Card, Button, Input, Spin, message, Typography, Tooltip, Space, Divider, Alert, Tag } from 'antd'
+import { DownloadOutlined, CheckOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
 import { getSettingsApi, updateSettingApi } from '../api'
 
 const { Text, Title } = Typography
 const { TextArea } = Input
+
+/** latest-apk.json 的响应结构 */
+interface ApkManifest {
+  version: string
+  buildNumber: string
+  apkPath: string
+  updatedAt: string
+}
 
 export function AppVersionUpdatePage() {
   const [loading, setLoading] = useState(false)
@@ -15,6 +23,10 @@ export function AppVersionUpdatePage() {
   const [appDownloadUrl, setAppDownloadUrl] = useState('')
   const [appReleaseNotes, setAppReleaseNotes] = useState('')
   const [appSaving, setAppSaving] = useState(false)
+
+  // 自动检测状态
+  const [autoDetectLoading, setAutoDetectLoading] = useState(false)
+  const [detectedManifest, setDetectedManifest] = useState<ApkManifest | null>(null)
 
   const loadSettings = async () => {
     setLoading(true)
@@ -39,6 +51,42 @@ export function AppVersionUpdatePage() {
   useEffect(() => {
     loadSettings()
   }, [])
+
+  // ── 自动检测最新版本（从 latest-apk.json） ──
+  const handleAutoDetect = async () => {
+    setAutoDetectLoading(true)
+    setDetectedManifest(null)
+    try {
+      const res = await fetch('/apk/latest-apk.json', { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status} — 服务器上尚无构建产物`)
+      const manifest: ApkManifest = await res.json()
+      if (!manifest?.version || !manifest?.apkPath) {
+        throw new Error('清单数据不完整')
+      }
+
+      // 自动填充版本号
+      setAppLatestVersion(manifest.version)
+
+      // 自动拼接 APK 下载地址（基于当前页面 origin + apkPath）
+      const autoUrl = `${window.location.origin}${manifest.apkPath}`
+      setAppDownloadUrl(autoUrl)
+
+      // 记录检测结果供展示
+      setDetectedManifest(manifest)
+
+      message.success({
+        content: `检测到最新构建: v${manifest.version}（构建 ${manifest.buildNumber}），已自动填充版本号和下载地址`,
+        duration: 5,
+      })
+    } catch (err: any) {
+      message.error({
+        content: `自动检测失败: ${err.message || '无法获取 latest-apk.json'}`,
+        duration: 5,
+      })
+    } finally {
+      setAutoDetectLoading(false)
+    }
+  }
 
   // 保存全部
   const handleSaveAppVersion = async () => {
@@ -86,6 +134,50 @@ export function AppVersionUpdatePage() {
               配置 PDA App 的版本更新信息，用户端在设置页面点击「检查更新」时将从 <Text code>/api/app/version</Text> 获取以下配置。
             </Text>
           </div>
+
+          {/* 自动检测结果提示 */}
+          {detectedManifest && (
+            <Alert
+              type="success"
+              showIcon
+              icon={<ScanOutlined />}
+              closable
+              onClose={() => setDetectedManifest(null)}
+              style={{ marginBottom: 16, borderRadius: 8 }}
+              message={
+                <div>
+                  <Text strong>已检测到最新构建产物</Text>
+                  <div style={{ marginTop: 4 }}>
+                    <Space size={16} wrap>
+                      <span>
+                        <Text type="secondary">版本: </Text>
+                        <Tag color="blue">{detectedManifest.version}</Tag>
+                      </span>
+                      <span>
+                        <Text type="secondary">构建: </Text>
+                        <Tag>{detectedManifest.buildNumber}</Tag>
+                      </span>
+                      <span>
+                        <Text type="secondary">APK: </Text>
+                        <Text code style={{ fontSize: 12 }}>
+                          {detectedManifest.apkPath}
+                        </Text>
+                      </span>
+                      <span>
+                        <Text type="secondary">更新于: </Text>
+                        <Text>{detectedManifest.updatedAt?.replace('T', ' ').replace('Z', '')}</Text>
+                      </span>
+                    </Space>
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <Text type="success">
+                      版本号和下载地址已自动填充，请确认后保存
+                    </Text>
+                  </div>
+                </div>
+              }
+            />
+          )}
 
           <Divider orientation="left" plain>版本信息</Divider>
 
@@ -148,7 +240,16 @@ export function AppVersionUpdatePage() {
           <Divider />
 
           {/* 操作栏 */}
-          <div style={{ display: 'flex', gap: 12 }}>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <Button
+              type="primary"
+              icon={<ScanOutlined />}
+              onClick={handleAutoDetect}
+              loading={autoDetectLoading}
+              size="large"
+            >
+              自动检测最新版本
+            </Button>
             <Button
               type="primary"
               icon={<DownloadOutlined />}
