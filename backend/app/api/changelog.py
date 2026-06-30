@@ -113,7 +113,7 @@ async def append_changelog(
 
     if insert_idx is not None:
         # Insert the new block before the first version entry, after the title
-        new_lines = lines[:insert_idx] + [new_block, "", "---"] + lines[insert_idx:]
+        new_lines = lines[:insert_idx] + [new_block, "", "---", ""] + lines[insert_idx:]
     else:
         # No existing versions, just append
         if current.rstrip():
