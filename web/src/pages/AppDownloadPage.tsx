@@ -21,6 +21,14 @@ interface ApkManifest {
   updatedAt: string
 }
 
+/** 解析后的版本日志条目 */
+interface ChangelogVersion {
+  title: string       // e.g. "v3.0.0 (2026-06-27)"
+  version: string     // e.g. "3.0.0"
+  date: string        // e.g. "2026-06-27"
+  items: string[]     // list items
+}
+
 /** 默认回退值（当 latest-apk.json 不存在时使用） */
 const FALLBACK: ApkManifest = {
   version: '3.0.0',
@@ -31,11 +39,46 @@ const FALLBACK: ApkManifest = {
 
 const MANIFEST_URL = '/apk/latest-apk.json'
 
+/** 解析 CHANGELOG.md 内容为结构化版本列表 */
+function parseChangelog(markdown: string): ChangelogVersion[] {
+  // 按 --- 分割各版本区块
+  const sections = markdown.split(/\n---\n/)
+  const versions: ChangelogVersion[] = []
+
+  for (const section of sections) {
+    const lines = section.trim().split('\n')
+    // 找标题行: ## v1.2.3 (2026-01-01)
+    const titleLine = lines.find(l => /^##\s+v/.test(l))
+    if (!titleLine) continue
+
+    const title = titleLine.replace(/^##\s+/, '').trim()
+    // 解析版本号和日期
+    const match = title.match(/^v?([\d.]+)\s*\(([^)]+)\)/)
+    if (!match) continue
+
+    const version = match[1]
+    const date = match[2]
+
+    // 提取列表项（以 - 或 * 开头）
+    const items = lines
+      .filter(l => /^\s*[-*]\s/.test(l))
+      .map(l => l.replace(/^\s*[-*]\s/, '').trim())
+
+    if (version) {
+      versions.push({ title, version, date, items })
+    }
+  }
+
+  return versions
+}
+
 export function AppDownloadPage() {
   const appName = getAppName()
 
   const [manifest, setManifest] = useState<ApkManifest>(FALLBACK)
   const [loading, setLoading] = useState(true)
+  const [changelogVersions, setChangelogVersions] = useState<ChangelogVersion[]>([])
+  const [changelogLoading, setChangelogLoading] = useState(true)
 
   /** 从服务器获取 latest-apk.json */
   const fetchLatestManifest = useCallback(async () => {
@@ -50,16 +93,33 @@ export function AppDownloadPage() {
         throw new Error('清单数据不完整')
       }
     } catch {
-      // 静默回退到 FALLBACK，用 message 提示但不阻塞页面
       setManifest(FALLBACK)
     } finally {
       setLoading(false)
     }
   }, [])
 
+  /** 从 API 获取 CHANGELOG.md 内容并解析 */
+  const fetchChangelog = useCallback(async () => {
+    setChangelogLoading(true)
+    try {
+      const res = await fetch('/api/app/changelog', { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      const parsed = parseChangelog(data.content || '')
+      setChangelogVersions(parsed)
+    } catch {
+      // 静默失败，不展示更新日志
+      setChangelogVersions([])
+    } finally {
+      setChangelogLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchLatestManifest()
-  }, [fetchLatestManifest])
+    fetchChangelog()
+  }, [fetchLatestManifest, fetchChangelog])
 
   const { version, buildNumber, apkPath } = manifest
   const downloadUrl = `${window.location.origin}${apkPath}`
@@ -221,7 +281,7 @@ export function AppDownloadPage() {
         />
       </Card>
 
-      {/* 版本历史 */}
+      {/* 版本历史 — 从 CHANGELOG.md 动态渲染 */}
       <Card
         title={
           <Space>
@@ -231,84 +291,44 @@ export function AppDownloadPage() {
         }
         style={{ borderRadius: 12 }}
       >
-        {/* v3.0.0 — 默认展开 */}
-        <Divider orientation="left" plain>
-          v3.0.0 (2026-06-27)
-        </Divider>
-        <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
-          <li>全版本号升级至 3.0.0：统一 PDA 端首页/设置页/登录页版本号显示</li>
-          <li>智能料架更换底层硬件通信协议改为 HTTP REST API（JSON/UTF-8） 控灯</li>
-          <li>重构入料上架、料盘下架、新灯控联动逻辑；增加料架回调；增加灯控调试与灯控管理</li>
-          <li>出库策略管理移至 Web 管理端：移动端不再允许修改出库策略，由后台统一控制</li>
-          <li>登录页新增版本号显示：登录页底部显示当前版本信息</li>
-          <li>修复出库策略不生效：FIFO 计算时正确传入用户在设置页选择的策略参数</li>
-        </ul>
+        <Spin spinning={changelogLoading}>
+          {changelogVersions.length > 0 ? (
+            <>
+              {/* 最新版本 — 默认展开 */}
+              <Divider orientation="left" plain>
+                {changelogVersions[0].title}
+              </Divider>
+              <ul style={{ paddingLeft: 20, lineHeight: 2 }}>
+                {changelogVersions[0].items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
 
-        {/* 历史版本 — 折叠 */}
-        <Collapse
-          ghost
-          size="small"
-          items={[
-            {
-              key: 'v2.1',
-              label: 'v2.1 (2026-06-24)',
-              children: (
-                <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
-                  <li>Release 重新构建：包含最新源码，优化 R8 混淆与资源压缩，APK 体积 29MB</li>
-                  <li>库存盘号修复：WEB 库存管理页库存盘号列显示正确的 Reel 编码格式（REEL-YYYYMMDD-XXXX）</li>
-                  <li>前端缓存优化：Vite 构建产物启用内容哈希文件名，解决浏览器缓存不更新的问题</li>
-                  <li>后端 API 增强：库存列表接口增加 reel_code 字段返回</li>
-                </ul>
-              ),
-            },
-            {
-              key: 'v2.0',
-              label: 'v2.0 (2026-06-24)',
-              children: (
-                <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
-                  <li>底部 Tab 导航重构：首页/收料入库/料盘上架/扫码出库/库存跟踪，设置移至右上角齿轮入口</li>
-                  <li>操作员统一配置：设置页全局设置操作员，所有业务页面自动读取无需重复输入</li>
-                  <li>摄像头扫码：调用设备摄像头扫描条码，支持多种条码格式（Code128/QR/Data Matrix/EAN等）</li>
-                  <li>动态服务器地址：登录页/设置页可运行时配置 API 地址，支持多环境切换</li>
-                  <li>Release 构建优化：APK 体积从 177MB 缩减至 24MB（ABI 过滤 + R8 混淆 + 资源压缩）</li>
-                  <li>正式服务器地址：默认连接生产环境 http://101.34.63.68:8080/api</li>
-                  <li>收料单增加采购单号；收料详情增加取消功能；扫码流程优化</li>
-                  <li>BOM 导入优化：增加产品编码/产品名称录入，列表关联显示</li>
-                  <li>库存管理优化：增加客户列/客户筛选/状态筛选/Excel导出</li>
-                  <li>仪表盘优化：移除快速操作区，摘要卡片简化，版本号 2.0</li>
-                </ul>
-              ),
-            },
-            {
-              key: 'v1.1',
-              label: 'v1.1.0 (2026-06-18)',
-              children: (
-                <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
-                  <li>服务端 IP 自动注入：Debug 包自动连本地/远程，Release 包连生产地址，无需手动配置</li>
-                  <li>系统名称动态化：APP_NAME 从后端配置文件读取，PDA 首页 + Web 后台统一显示"智能物料管理系统"</li>
-                  <li>硬件模拟模式：新增 HARDWARE_SIMULATION 环境变量，无硬件时自动跳过 LED/打印机/料架传感器</li>
-                  <li>新增 /api/system/info 接口：前端动态获取系统名称、版本号等信息</li>
-                  <li>入库上架自动分配储位：扫码后自动匹配空储位，减少人工操作</li>
-                  <li>FIFO 出库策略优化：支持 tail_first 策略，优先取出后入库的物料</li>
-                  <li>LED 亮灯指令持久化 + 后台 Worker 自动处理状态流转</li>
-                </ul>
-              ),
-            },
-            {
-              key: 'v1.0',
-              label: 'v1.0.0 (2026-06-17)',
-              children: (
-                <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
-                  <li>扫码入库：支持条码扫描、入库单创建、重复条码检测</li>
-                  <li>扫码出库：支持出库单加载、LED 亮灯指引、拣货确认</li>
-                  <li>补料上架：支持补料单创建、扫描上架、储位分配</li>
-                  <li>库存跟踪：实时查看在库库存和流转记录</li>
-                  <li>用户认证：登录/登出、Token 持久化</li>
-                </ul>
-              ),
-            },
-          ]}
-        />
+              {/* 历史版本 — 折叠 */}
+              {changelogVersions.length > 1 && (
+                <Collapse
+                  ghost
+                  size="small"
+                  items={changelogVersions.slice(1).map((v) => ({
+                    key: v.version,
+                    label: v.title,
+                    children: (
+                      <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
+                        {v.items.map((item, i) => (
+                          <li key={i}>{item}</li>
+                        ))}
+                      </ul>
+                    ),
+                  }))}
+                />
+              )}
+            </>
+          ) : (
+            !changelogLoading && (
+              <Text type="secondary">暂无更新日志</Text>
+            )
+          )}
+        </Spin>
       </Card>
 
       {/* 底部 */}

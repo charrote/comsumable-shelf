@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Card, Button, Input, Spin, message, Typography, Tooltip, Space, Divider, Alert, Tag } from 'antd'
 import { DownloadOutlined, CheckOutlined, ReloadOutlined, ScanOutlined } from '@ant-design/icons'
-import { getSettingsApi, updateSettingApi } from '../api'
+import { getSettingsApi, updateSettingApi, appendChangelogApi } from '../api'
 
 const { Text, Title } = Typography
 const { TextArea } = Input
@@ -98,7 +98,13 @@ export function AppVersionUpdatePage() {
         updateSettingApi('app_download_url', appDownloadUrl, 'PDA App APK 下载地址'),
         updateSettingApi('app_release_notes', appReleaseNotes, 'PDA App 更新说明'),
       ])
-      message.success('App 版本配置已保存')
+
+      // 同步写入 CHANGELOG.md
+      if (appLatestVersion && appReleaseNotes) {
+        await appendChangelogApi(appLatestVersion, appReleaseNotes)
+      }
+
+      message.success('App 版本配置已保存，更新日志已同步')
       await loadSettings()
     } catch (err: any) {
       message.error(err.response?.data?.detail || '保存失败')

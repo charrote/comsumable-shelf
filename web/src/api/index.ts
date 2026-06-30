@@ -288,6 +288,12 @@ export const getSettingsApi = () =>
   apiClient.get('/settings')
 export const updateSettingApi = (key: string, value: string, description?: string) =>
   apiClient.put(`/settings/${key}`, { key, value, description })
+
+// Changelog
+export const getChangelogApi = () =>
+  apiClient.get('/app/changelog')
+export const appendChangelogApi = (version: string, notes: string, date?: string) =>
+  apiClient.post('/app/changelog', { version, notes, date })
 // Users
 export const getUsersApi = (params: any) =>
   apiClient.get('/users', { params })

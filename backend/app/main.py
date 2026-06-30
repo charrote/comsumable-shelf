@@ -30,6 +30,7 @@ from app.api.rack_callback import router as rack_callback_router
 from app.api.ws import router as ws_router
 from app.api.light_debug import router as light_debug_router
 from app.api.app_version import router as app_version_router
+from app.api.changelog import router as changelog_router
 from app.api.roles import router as roles_router
 from app.services.led_service import LedService
 from app.services.rack_slot_poller import RackSlotPoller
@@ -126,6 +127,7 @@ app.include_router(backup_router, prefix=settings.API_PREFIX)
 app.include_router(rack_callback_router, prefix=settings.API_PREFIX)
 app.include_router(light_debug_router, prefix=settings.API_PREFIX)
 app.include_router(app_version_router, prefix=settings.API_PREFIX)
+app.include_router(changelog_router, prefix=settings.API_PREFIX)
 app.include_router(roles_router, prefix=settings.API_PREFIX)
 app.include_router(ws_router)  # WebSocket 无 prefix
 
