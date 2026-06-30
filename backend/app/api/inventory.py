@@ -18,6 +18,7 @@ from app.schemas import (
 from app.utils.database import get_db
 from app.models import InventoryReel, MaterialMaster, Shelf, ShelfSlot, Transaction, Customer
 from app.services.inventory_service import direct_out
+from app.services.operation_history_service import record_operation
 import openpyxl
 from openpyxl.styles import Font, PatternFill
 from urllib.parse import quote
@@ -289,6 +290,48 @@ async def update_inventory_pallet(
             created_at=now,
         )
         db.add(txn)
+
+        # ── 记录作业履历：库存调整 ──
+        # 获取物料信息
+        mat_for_adj = await db.execute(
+            select(MaterialMaster).where(MaterialMaster.id == pallet.material_id)
+        )
+        mat_adj = mat_for_adj.scalar_one_or_none()
+        # 获取储位信息
+        slot_adj_info = None
+        shelf_adj_code = None
+        slot_adj_code = None
+        if pallet.shelf_slot_id:
+            slot_adj_result = await db.execute(
+                select(ShelfSlot, Shelf.code)
+                .join(Shelf, ShelfSlot.shelf_id == Shelf.id)
+                .where(ShelfSlot.id == pallet.shelf_slot_id)
+            )
+            slot_adj_row = slot_adj_result.one_or_none()
+            if slot_adj_row:
+                slot_adj_obj, shelf_adj_code = slot_adj_row
+                slot_adj_code = slot_adj_obj.code or str(slot_adj_obj.slot_on_board)
+
+        slot_adj_obj_id = slot_adj_obj.id if slot_adj_row and slot_adj_obj else None
+        slot_adj_shelf_id = slot_adj_obj.shelf_id if slot_adj_row and slot_adj_obj else None
+        await record_operation(
+            db,
+            operation_type="adjustment",
+            reel_id=pallet.id,
+            reel_code=pallet.reel_code,
+            material_id=pallet.material_id,
+            material_code=mat_adj.code if mat_adj else None,
+            material_name=mat_adj.name if mat_adj else None,
+            shelf_id=slot_adj_shelf_id,
+            shelf_code=shelf_adj_code,
+            slot_id=slot_adj_obj_id,
+            slot_code=slot_adj_code,
+            customer_id=pallet.customer_id,
+            quantity=data.quantity,
+            source_type="manual_adjust",
+            operator="系统",
+            note=data.note or f"手动调整: {', '.join(updated_fields)}（旧数量: {old_quantity}）",
+        )
 
     pallet.updated_at = datetime.utcnow()
     await db.commit()

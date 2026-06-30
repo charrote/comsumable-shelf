@@ -19,6 +19,7 @@ from app.models import (
 )
 from app.services.fifo_service import calculate_fifo_pallets, get_available_qty
 from app.services.rack_api_client import RackApiClient, get_rack_api_config
+from app.services.operation_history_service import record_operation
 from app.utils.barcode import parse_barcode
 import json
 import logging
@@ -706,6 +707,44 @@ async def confirm_pick(
         created_at=now,
     )
     db.add(txn)
+
+    # ── 记录作业履历：落架（发料出库）──
+    slot_info_result = await db.execute(
+        select(ShelfSlot, Shelf.code)
+        .join(Shelf, ShelfSlot.shelf_id == Shelf.id)
+        .where(ShelfSlot.id == pallet.shelf_slot_id)
+    )
+    slot_row = slot_info_result.one_or_none()
+    shelf_code_oh = slot_row[1] if slot_row else None
+    slot_obj_oh = slot_row[0] if slot_row else None
+    slot_code_oh = slot_obj_oh.code or str(slot_obj_oh.slot_on_board) if slot_obj_oh else None
+
+    mat_for_op = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == detail.material_id)
+    )
+    mat_op = mat_for_op.scalar_one_or_none()
+
+    await record_operation(
+        db,
+        operation_type="shelving_off",
+        led_color=order.assigned_color,
+        reel_id=pallet_id,
+        reel_code=pallet.reel_code if pallet else None,
+        material_id=detail.material_id,
+        material_code=mat_op.code if mat_op else None,
+        material_name=mat_op.name if mat_op else None,
+        shelf_id=slot_obj_oh.shelf_id if slot_obj_oh else None,
+        shelf_code=shelf_code_oh,
+        slot_id=pallet.shelf_slot_id if pallet else None,
+        slot_code=slot_code_oh,
+        customer_id=order.customer_id,
+        quantity=pick_qty,
+        source_type="issue",
+        source_id=order_id,
+        source_no=order.order_no,
+        operator=data.operator,
+        note=f"发料出库 {order.order_no}（亮灯: {order.assigned_color or '无'}）",
+    )
 
     cleared = []
     if pallet and pallet.shelf_slot_id:

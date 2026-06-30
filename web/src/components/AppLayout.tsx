@@ -17,6 +17,7 @@ import {
   DownloadOutlined,
   CloudUploadOutlined,
   BugOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons'
 import { useState, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
@@ -59,6 +60,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { key: '/xr', icon: <DesktopOutlined />, label: '点料机管理', permission: 'xr:read' },
     { key: '/bom', icon: <FileExcelOutlined />, label: 'BOM管理', permission: 'bom:read' },
     { key: '/report', icon: <BarChartOutlined />, label: '报表统计', permission: 'report:read' },
+    { key: '/operation-history', icon: <HistoryOutlined />, label: '作业履历', permission: 'operation-history:read' },
     {
       key: 'admin',
       icon: <SettingOutlined />,

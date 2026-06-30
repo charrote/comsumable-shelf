@@ -440,6 +440,20 @@ export const getPermissionsFlatApi = () =>
 export const updateRolePermissionsApi = (id: number, permissionIds: number[]) =>
   apiClient.put(`/roles/${id}/permissions`, { permission_ids: permissionIds })
 
+// ── Operation History ──
+export const getOperationHistoryApi = (params: {
+  start_time: string
+  end_time: string
+  operation_type?: string
+  shelving_mode?: string
+  keyword?: string
+  customer_id?: number
+  page?: number
+  page_size?: number
+}) => apiClient.get('/operation-history', { params })
+export const getOperationHistoryTypesApi = () =>
+  apiClient.get('/operation-history/types')
+
 // ── Data Backup ──
 export const getBackupsApi = () =>
   apiClient.get('/backups')

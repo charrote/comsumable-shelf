@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import MaterialMaster, InventoryReel, ReceiptReel, Receipt, CustomerMaterialMapping, Transaction
 from app.utils.barcode import parse_barcode, find_material_candidates
 from app.hal.printer import print_label
+from app.services.operation_history_service import record_operation
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +280,28 @@ async def finalize_receipt_reel(
         created_at=now,
     )
     db.add(txn)
+
+    # ── 记录作业履历：入库 ──
+    mat_for_hist = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == material_id)
+    )
+    mat_hist = mat_for_hist.scalar_one_or_none()
+    await record_operation(
+        db,
+        operation_type="inventory_in",
+        reel_id=pallet.id,
+        reel_code=reel_code,
+        material_id=material_id,
+        material_code=mat_hist.code if mat_hist else None,
+        material_name=mat_hist.name if mat_hist else None,
+        customer_id=customer_id,
+        quantity=quantity,
+        source_type="receipt",
+        source_id=receipt_id,
+        operator=operator,
+        note=f"入库收料 #{receipt_id}",
+    )
+
     await db.commit()
 
     # ── 3. Auto-assign empty slot (optional) ──

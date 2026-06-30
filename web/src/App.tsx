@@ -22,6 +22,7 @@ import { AppDownloadPage } from './pages/AppDownloadPage'
 import { BarcodeDefinitionPage } from './pages/BarcodeDefinitionPage'
 import { BackupManagePage } from './pages/BackupManagePage'
 import { LightDebugPage } from './pages/LightDebugPage'
+import { OperationHistoryPage } from './pages/OperationHistoryPage'
 import { useAuthStore } from './store/authStore'
 
 export default function App() {
@@ -81,6 +82,7 @@ export default function App() {
                 <Route path="app-download" element={<AppDownloadPage />} />
                 <Route path="backup" element={<BackupManagePage />} />
                 <Route path="light-debug" element={<LightDebugPage />} />
+                <Route path="operation-history" element={<OperationHistoryPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Routes>
             </AppLayout>

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import InventoryReel, Transaction, MaterialMaster
+from app.services.operation_history_service import record_operation
 
 
 async def direct_out(
@@ -89,6 +90,33 @@ async def direct_out(
         created_at=now,
     )
     db.add(tx)
+
+    # ── 记录作业履历：出库 ──
+    # 获取物料信息
+    mat_result = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == pallet.material_id)
+    )
+    mat = mat_result.scalar_one_or_none()
+
+    await record_operation(
+        db,
+        operation_type="shelving_off",
+        reel_id=pallet.id,
+        reel_code=pallet.reel_code,
+        material_id=pallet.material_id,
+        material_code=mat.code if mat else None,
+        material_name=mat.name if mat else None,
+        shelf_id=None,
+        shelf_code=None,
+        slot_id=None,
+        slot_code=None,
+        customer_id=pallet.customer_id,
+        quantity=qty_before,
+        source_type="direct_outbound",
+        operator=operator,
+        note=note or "直接出库（整盘）",
+    )
+
     await db.commit()
 
     return {

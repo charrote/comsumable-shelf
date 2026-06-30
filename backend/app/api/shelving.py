@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from app.utils.database import get_db
 from app.models import InventoryReel, MaterialMaster, Shelf, ShelfSlot, ShelfSlotEvent
+from app.services.operation_history_service import record_operation
 
 router = APIRouter(prefix="/shelving", tags=["Shelving"])
 
@@ -308,6 +309,7 @@ async def bind_shelving_slot(
     shelf_code = row[1] if row else ""
     slot_obj = row[0] if row else None
     slot_code = slot_obj.code or str(slot_obj.slot_on_board) if slot_obj else ""
+    resolved_shelf_id = slot_obj.shelf_id if slot_obj else data.shelf_id
 
     # Record event
     event = ShelfSlotEvent(
@@ -317,6 +319,32 @@ async def bind_shelving_slot(
         source="pda",
     )
     db.add(event)
+
+    # ── 记录作业履历：手动上架 ──
+    mat_result_mat = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == reel.material_id)
+    )
+    mat = mat_result_mat.scalar_one_or_none()
+    await record_operation(
+        db,
+        operation_type="shelving_on",
+        shelving_mode="manual",
+        reel_id=reel.id,
+        reel_code=reel.reel_code,
+        material_id=reel.material_id,
+        material_code=mat.code if mat else None,
+        material_name=mat.name if mat else None,
+        shelf_id=resolved_shelf_id,
+        shelf_code=shelf_code,
+        slot_id=shelf_slot_id,
+        slot_code=slot_code,
+        customer_id=reel.customer_id,
+        quantity=reel.quantity,
+        source_type="shelving_bind",
+        operator=data.operator,
+        note=f"手动上架: {shelf_code}/{slot_code}",
+    )
+
     await db.commit()
 
     return ShelvingBindResponse(
