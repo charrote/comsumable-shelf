@@ -391,6 +391,66 @@ async def init_db():
             """)
         )
 
+        # ════════════════════════════════════════════════════════════════
+        # PDA 版本更新日志表
+        # ════════════════════════════════════════════════════════════════
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS app_changelog (
+                id SERIAL PRIMARY KEY,
+                version VARCHAR(50) NOT NULL,
+                notes TEXT NOT NULL,
+                date VARCHAR(20) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS ix_app_changelog_version
+            ON app_changelog (version);
+        """))
+
+        # Seed existing data from CHANGELOG.md if table is empty
+        result = await conn.execute(text("SELECT COUNT(*) FROM app_changelog"))
+        count = result.scalar()
+        if count == 0:
+            import re
+            from pathlib import Path
+
+            from pathlib import Path
+            changelog_path = Path(__file__).resolve().parent.parent / "CHANGELOG.md"
+            if changelog_path.exists():
+                content = changelog_path.read_text(encoding="utf-8")
+                sections = re.split(r'\n\s*---\s*\n', content)
+                inserted = 0
+                for section in sections:
+                    lines = section.strip().split('\n')
+                    title_line = next((l for l in lines if re.match(r'^##\s+v', l)), None)
+                    if not title_line:
+                        continue
+                    title = re.sub(r'^##\s+', '', title_line).strip()
+                    match = re.match(r'^v?([\d.]+)\s*[（(]([^）)]+)[）)]', title)
+                    if not match:
+                        continue
+                    version = match.group(1)
+                    date_str = match.group(2)
+                    items = [
+                        re.sub(r'^\s*[-*]\s', '', l).strip()
+                        for l in lines if re.match(r'^\s*[-*]\s', l)
+                    ]
+                    notes = "\n".join(f"- {item}" for item in items) if items else ""
+                    if version and notes:
+                        await conn.execute(
+                            text("""
+                                INSERT INTO app_changelog (version, notes, date)
+                                VALUES (:version, :notes, :date)
+                            """),
+                            {"version": version, "notes": notes, "date": date_str}
+                        )
+                        inserted += 1
+                if inserted:
+                    logger.info(f"从 CHANGELOG.md 导入 {inserted} 条版本记录")
+                else:
+                    logger.info("CHANGELOG.md 存在但无有效记录")
+
         # Note: suppliers table is auto-created by Base.metadata.create_all()
         # via the Supplier model, so no raw CREATE TABLE is needed here.
 

@@ -440,6 +440,17 @@ class SystemSetting(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class AppChangelog(Base):
+    """PDA 版本更新日志 — 替代 CHANGELOG.md 文件方案。"""
+    __tablename__ = "app_changelog"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String, nullable=False, index=True, comment="版本号")
+    notes = Column(Text, nullable=False, comment="更新说明")
+    date = Column(String, nullable=False, comment="发布日期")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CustomerMaterialMapping(Base):
     """Maps a customer's material code to an internal material master record."""
     __tablename__ = "customer_material_mappings"

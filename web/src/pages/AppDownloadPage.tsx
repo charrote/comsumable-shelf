@@ -21,11 +21,16 @@ interface ApkManifest {
   updatedAt: string
 }
 
-/** 解析后的版本日志条目 */
+/** API 返回的版本日志条目 */
+interface ChangelogEntry {
+  version: string
+  notes: string
+  date: string
+}
+
+/** 解析后的版本日志条目（前端渲染用） */
 interface ChangelogVersion {
   title: string       // e.g. "v3.0.0 (2026-06-27)"
-  version: string     // e.g. "3.0.0"
-  date: string        // e.g. "2026-06-27"
   items: string[]     // list items
 }
 
@@ -38,39 +43,6 @@ const FALLBACK: ApkManifest = {
 }
 
 const MANIFEST_URL = '/apk/latest-apk.json'
-
-/** 解析 CHANGELOG.md 内容为结构化版本列表 */
-function parseChangelog(markdown: string): ChangelogVersion[] {
-  // 按 --- 分割各版本区块
-  const sections = markdown.split(/\n---\n/)
-  const versions: ChangelogVersion[] = []
-
-  for (const section of sections) {
-    const lines = section.trim().split('\n')
-    // 找标题行: ## v1.2.3 (2026-01-01)
-    const titleLine = lines.find(l => /^##\s+v/.test(l))
-    if (!titleLine) continue
-
-    const title = titleLine.replace(/^##\s+/, '').trim()
-    // 解析版本号和日期
-    const match = title.match(/^v?([\d.]+)\s*\(([^)]+)\)/)
-    if (!match) continue
-
-    const version = match[1]
-    const date = match[2]
-
-    // 提取列表项（以 - 或 * 开头）
-    const items = lines
-      .filter(l => /^\s*[-*]\s/.test(l))
-      .map(l => l.replace(/^\s*[-*]\s/, '').trim())
-
-    if (version) {
-      versions.push({ title, version, date, items })
-    }
-  }
-
-  return versions
-}
 
 export function AppDownloadPage() {
   const appName = getAppName()
@@ -99,17 +71,22 @@ export function AppDownloadPage() {
     }
   }, [])
 
-  /** 从 API 获取 CHANGELOG.md 内容并解析 */
+  /** 从 API 获取版本更新日志 */
   const fetchChangelog = useCallback(async () => {
     setChangelogLoading(true)
     try {
       const res = await fetch('/api/app/changelog', { cache: 'no-store' })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      const parsed = parseChangelog(data.content || '')
-      setChangelogVersions(parsed)
+      const entries: ChangelogEntry[] = await res.json()
+      const versions: ChangelogVersion[] = entries.map((e) => ({
+        title: `v${e.version} (${e.date})`,
+        items: e.notes
+          .split('\n')
+          .map((l) => l.replace(/^\s*[-*]\s*/, '').trim())
+          .filter(Boolean),
+      }))
+      setChangelogVersions(versions)
     } catch {
-      // 静默失败，不展示更新日志
       setChangelogVersions([])
     } finally {
       setChangelogLoading(false)
@@ -310,7 +287,7 @@ export function AppDownloadPage() {
                   ghost
                   size="small"
                   items={changelogVersions.slice(1).map((v) => ({
-                    key: v.version,
+                    key: v.title,
                     label: v.title,
                     children: (
                       <ul style={{ paddingLeft: 20, lineHeight: 2, marginBottom: 0 }}>
