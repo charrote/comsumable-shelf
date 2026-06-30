@@ -9,10 +9,7 @@ import { useOperator, OPERATOR_KEY } from '../hooks/useOperator'
 import api, { updateBaseUrl, loadBaseUrl, checkAppVersionApi } from '../api'
 import type { AppVersionInfo } from '../api'
 import { PersonIcon, GlobeIcon, PrinterIcon, UpdateIcon } from '../components/Icons'
-
-// ── 当前 APP 版本（与 app.json / package.json 保持一致） ──
-const APP_VERSION = '3.1.0'
-const APP_BUILD = '2026.06'
+import { APP_VERSION, APP_BUILD } from '../constants/version'
 
 const Colors = {
   primary: '#0066CC', success: '#00AA55', warning: '#FF9900', danger: '#DD3333',

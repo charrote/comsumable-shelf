@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AppLayout } from './components/AppLayout'
 import { LoginPage } from './pages/LoginPage'
@@ -24,7 +25,31 @@ import { LightDebugPage } from './pages/LightDebugPage'
 import { useAuthStore } from './store/authStore'
 
 export default function App() {
-  const { token } = useAuthStore()
+  const { token, initialized, fetchUser } = useAuthStore()
+
+  // On page refresh: restore user info from backend if token exists
+  useEffect(() => {
+    fetchUser()
+  }, [fetchUser])
+
+  // Show loading while restoring auth state after refresh
+  if (!initialized) {
+    return (
+      <div
+        style={{
+          height: '100vh',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          flexDirection: 'column',
+          gap: 16,
+          background: '#f0f2f5',
+        }}
+      >
+        <div style={{ fontSize: 18, color: '#666' }}>加载中...</div>
+      </div>
+    )
+  }
 
   return (
     <Routes>

@@ -14,7 +14,9 @@ export interface User {
 interface AuthState {
   token: string | null
   user: User | null
+  initialized: boolean
   setAuth: (token: string, user: User) => void
+  fetchUser: () => Promise<void>
   logout: () => void
   hasPermission: (code: string) => boolean
   hasAnyPermission: (codes: string[]) => boolean
@@ -24,13 +26,29 @@ export const useAuthStore = create<AuthState>()(
   (set, get) => ({
     token: localStorage.getItem('token'),
     user: null,
+    initialized: false,
     setAuth: (token, user) => {
       localStorage.setItem('token', token)
-      set({ token, user })
+      set({ token, user, initialized: true })
+    },
+    fetchUser: async () => {
+      const { token } = get()
+      if (!token) {
+        set({ initialized: true })
+        return
+      }
+      try {
+        const res = await api.get('/auth/me')
+        set({ user: res.data, initialized: true })
+      } catch {
+        // Token invalid or expired — clear auth state
+        localStorage.removeItem('token')
+        set({ token: null, user: null, initialized: true })
+      }
     },
     logout: () => {
       localStorage.removeItem('token')
-      set({ token: null, user: null })
+      set({ token: null, user: null, initialized: true })
       window.location.href = '/login'
     },
     hasPermission: (code: string) => {

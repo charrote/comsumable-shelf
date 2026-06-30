@@ -14,7 +14,7 @@ import BarcodeScanner from '../components/BarcodeScanner'
 import {
   PlusIcon, RefreshIcon, ListIcon, CheckIcon, CrossIcon,
   CameraIcon, PencilIcon, ScanIcon, WarningIcon, NewIcon,
-  DocumentIcon,
+  DocumentIcon, PrinterIcon,
 } from '../components/Icons'
 
 const Colors = {
@@ -65,6 +65,11 @@ export default function InboundScreen() {
   const [editBatchNo, setEditBatchNo] = useState('')
   const [editDateCode, setEditDateCode] = useState('')
 
+  // ── 卷盘条码模式 & 打印标签 ──
+  const [reelCodeMode, setReelCodeMode] = useState<'auto' | 'scan'>('auto')
+  const [scannedReelCode, setScannedReelCode] = useState('')
+  const [printLabel, setPrintLabel] = useState(false)
+
   // ── 加载收料单列表 ──
   const loadReceipts = useCallback(async () => {
     setLoadingList(true)
@@ -96,6 +101,9 @@ export default function InboundScreen() {
     setReceiptNo(receipt.receipt_no)
     setBarcode('')
     setManualMode(false)
+    setReelCodeMode('auto')
+    setScannedReelCode('')
+    setPrintLabel(false)
     loadReceiptItems(receipt.id)
     setStep('scanning')
     setTimeout(() => barcodeRef.current?.focus(), 300)
@@ -114,6 +122,9 @@ export default function InboundScreen() {
       setReceiptNo(receipt.receipt_no)
       setBarcode('')
       setManualMode(false)
+      setReelCodeMode('auto')
+      setScannedReelCode('')
+      setPrintLabel(false)
       setStep('scanning')
       setTimeout(() => barcodeRef.current?.focus(), 300)
     } catch (e: any) {
@@ -138,6 +149,13 @@ export default function InboundScreen() {
         barcode: barcode.trim(),
         operator,
       })
+      // ── 重复条码拦截：在预览时直接拦截 ──
+      if (res.status === 'duplicate' || res.duplicate_flag) {
+        setBarcode('')
+        setConfirmError(res.warning || res.message || '该条码已存在，已被拦截')
+        Alert.alert('重复条码', res.warning || res.message || '该条码已存在，已被拦截')
+        return
+      }
       setPreview(res)
       setConfirmQty(String(res.quantity || 1))
       setEditMaterialName(res.material_name || '')
@@ -182,6 +200,8 @@ export default function InboundScreen() {
         spec: editSpec || undefined,
         batch_no: editBatchNo || undefined,
         date_code: editDateCode || undefined,
+        print_label: printLabel,
+        scanned_reel_code: (reelCodeMode === 'scan' && scannedReelCode.trim()) ? scannedReelCode.trim() : undefined,
       })
       loadReceiptItems(receiptId)
       setPreview(null)
@@ -204,7 +224,7 @@ export default function InboundScreen() {
     } finally {
       setIsLoading(false)
     }
-  }, [receiptId, preview, confirmQty, operator, selectedMaterialId, newMaterialCode, newMaterialName, editMaterialName, editSpec, editBatchNo, editDateCode])
+  }, [receiptId, preview, confirmQty, operator, selectedMaterialId, newMaterialCode, newMaterialName, editMaterialName, editSpec, editBatchNo, editDateCode, printLabel, reelCodeMode, scannedReelCode])
 
   // ── 手工录入 ──
   const handleManualSubmit = useCallback(async () => {
@@ -223,6 +243,8 @@ export default function InboundScreen() {
         quantity: qty,
         batch_no: manualBatch.trim() || undefined,
         date_code: manualDateCode.trim() || undefined,
+        print_label: printLabel,
+        scanned_reel_code: (reelCodeMode === 'scan' && scannedReelCode.trim()) ? scannedReelCode.trim() : undefined,
       })
       setHistory((prev) => [result, ...prev])
       setManualMaterialCode('')
@@ -237,7 +259,7 @@ export default function InboundScreen() {
     } finally {
       setIsLoading(false)
     }
-  }, [receiptId, operator, manualMaterialCode, manualMaterialName, manualSpec, manualQty, manualBatch, manualDateCode])
+  }, [receiptId, operator, manualMaterialCode, manualMaterialName, manualSpec, manualQty, manualBatch, manualDateCode, printLabel, reelCodeMode, scannedReelCode])
 
   // ── 摄像头扫码回调 ──
   const handleCameraScan = useCallback((barcodeValue: string) => {
@@ -257,6 +279,11 @@ export default function InboundScreen() {
             barcode: barcodeValue.trim(),
             operator,
           })
+          // ── 重复条码拦截 ──
+          if (res.status === 'duplicate' || res.duplicate_flag) {
+            Alert.alert('重复条码', res.warning || res.message || '该条码已存在，已被拦截')
+            return
+          }
           setPreview(res)
           setConfirmQty(String(res.quantity || 1))
           setEditMaterialName(res.material_name || '')
@@ -287,6 +314,7 @@ export default function InboundScreen() {
     setEditSpec('')
     setEditBatchNo('')
     setEditDateCode('')
+    setScannedReelCode('')
     setTimeout(() => barcodeRef.current?.focus(), 300)
   }, [])
 
@@ -297,6 +325,9 @@ export default function InboundScreen() {
     setReceiptNo('')
     setReceiptItems([])
     setPreview(null)
+    setReelCodeMode('auto')
+    setScannedReelCode('')
+    setPrintLabel(false)
     loadReceipts()
   }, [loadReceipts])
 
@@ -479,6 +510,42 @@ export default function InboundScreen() {
             >
               {isLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>扫描识别</Text>}
             </TouchableOpacity>
+
+            {/* ── 卷盘条码模式切换 & 打印标签 ── */}
+            <View style={styles.reelModeRow}>
+              <TouchableOpacity
+                style={[styles.reelModeBtn, reelCodeMode === 'auto' && styles.reelModeBtnActive]}
+                onPress={() => { setReelCodeMode('auto'); setScannedReelCode('') }}
+              >
+                <Text style={[styles.reelModeBtnText, reelCodeMode === 'auto' && styles.reelModeBtnTextActive]}>自动生成内部标签</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.reelModeBtn, reelCodeMode === 'scan' && styles.reelModeBtnActive]}
+                onPress={() => setReelCodeMode('scan')}
+              >
+                <Text style={[styles.reelModeBtnText, reelCodeMode === 'scan' && styles.reelModeBtnTextActive]}>使用预打印标签</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.printLabelBtn, printLabel && styles.printLabelBtnActive]}
+                onPress={() => setPrintLabel(!printLabel)}
+              >
+                <PrinterIcon size={18} color={printLabel ? '#fff' : Colors.textSecondary} />
+                <Text style={[styles.printLabelBtnText, printLabel && styles.printLabelBtnTextActive]}> 打印</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* ── 预打印卷盘条码输入（使用预打印标签模式） ── */}
+            {reelCodeMode === 'scan' && (
+              <View style={styles.reelCodeInputRow}>
+                <Text style={styles.reelCodeLabel}>卷盘条码</Text>
+                <TextInput
+                  style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                  placeholder="扫描预打印的卷盘条码"
+                  value={scannedReelCode}
+                  onChangeText={setScannedReelCode}
+                />
+              </View>
+            )}
           </View>
         )}
 
@@ -501,6 +568,43 @@ export default function InboundScreen() {
             <TextInput style={styles.input} placeholder="选填" value={manualBatch} onChangeText={setManualBatch} />
             <Text style={styles.sectionLabel}>生产周期</Text>
             <TextInput style={styles.input} placeholder="如：2401" value={manualDateCode} onChangeText={setManualDateCode} />
+
+            {/* ── 手工录入模式的标签选项 ── */}
+            <View style={styles.reelModeRow}>
+              <TouchableOpacity
+                style={[styles.reelModeBtn, reelCodeMode === 'auto' && styles.reelModeBtnActive]}
+                onPress={() => { setReelCodeMode('auto'); setScannedReelCode('') }}
+              >
+                <Text style={[styles.reelModeBtnText, reelCodeMode === 'auto' && styles.reelModeBtnTextActive]}>自动生成内部标签</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.reelModeBtn, reelCodeMode === 'scan' && styles.reelModeBtnActive]}
+                onPress={() => setReelCodeMode('scan')}
+              >
+                <Text style={[styles.reelModeBtnText, reelCodeMode === 'scan' && styles.reelModeBtnTextActive]}>使用预打印标签</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.printLabelBtn, printLabel && styles.printLabelBtnActive]}
+                onPress={() => setPrintLabel(!printLabel)}
+              >
+                <PrinterIcon size={18} color={printLabel ? '#fff' : Colors.textSecondary} />
+                <Text style={[styles.printLabelBtnText, printLabel && styles.printLabelBtnTextActive]}> 打印</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* ── 预打印卷盘条码输入 ── */}
+            {reelCodeMode === 'scan' && (
+              <View style={styles.reelCodeInputRow}>
+                <Text style={styles.reelCodeLabel}>卷盘条码</Text>
+                <TextInput
+                  style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                  placeholder="扫描预打印的卷盘条码"
+                  value={scannedReelCode}
+                  onChangeText={setScannedReelCode}
+                />
+              </View>
+            )}
+
             <TouchableOpacity
               style={[styles.button, !manualMaterialCode.trim() && styles.buttonDisabled]}
               onPress={handleManualSubmit}
@@ -525,6 +629,16 @@ export default function InboundScreen() {
                       数量: {item.quantity} 盘
                       {item.barcode ? ` | ${item.barcode}` : ''}
                     </Text>
+                    <View style={styles.receiptItemTags}>
+                      {item.internal_label_printed ? (
+                        <Text style={styles.labelPrintedTag}>标签已打印</Text>
+                      ) : (
+                        <Text style={styles.labelNotPrintedTag}>标签未打印</Text>
+                      )}
+                      {item.reel_code ? (
+                        <Text style={styles.reelCodeTag}>{item.reel_code}</Text>
+                      ) : null}
+                    </View>
                   </View>
                   <TouchableOpacity
                     style={styles.cancelItemBtn}
@@ -753,6 +867,10 @@ const styles = StyleSheet.create({
   receiptItemName: { fontSize: 13, color: Colors.textSecondary, marginTop: 1 },
   receiptItemMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   receiptItemSlot: { fontSize: 12, color: Colors.primary, marginTop: 1 },
+  receiptItemTags: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 },
+  labelPrintedTag: { fontSize: 11, color: Colors.success, fontWeight: '600', backgroundColor: '#e6f7e6', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },
+  labelNotPrintedTag: { fontSize: 11, color: Colors.textSecondary, fontWeight: '500', backgroundColor: '#f5f5f5', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },
+  reelCodeTag: { fontSize: 11, color: Colors.info, fontWeight: '500', backgroundColor: '#e6f0ff', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, overflow: 'hidden' },
   cancelItemBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6, backgroundColor: '#fff1f0', borderWidth: 1, borderColor: '#ffa39e' },
   cancelItemBtnText: { fontSize: 13, fontWeight: '600', color: '#cf1322' },
   scanInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -809,4 +927,17 @@ const styles = StyleSheet.create({
   confirmButton: { backgroundColor: Colors.success, marginLeft: 8 },
   cancelButtonText: { fontSize: 18, color: Colors.textSecondary, fontWeight: '600' },
   confirmButtonText: { fontSize: 18, color: '#fff', fontWeight: 'bold' },
+
+  // ── 卷盘条码模式 & 打印标签 ──
+  reelModeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8, marginBottom: 8 },
+  reelModeBtn: { flex: 1, paddingVertical: 8, paddingHorizontal: 6, borderRadius: 6, borderWidth: 1, borderColor: '#ddd', alignItems: 'center', backgroundColor: '#f9f9f9' },
+  reelModeBtnActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  reelModeBtnText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary, textAlign: 'center' },
+  reelModeBtnTextActive: { color: '#fff' },
+  printLabelBtn: { flexDirection: 'row', paddingVertical: 8, paddingHorizontal: 10, borderRadius: 6, borderWidth: 1, borderColor: '#ddd', alignItems: 'center', backgroundColor: '#f9f9f9' },
+  printLabelBtnActive: { backgroundColor: Colors.success, borderColor: Colors.success },
+  printLabelBtnText: { fontSize: 12, fontWeight: '600', color: Colors.textSecondary },
+  printLabelBtnTextActive: { color: '#fff' },
+  reelCodeInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  reelCodeLabel: { fontSize: 13, fontWeight: '600', color: Colors.textSecondary, whiteSpace: 'nowrap' },
 })

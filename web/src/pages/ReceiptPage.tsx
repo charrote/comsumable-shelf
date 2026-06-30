@@ -151,6 +151,14 @@ export function ReceiptPage() {
       })
       const data = previewRes.data
 
+      // ── 重复条码拦截（在条码解析之后、展示预览之前拦截） ──
+      if (data.status === 'duplicate' || data.duplicate_flag) {
+        message.warning(data.warning || data.message || '该条码已存在，已被拦截')
+        setScanBarcode('')
+        setTimeout(() => barcodeInputRef.current?.focus(), 200)
+        return
+      }
+
       // Always show confirmation modal for user review, regardless of status/confidence
       setPreviewData({
         barcode,

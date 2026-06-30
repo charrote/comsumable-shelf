@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView } from 'react-native'
 import { useAuthStore } from '../store/authStore'
 import { loadBaseUrl, updateBaseUrl } from '../api'
+import { APP_VERSION, APP_BUILD } from '../constants/version'
 
 export default function LoginScreen() {
   const [username, setUsername] = useState('')
@@ -139,7 +140,7 @@ export default function LoginScreen() {
         </View>
       )}
 
-      <Text style={styles.version}>版本 3.0.0</Text>
+      <Text style={styles.version}>版本 {APP_VERSION} (Build {APP_BUILD})</Text>
     </ScrollView>
   )
 }

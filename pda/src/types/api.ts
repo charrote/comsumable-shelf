@@ -59,6 +59,7 @@ export interface ManualEntryRequest {
   print_label?: boolean
   printer_ip?: string
   printer_port?: number
+  scanned_reel_code?: string
 }
 
 export interface MaterialCandidate {
@@ -87,6 +88,10 @@ export interface ReceiptScanRequest {
   batch_no?: string
   /** 人工修正字段：生产周期 */
   date_code?: string
+  /** 是否打印内部标签 */
+  print_label?: boolean
+  /** 预打印的卷盘条码（提供此值时跳过自动生成） */
+  scanned_reel_code?: string
 }
 
 export interface ReceiptScanResponse {
@@ -116,7 +121,7 @@ export interface ReceiptScanResponse {
 
 export interface BarcodePreviewResponse {
   barcode: string
-  status: string              // ok | pending_review | new_material | error
+  status: string              // ok | pending_review | new_material | duplicate | error
   confidence: number
   material_code: string
   material_name?: string
@@ -129,6 +134,8 @@ export interface BarcodePreviewResponse {
   supplier_code?: string
   extracted_fields?: BarcodePreviewItem[]
   candidates?: MaterialCandidate[]
+  duplicate_flag?: boolean
+  warning?: string
   message: string
 }
 

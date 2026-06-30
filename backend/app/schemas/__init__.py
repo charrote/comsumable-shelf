@@ -166,7 +166,7 @@ class MaterialCandidate(BaseModel):
 
 class BarcodePreviewResponse(BaseModel):
     barcode: str
-    status: str  # ok | pending_review | new_material
+    status: str  # ok | pending_review | new_material | duplicate | error
     confidence: float
     material_code: str
     material_name: str = ""
@@ -179,6 +179,8 @@ class BarcodePreviewResponse(BaseModel):
     supplier_code: Optional[str] = None
     extracted_fields: List[BarcodePreviewItem] = []
     candidates: List[MaterialCandidate] = []
+    duplicate_flag: bool = False
+    warning: Optional[str] = None
     message: str = ""
 
 

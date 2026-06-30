@@ -5,6 +5,7 @@ import {
 } from 'react-native'
 import { getDashboardSummaryApi } from '../api'
 import type { DashboardSummary } from '../types/api'
+import { APP_VERSION, APP_BUILD } from '../constants/version'
 
 const Colors = {
   primary: '#0066CC',
@@ -116,7 +117,7 @@ export default function HomeScreen() {
           )}
         </View>
 
-        <Text style={styles.version}>版本 3.0.0</Text>
+        <Text style={styles.version}>版本 {APP_VERSION} (Build {APP_BUILD})</Text>
       </ScrollView>
     </View>
   )

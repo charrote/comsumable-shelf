@@ -518,11 +518,29 @@ async def scan_preview(
             message="条码不能为空"
         )
 
-    # ── 0) 先尝试用条码定义解析（固定格式条码优先） ──
+    # 获取收料单以获取 customer_id
+    receipt_result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
+    receipt = receipt_result.scalar_one_or_none()
+    preview_customer_id = receipt.customer_id if receipt else 1
+
+    # ── 0) 重复条码拦截（在条码解析之前拦截） ──
+    from app.services.duplicate_check import check_duplicate_scan
+    dup_check = await check_duplicate_scan(db, barcode, preview_customer_id)
+    if dup_check.action == "block":
+        return BarcodePreviewResponse(
+            barcode=barcode, status="duplicate", confidence=0, material_code="",
+            duplicate_flag=True,
+            warning=dup_check.warning,
+            message=dup_check.message,
+        )
+    is_duplicate_preview = dup_check.duplicate
+    dup_warning_preview = dup_check.warning if is_duplicate_preview else None
+
+    # ── 1) 先尝试用条码定义解析（固定格式条码优先） ──
     bd_definition, bd_fields = await parse_barcode_with_definitions(db, barcode)
     bd_material_code = bd_fields.get("material_code", "") if bd_fields else ""
 
-    # 1) Parse barcode for material match
+    # 2) Parse barcode for material match
     parsed = await parse_barcode(barcode, db)
     supplier_info = extract_supplier_info(barcode)
 
@@ -530,10 +548,8 @@ async def scan_preview(
     if bd_material_code:
         parsed.material_code = bd_material_code
 
-    # 2) Find material candidates (use receipt's customer_id)
-    receipt_result = await db.execute(select(Receipt).where(Receipt.id == receipt_id))
-    receipt = receipt_result.scalar_one_or_none()
-    preview_customer_id = receipt.customer_id if receipt else 1
+    # 3) Find material candidates (use receipt's customer_id)
+    # receipt already loaded above
     from app.services.receipt_service import match_material_by_barcode
     search_code = bd_material_code if bd_material_code else barcode
     match = await match_material_by_barcode(db, search_code, preview_customer_id)
@@ -652,6 +668,8 @@ async def scan_preview(
         supplier_code=supplier_info.get("supplier_code") or "",
         extracted_fields=extracted_fields,
         candidates=candidates,
+        duplicate_flag=is_duplicate_preview,
+        warning=dup_warning_preview,
         message=match.message or f"解析完成，置信度 {parsed.confidence:.0%}",
     )
 
