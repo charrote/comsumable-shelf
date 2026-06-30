@@ -1,10 +1,20 @@
-"""Backup & restore service using pg_dump / pg_restore."""
+"""Backup & restore service using pg_dump / pg_restore.
+
+Backup metadata is stored in TWO places for resilience:
+1. Database table `data_backups` (for runtime queries & reference)
+2. Filesystem manifest `/app/backups/manifest.json` (survives DB reset)
+
+This way, even after a full database reset or restore, the backup list
+can still be recovered from the filesystem manifest.
+"""
 
 import os
+import json
 import subprocess
 import structlog
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,12 +24,98 @@ from app.models import DataBackup
 logger = structlog.get_logger()
 
 BACKUP_DIR = Path(settings.BACKUP_DIR)
+MANIFEST_PATH = BACKUP_DIR / "manifest.json"
 
 
-def ensure_backup_dir():
+# ═══════════════════════════════════════════════════════════════════════
+#  Filesystem manifest helpers
+# ═══════════════════════════════════════════════════════════════════════
+
+def _ensure_backup_dir():
     """Ensure the backup directory exists."""
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _load_manifest() -> list[dict]:
+    """Load backup metadata from filesystem manifest.
+
+    Returns empty list if manifest doesn't exist or is corrupted.
+    """
+    if not MANIFEST_PATH.exists():
+        return []
+    try:
+        with open(MANIFEST_PATH, "r") as f:
+            data = json.load(f)
+        return data.get("backups", [])
+    except (json.JSONDecodeError, IOError, KeyError) as e:
+        logger.warning("Failed to load backup manifest", error=str(e))
+        return []
+
+
+def _save_manifest(entries: list[dict]):
+    """Write backup metadata to filesystem manifest."""
+    _ensure_backup_dir()
+    # Sort newest first
+    entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    try:
+        with open(MANIFEST_PATH, "w") as f:
+            json.dump({"backups": entries}, f, indent=2, ensure_ascii=False)
+    except IOError as e:
+        logger.error("Failed to write backup manifest", error=str(e))
+
+
+def _manifest_entry_from_backup(backup: DataBackup) -> dict:
+    """Convert a DataBackup ORM object to a manifest entry dict."""
+    return {
+        "id": backup.id,
+        "filename": backup.filename,
+        "filepath": backup.filepath,
+        "file_size": backup.file_size,
+        "db_version": backup.db_version,
+        "status": backup.status,
+        "error_message": backup.error_message,
+        "operator": backup.operator,
+        "created_at": (
+            backup.created_at.isoformat()
+            if backup.created_at
+            else datetime.utcnow().isoformat()
+        ),
+    }
+
+
+def _manifest_entry_from_file(dump_path: Path) -> Optional[dict]:
+    """Create a manifest entry by inspecting a .dump file on disk."""
+    if not dump_path.exists() or not dump_path.is_file():
+        return None
+    # Parse filename: smes_backup_YYYYMMDD_HHMMSS.dump
+    filename = dump_path.name
+    created_at = None
+    try:
+        # Extract timestamp from filename
+        parts = filename.replace(".dump", "").split("_")
+        if len(parts) >= 3 and parts[0] == "smes" and parts[1] == "backup":
+            ts_str = "_".join(parts[2:])  # YYYYMMDD_HHMMSS
+            created_at = datetime.strptime(ts_str, "%Y%m%d_%H%M%S").isoformat()
+    except (ValueError, IndexError):
+        pass
+
+    file_size = dump_path.stat().st_size
+    return {
+        "id": None,  # orphaned — no DB record
+        "filename": filename,
+        "filepath": str(dump_path),
+        "file_size": file_size,
+        "db_version": "",
+        "status": "completed",
+        "error_message": "",
+        "operator": "(扫描恢复)",
+        "created_at": created_at or datetime.utcnow().isoformat(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  pg_dump / pg_restore helpers
+# ═══════════════════════════════════════════════════════════════════════
 
 def _get_db_conn_params() -> dict:
     """Extract connection parameters from settings for pg_dump/pg_restore."""
@@ -76,9 +172,104 @@ def _pg_restore(backup_path: str, conn: dict) -> subprocess.CompletedProcess:
     return result
 
 
+# ═══════════════════════════════════════════════════════════════════════
+#  Public API
+# ═══════════════════════════════════════════════════════════════════════
+
+def list_backups_from_manifest() -> list[dict]:
+    """List all backup entries from filesystem manifest (survives DB reset)."""
+    return _load_manifest()
+
+
+def scan_orphaned_dumps() -> list[dict]:
+    """Scan backup directory for .dump files not recorded in manifest.
+
+    Returns a list of recovered manifest entries for orphaned files.
+    """
+    _ensure_backup_dir()
+    manifest_files = {e["filename"] for e in _load_manifest()}
+
+    orphans = []
+    for f in sorted(BACKUP_DIR.iterdir()):
+        if f.suffix == ".dump" and f.name not in manifest_files:
+            entry = _manifest_entry_from_file(f)
+            if entry:
+                orphans.append(entry)
+
+    # Persist recovered entries back to manifest
+    if orphans:
+        existing = _load_manifest()
+        existing_filenames = {e["filename"] for e in existing}
+        for o in orphans:
+            if o["filename"] not in existing_filenames:
+                existing.append(o)
+        _save_manifest(existing)
+
+    return orphans
+
+
+async def get_db_ids_for_manifest(db: AsyncSession) -> dict[str, int]:
+    """Query the database for existing backup records, keyed by filename."""
+    from sqlalchemy import select
+    result = await db.execute(select(DataBackup))
+    records = result.scalars().all()
+    return {r.filename: r.id for r in records}
+
+
+async def ensure_manifest_db_sync(db: AsyncSession) -> list[DataBackup]:
+    """Create DB records for manifest entries that lack a database record.
+
+    After a database reset (e.g., sync-db.sh pull), the manifest still
+    has all backup entries but the data_backups table is empty. This
+    function re-creates the missing DB records from manifest data.
+
+    Returns the list of newly created DataBackup records.
+    """
+    manifest = _load_manifest()
+    if not manifest:
+        return []
+
+    db_ids = await get_db_ids_for_manifest(db)
+    new_records = []
+
+    for entry in manifest:
+        fname = entry.get("filename", "")
+        if fname in db_ids:
+            continue  # already has a DB record
+
+        created_at = None
+        if entry.get("created_at"):
+            try:
+                created_at = datetime.fromisoformat(entry["created_at"])
+            except (ValueError, TypeError):
+                pass
+
+        backup = DataBackup(
+            filename=fname,
+            filepath=entry.get("filepath", ""),
+            file_size=entry.get("file_size", 0),
+            db_version=entry.get("db_version", ""),
+            status=entry.get("status", "completed"),
+            error_message=entry.get("error_message", ""),
+            operator=entry.get("operator", ""),
+            created_at=created_at,
+        )
+        db.add(backup)
+        new_records.append(backup)
+
+    if new_records:
+        await db.flush()
+        # Update manifest with real DB ids
+        for b in new_records:
+            _append_to_manifest(_manifest_entry_from_backup(b))
+        await db.commit()
+
+    return new_records
+
+
 async def create_backup(db: AsyncSession, operator: str = "") -> DataBackup:
-    """Create a database backup and record it in the database."""
-    ensure_backup_dir()
+    """Create a database backup and record it in the database + manifest."""
+    _ensure_backup_dir()
 
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     filename = f"smes_backup_{timestamp}.dump"
@@ -108,6 +299,8 @@ async def create_backup(db: AsyncSession, operator: str = "") -> DataBackup:
             backup.status = "failed"
             backup.error_message = error_msg
             await db.flush()
+            # Update manifest too
+            _append_to_manifest(_manifest_entry_from_backup(backup))
             return backup
 
         # Get file size
@@ -133,7 +326,20 @@ async def create_backup(db: AsyncSession, operator: str = "") -> DataBackup:
         backup.error_message = error_msg
 
     await db.flush()
+
+    # Persist to filesystem manifest (survives DB reset)
+    _append_to_manifest(_manifest_entry_from_backup(backup))
+
     return backup
+
+
+def _append_to_manifest(entry: dict):
+    """Add or update an entry in the manifest file."""
+    entries = _load_manifest()
+    # Replace existing entry with same filename, or append
+    entries = [e for e in entries if e["filename"] != entry["filename"]]
+    entries.append(entry)
+    _save_manifest(entries)
 
 
 async def restore_backup(backup_id: int, db: AsyncSession) -> dict:
@@ -200,10 +406,15 @@ async def restore_backup(backup_id: int, db: AsyncSession) -> dict:
 
 
 def delete_backup_file(backup: DataBackup) -> None:
-    """Delete the backup file from disk."""
+    """Delete the backup file from disk and update manifest."""
     try:
         if os.path.exists(backup.filepath):
             os.remove(backup.filepath)
             logger.info("Backup file deleted", filepath=backup.filepath)
+
+        # Also remove from manifest
+        entries = _load_manifest()
+        entries = [e for e in entries if e["filename"] != backup.filename]
+        _save_manifest(entries)
     except Exception as e:
         logger.error("Failed to delete backup file", filepath=backup.filepath, error=str(e))

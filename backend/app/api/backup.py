@@ -1,24 +1,110 @@
-"""Database backup & restore API routes."""
+"""Database backup & restore API routes.
+
+Backup metadata is stored both in the database AND in a filesystem
+manifest (/app/backups/manifest.json). The manifest serves as the
+primary source for listing — it survives database resets so the
+backup list is never lost.
+"""
 
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.schemas import BackupResponse, BackupCreateResponse, BackupRestoreResponse
+from app.schemas import (
+    BackupResponse,
+    BackupCreateResponse,
+    BackupRestoreResponse,
+)
 from app.utils.database import get_db
 from app.models import DataBackup, User
 from app.api.auth import get_current_user
-from app.services.backup_service import create_backup, restore_backup, delete_backup_file
+from app.services.backup_service import (
+    create_backup,
+    restore_backup,
+    delete_backup_file,
+    list_backups_from_manifest,
+    scan_orphaned_dumps,
+    ensure_manifest_db_sync,
+)
 
 router = APIRouter(prefix="/backups", tags=["Data Backup"])
 
+
+# ────────────────────────────────────────────────────────────
+#  Helper: build BackupResponse from a manifest entry
+# ────────────────────────────────────────────────────────────
+
+def _from_manifest_entry(entry: dict) -> dict:
+    """Convert a manifest entry dict to a BackupResponse-compatible dict."""
+    from datetime import datetime
+    created_at = None
+    if entry.get("created_at"):
+        try:
+            created_at = datetime.fromisoformat(entry["created_at"])
+        except (ValueError, TypeError):
+            created_at = None
+    return {
+        "id": entry.get("id") or 0,
+        "filename": entry.get("filename", ""),
+        "filepath": entry.get("filepath", ""),
+        "file_size": entry.get("file_size", 0),
+        "db_version": entry.get("db_version", ""),
+        "status": entry.get("status", "completed"),
+        "error_message": entry.get("error_message", ""),
+        "operator": entry.get("operator", ""),
+        "created_at": created_at,
+    }
+
+
+# ────────────────────────────────────────────────────────────
+#  Endpoints
+# ────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[BackupResponse])
 async def list_backups(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List all backup records, ordered by creation time descending."""
+    """List all backup records.
+
+    Primary source: filesystem manifest (survives DB reset).
+    Falls back to DB query if manifest is empty.
+    """
+    # 1) Try manifest first — this always works even after DB reset
+    manifest_entries = list_backups_from_manifest()
+
+    if manifest_entries:
+        # Merge with DB records where possible (to get real DB ids)
+        try:
+            result = await db.execute(
+                select(DataBackup).order_by(desc(DataBackup.created_at))
+            )
+            db_backups = result.scalars().all()
+            db_lookup = {b.filename: b for b in db_backups}
+
+            merged = []
+            for entry in manifest_entries:
+                item = _from_manifest_entry(entry)
+                filename = entry.get("filename", "")
+                if filename in db_lookup:
+                    db_b = db_lookup[filename]
+                    # Prefer real DB id over manifest's possibly-stale id
+                    item["id"] = db_b.id
+                    item["file_size"] = db_b.file_size
+                    item["db_version"] = db_b.db_version
+                    item["status"] = db_b.status
+                    item["error_message"] = db_b.error_message
+                    item["operator"] = db_b.operator or item["operator"]
+                merged.append(item)
+
+            return merged
+        except Exception as e:
+            # DB might be down — return manifest data as-is
+            logger = __import__("structlog").get_logger()
+            logger.warning("Failed to merge with DB, using manifest only", error=str(e))
+            return [_from_manifest_entry(e) for e in manifest_entries]
+
+    # 2) Fallback: read from database directly
     result = await db.execute(
         select(DataBackup).order_by(desc(DataBackup.created_at))
     )
@@ -37,6 +123,57 @@ async def list_backups(
         )
         for b in backups
     ]
+
+
+@router.post("/rescan", response_model=list[BackupResponse])
+async def rescan_backups(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Scan and repair backup metadata.
+
+    Handles two recovery scenarios:
+    1. Orphaned .dump files on disk with no manifest entry
+    2. Manifest entries with no corresponding database record
+       (e.g., after sync-db.sh reset or pg_restore --clean)
+
+    Rebuilds both the manifest and database records to match the
+    actual files on disk.
+    """
+    # --- Case 1: dump files without manifest entries ---
+    file_orphans = scan_orphaned_dumps()
+
+    # --- Case 2: manifest entries without DB records ---
+    db_missing = await ensure_manifest_db_sync(db)
+
+    total_found = len(file_orphans) + len(db_missing)
+
+    # Return full merged list
+    manifest_entries = list_backups_from_manifest()
+    if not manifest_entries:
+        return []
+
+    try:
+        result = await db.execute(
+            select(DataBackup).order_by(desc(DataBackup.created_at))
+        )
+        db_backups = result.scalars().all()
+        db_lookup = {b.filename: b for b in db_backups}
+        merged = []
+        for entry in manifest_entries:
+            item = _from_manifest_entry(entry)
+            filename = entry.get("filename", "")
+            if filename in db_lookup:
+                db_b = db_lookup[filename]
+                item["id"] = db_b.id
+                item["file_size"] = db_b.file_size
+                item["db_version"] = db_b.db_version
+                item["status"] = db_b.status
+                item["operator"] = db_b.operator or item["operator"]
+            merged.append(item)
+        return merged
+    except Exception:
+        return [_from_manifest_entry(e) for e in manifest_entries]
 
 
 @router.post("", response_model=BackupCreateResponse)
@@ -123,7 +260,7 @@ async def delete_backup(
     if not backup:
         raise HTTPException(status_code=404, detail="备份记录不存在")
 
-    # Delete the physical file
+    # Delete the physical file (also updates manifest)
     delete_backup_file(backup)
 
     # Delete the database record

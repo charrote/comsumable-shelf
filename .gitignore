@@ -47,3 +47,8 @@ pda/app/src/test/
 
 # Local scripts — contains deploy passwords, local-only utilities
 /script/
+
+# Local usage notes — not part of project documentation
+build-apk.md
+db-sync.md
+sync-db.md

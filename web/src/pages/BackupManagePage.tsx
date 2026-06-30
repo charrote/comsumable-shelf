@@ -7,10 +7,12 @@ import {
   CloudUploadOutlined, DownloadOutlined,
   DeleteOutlined, ReloadOutlined, ExclamationCircleOutlined,
   CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined,
+  ScanOutlined,
 } from '@ant-design/icons'
 import {
   getBackupsApi, createBackupApi,
   restoreBackupApi, deleteBackupApi,
+  rescanBackupsApi,
 } from '../api'
 import dayjs from 'dayjs'
 
@@ -35,6 +37,7 @@ export function BackupManagePage() {
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [restoring, setRestoring] = useState<number | null>(null)
+  const [scanning, setScanning] = useState(false)
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const loadBackups = async () => {
@@ -88,6 +91,24 @@ export function BackupManagePage() {
       message.error(err.response?.data?.detail || '创建备份失败')
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleRescan = async () => {
+    setScanning(true)
+    try {
+      const res = await rescanBackupsApi()
+      const found = res.data?.length || 0
+      if (found > 0) {
+        message.success(`扫描完成，发现 ${found} 个备份文件`)
+      } else {
+        message.info('未发现新的备份文件')
+      }
+      await loadBackups()
+    } catch (err: any) {
+      message.error(err.response?.data?.detail || '扫描备份失败')
+    } finally {
+      setScanning(false)
     }
   }
 
@@ -263,6 +284,13 @@ export function BackupManagePage() {
         <Space>
           <Button icon={<ReloadOutlined />} onClick={loadBackups} loading={loading}>
             刷新
+          </Button>
+          <Button
+            icon={<ScanOutlined />}
+            onClick={handleRescan}
+            loading={scanning}
+          >
+            扫描备份
           </Button>
           <Button
             type="primary"

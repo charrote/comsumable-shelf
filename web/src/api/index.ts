@@ -451,3 +451,5 @@ export const restoreBackupApi = (id: number) =>
   apiClient.post(`/backups/${id}/restore`)
 export const deleteBackupApi = (id: number) =>
   apiClient.delete(`/backups/${id}`)
+export const rescanBackupsApi = () =>
+  apiClient.post('/backups/rescan')
