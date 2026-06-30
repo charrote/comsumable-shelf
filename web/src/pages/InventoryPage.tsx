@@ -48,7 +48,7 @@ export function InventoryPage() {
   const [loading, setLoading] = useState(false)
   const [keyword, setKeyword] = useState('')
   const [selectedCustomers, setSelectedCustomers] = useState<number[]>([])
-  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([])
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>(['pending_shelving', 'on_shelf'])
   const [customers, setCustomers] = useState<any[]>([])
   const [total, setTotal] = useState(0)
   const [exporting, setExporting] = useState(false)

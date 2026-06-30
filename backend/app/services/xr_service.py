@@ -10,8 +10,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.models import XrBatch, InventoryReel, Transaction, MaterialMaster
+from app.models import XrBatch, InventoryReel, Transaction, MaterialMaster, Shelf, ShelfSlot
 from app.hal.printer import print_label
+from app.services.operation_history_service import record_operation
 
 
 async def handle_xr_upload(
@@ -209,4 +210,44 @@ async def confirm_restock(
         source_type="xr_transfer",
     )
     db.add(txn)
+
+    # ── 记录作业履历：退库上架（XR点料）──
+    mat_for_hist = await db.execute(
+        select(MaterialMaster).where(MaterialMaster.id == pallet.material_id)
+    )
+    mat_hist = mat_for_hist.scalar_one_or_none()
+    # 获取储位信息
+    slot_for_hist = await db.execute(
+        select(ShelfSlot).where(ShelfSlot.id == shelf_slot_id)
+    )
+    slot_hist = slot_for_hist.scalar_one_or_none()
+    shelf_for_hist = None
+    if slot_hist:
+        shelf_for_hist = await db.execute(
+            select(Shelf).where(Shelf.id == slot_hist.shelf_id)
+        )
+        shelf_hist = shelf_for_hist.scalar_one_or_none()
+    else:
+        shelf_hist = None
+
+    await record_operation(
+        db,
+        operation_type="shelving_on",
+        shelving_mode="auto",
+        reel_id=reel_id,
+        reel_code=pallet.reel_code,
+        material_id=pallet.material_id,
+        material_code=mat_hist.code if mat_hist else None,
+        material_name=mat_hist.name if mat_hist else None,
+        shelf_id=shelf_hist.id if shelf_hist else None,
+        shelf_code=shelf_hist.code if shelf_hist else None,
+        slot_id=slot_hist.id if slot_hist else None,
+        slot_code=slot_hist.code if slot_hist else None,
+        customer_id=pallet.customer_id,
+        quantity=counted_qty,
+        source_type="xr_transfer",
+        operator="系统",
+        note=f"XR点料退库上架（数量: {counted_qty}）",
+    )
+
     await db.commit()

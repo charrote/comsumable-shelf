@@ -23,6 +23,7 @@ from sqlalchemy.orm import selectinload
 
 from app.utils.database import get_db
 from app.models import ShelfSlot, Shelf, InventoryReel, MaterialMaster, ShelfSlotEvent
+from app.services.operation_history_service import record_operation
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,26 @@ async def cell_change_callback(
                             "material_name": material_name,
                             "timestamp": item.timestamp,
                         }
+
+                        # ── 记录作业履历：智能上架 ──
+                        await record_operation(
+                            db,
+                            operation_type="shelving_on",
+                            shelving_mode="auto",
+                            reel_id=reel.id,
+                            reel_code=reel.reel_code,
+                            material_id=reel.material_id,
+                            material_code=material_code,
+                            material_name=material_name,
+                            shelf_id=slot.shelf_id,
+                            shelf_code=shelf_code,
+                            slot_id=slot.id,
+                            slot_code=slot_code,
+                            customer_id=reel.customer_id,
+                            quantity=reel.quantity,
+                            source_type="sensor",
+                            note=f"智能上架: {shelf_code}/{slot_code}",
+                        )
 
                         logger.info(
                             "Auto-bound reel %d to slot %d (cell: %s, shelf: %s/%s)",

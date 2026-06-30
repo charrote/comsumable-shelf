@@ -889,6 +889,59 @@ class RolePermissionUpdate(BaseModel):
     permission_ids: List[int]
 
 
+# ---------- Operation History ----------
+class OperationHistoryQuery(BaseModel):
+    start_time: str = Field(..., description="开始时间 (ISO格式)")
+    end_time: str = Field(..., description="结束时间 (ISO格式)")
+    operation_type: Optional[str] = Field(None, description="操作类型筛选: shelving_on | shelving_off | inventory_in | inventory_out | adjustment")
+    shelving_mode: Optional[str] = Field(None, description="上架模式筛选: auto | manual")
+    keyword: Optional[str] = Field(None, description="关键词搜索(物料编码/名称/卷盘编码)")
+    customer_id: Optional[int] = Field(None, description="客户ID筛选")
+    page: int = Field(1, ge=1, description="页码")
+    page_size: int = Field(20, ge=1, le=100, description="每页条数")
+
+
+class OperationHistoryRecord(BaseModel):
+    id: int
+    operation_type: str
+    operation_type_label: str = ""
+    shelving_mode: Optional[str] = None
+    shelving_mode_label: Optional[str] = None
+    led_color: Optional[str] = None
+
+    reel_id: Optional[int] = None
+    reel_code: Optional[str] = None
+
+    material_id: Optional[int] = None
+    material_code: Optional[str] = None
+    material_name: Optional[str] = None
+
+    shelf_id: Optional[int] = None
+    shelf_code: Optional[str] = None
+    slot_id: Optional[int] = None
+    slot_code: Optional[str] = None
+
+    customer_id: Optional[int] = None
+    quantity: Optional[float] = None
+
+    source_type: Optional[str] = None
+    source_id: Optional[int] = None
+    source_no: Optional[str] = None
+
+    operator: Optional[str] = None
+    note: Optional[str] = None
+    created_at: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+
+class OperationHistoryResponse(BaseModel):
+    items: List[OperationHistoryRecord] = []
+    total: int = 0
+    page: int = 1
+    page_size: int = 20
+
+
 # ---------- General ----------
 class PaginatedResponse(BaseModel):
     items: list

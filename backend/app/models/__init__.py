@@ -568,6 +568,64 @@ class RolePermission(Base):
     )
 
 
+class OperationHistory(Base):
+    """作业履历 — 库存/料架相关业务操作记录。
+
+    记录所有涉及料架和库存的操作，包括：
+    - 上架 (shelving_on): 区分智能上架(shelving_mode=auto)和手动上架(shelving_mode=manual)
+    - 落架 (shelving_off): 从储位取下的操作
+    - 入库 (inventory_in): 库存入库
+    - 出库 (inventory_out): 库存出库
+    - 调整 (adjustment): 手动库存调整
+    """
+    __tablename__ = "operation_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    operation_type = Column(String(32), nullable=False, index=True, comment="操作类型: shelving_on | shelving_off | inventory_in | inventory_out | adjustment")
+    shelving_mode = Column(String(16), nullable=True, comment="上架模式: auto(智能上架) | manual(手动上架)，仅上架操作有值")
+    led_color = Column(String(32), nullable=True, comment="亮灯颜色(如 red/green/blue)，涉及亮灯的操作标记")
+
+    # Reel
+    reel_id = Column(Integer, ForeignKey("inventory_reels.id"), nullable=True)
+    reel_code = Column(String(100), nullable=True, comment="卷盘编码")
+
+    # Material
+    material_id = Column(Integer, ForeignKey("material_master.id"), nullable=True)
+    material_code = Column(String(100), nullable=True, comment="物料编码（冗余）")
+    material_name = Column(String(200), nullable=True, comment="物料名称（冗余）")
+
+    # Shelf / Slot
+    shelf_id = Column(Integer, ForeignKey("shelves.id"), nullable=True)
+    shelf_code = Column(String(50), nullable=True, comment="料架编号（冗余）")
+    slot_id = Column(Integer, ForeignKey("shelf_slots.id"), nullable=True)
+    slot_code = Column(String(50), nullable=True, comment="储位编号（冗余）")
+
+    # Customer
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+
+    # Quantity
+    quantity = Column(Float, nullable=True, comment="操作数量")
+
+    # Source tracking
+    source_type = Column(String(32), nullable=True, comment="来源类型: receipt | issue | xr_transfer | sensor | manual_adjust | direct_outbound | shelving_bind")
+    source_id = Column(Integer, nullable=True, comment="来源单据ID")
+    source_no = Column(String(100), nullable=True, comment="来源单号（冗余）")
+
+    # Operator
+    operator = Column(String(100), nullable=True, comment="操作人")
+
+    # Note
+    note = Column(String(500), nullable=True, comment="备注")
+
+    # Timestamp
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_operation_history_type_time", "operation_type", "created_at"),
+        Index("idx_operation_history_reel", "reel_id", "created_at"),
+    )
+
+
 class Supplier(Base):
     __tablename__ = "suppliers"
 

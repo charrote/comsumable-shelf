@@ -377,6 +377,42 @@ async def init_db():
         """))
 
         # ════════════════════════════════════════════════════════════════
+        # 作业履历表 operation_history
+        # ════════════════════════════════════════════════════════════════
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS operation_history (
+                id SERIAL PRIMARY KEY,
+                operation_type VARCHAR(32) NOT NULL,
+                shelving_mode VARCHAR(16),
+                led_color VARCHAR(32),
+                reel_id INTEGER REFERENCES inventory_reels(id),
+                reel_code VARCHAR(100),
+                material_id INTEGER REFERENCES material_master(id),
+                material_code VARCHAR(100),
+                material_name VARCHAR(200),
+                shelf_id INTEGER REFERENCES shelves(id),
+                shelf_code VARCHAR(50),
+                slot_id INTEGER REFERENCES shelf_slots(id),
+                slot_code VARCHAR(50),
+                customer_id INTEGER REFERENCES customers(id),
+                quantity FLOAT,
+                source_type VARCHAR(32),
+                source_id INTEGER,
+                source_no VARCHAR(100),
+                operator VARCHAR(100),
+                note VARCHAR(500),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """))
+        for idx_name, idx_cols in [
+            ("idx_operation_history_time", "created_at"),
+            ("idx_operation_history_type_time", "operation_type, created_at"),
+            ("idx_operation_history_reel", "reel_id, created_at"),
+        ]:
+            idx_sql = f"CREATE INDEX IF NOT EXISTS {idx_name} ON operation_history ({idx_cols})"
+            await conn.execute(text(idx_sql))
+
+        # ════════════════════════════════════════════════════════════════
         # 角色权限系统迁移 — roles, permissions, role_permissions 表由
         # Base.metadata.create_all() 自动创建，这里只迁移 users.role_id
         # ════════════════════════════════════════════════════════════════
@@ -549,6 +585,8 @@ async def seed_db():
             # Light Debug
             {"code": "light-debug:read", "name": "查看灯控调试", "module": "light-debug"},
             {"code": "light-debug:control", "name": "灯控调试操作", "module": "light-debug"},
+            # Operation History
+            {"code": "operation-history:read", "name": "查看作业履历", "module": "operation-history"},
             # Role
             {"code": "role:read", "name": "查看角色", "module": "role"},
             {"code": "role:create", "name": "新建角色", "module": "role"},
@@ -600,6 +638,7 @@ async def seed_db():
             "permission:read",
             "app-download:read",
             "backup:read",
+            "operation-history:read",
         ]
 
         operator_permissions = [
@@ -630,6 +669,7 @@ async def seed_db():
             "barcode:read",
             "app-download:read",
             "backup:read",
+            "operation-history:read",
         ]
 
         role_defs = [
