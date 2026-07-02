@@ -31,7 +31,7 @@ services:
       APP_NAME: '智能物料管理系统'
       APP_VERSION: "1.0.0"
       API_PREFIX: /api
-      DATABASE_URL: postgresql+asyncpg://postgres:${PG_PASSWORD:-~Jonly171299~}@db:5432/smes
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://postgres:~Jonly171299~@db:5432/smes}
       XR_MATCH_WINDOW_SECONDS: ${XR_MATCH_WINDOW_SECONDS:-10}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DB_AUTO_MIGRATE: ${DB_AUTO_MIGRATE:-false}
