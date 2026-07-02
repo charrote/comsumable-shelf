@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api"
 
     # Database (PostgreSQL)
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/smes"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:~Jonly171299~@localhost:5432/smes"
 
     # XR auto-match time window
     XR_MATCH_WINDOW_SECONDS: int = 10
@@ -36,10 +36,10 @@ class Settings(BaseSettings):
     # Backup
     BACKUP_DIR: str = "/app/backups"
     BACKUP_DB_HOST: str = "localhost"
-    BACKUP_DB_PORT: int = 5432
+    BACKUP_DB_PORT: int = 15212
     BACKUP_DB_NAME: str = "smes"
     BACKUP_DB_USER: str = "postgres"
-    BACKUP_DB_PASSWORD: str = "postgres"
+    BACKUP_DB_PASSWORD: str = "~Jonly171299~"
 
 
 # Create a global settings instance
