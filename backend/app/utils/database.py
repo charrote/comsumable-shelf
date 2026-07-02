@@ -98,19 +98,34 @@ async def _create_tables():
             )
         )
 
-        # Safety check: force-create core tables if missing
-        core_tables = ["users", "customers", "material_master"]
-        for tbl in core_tables:
+        # Safety check: verify ALL model tables exist after create_all
+        all_model_tables = list(Base.metadata.tables.keys())
+        for tbl in all_model_tables:
             result = await conn.execute(
                 text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{tbl}')")
             )
             if not result.scalar():
-                logger.warning(f"Core table '{tbl}' missing after create_all — force-creating")
+                logger.warning(f"Table '{tbl}' missing after create_all — force-creating")
                 await conn.run_sync(
                     lambda sync_session: Base.metadata.create_all(
                         sync_session, checkfirst=False, tables=[Base.metadata.tables[tbl]]
                     )
                 )
+
+        # Final verification — raise if core tables still missing
+        core_tables = ["users", "customers", "material_master"]
+        missing = []
+        for tbl in core_tables:
+            result = await conn.execute(
+                text(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{tbl}')")
+            )
+            if not result.scalar():
+                missing.append(tbl)
+        if missing:
+            raise RuntimeError(
+                f"Core tables still missing after create_all: {missing}. "
+                "Database initialization failed."
+            )
 
 
 _LOCK_ID = 42_000_101  # arbitrary advisory lock ID for DB init

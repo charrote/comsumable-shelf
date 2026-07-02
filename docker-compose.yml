@@ -4,11 +4,11 @@ services:
     container_name: consumable-shelf-db
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "15212:5432"
     environment:
       POSTGRES_DB: smes
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${PG_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-'&xinkeji!@#'}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -31,7 +31,7 @@ services:
       APP_NAME: '智能物料管理系统'
       APP_VERSION: "1.0.0"
       API_PREFIX: /api
-      DATABASE_URL: postgresql+asyncpg://postgres:${PG_PASSWORD:-postgres}@db:5432/smes
+      DATABASE_URL: postgresql+asyncpg://postgres:${PG_PASSWORD:-%26xinkeji%21%40%23}@db:5432/smes
       XR_MATCH_WINDOW_SECONDS: ${XR_MATCH_WINDOW_SECONDS:-10}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DB_AUTO_MIGRATE: ${DB_AUTO_MIGRATE:-true}
@@ -40,7 +40,7 @@ services:
       BACKUP_DB_PORT: 5432
       BACKUP_DB_NAME: smes
       BACKUP_DB_USER: postgres
-      BACKUP_DB_PASSWORD: ${PG_PASSWORD:-postgres}
+      BACKUP_DB_PASSWORD: ${PG_PASSWORD:-'&xinkeji!@#'}
     volumes:
       - backup-data:/app/backups
     healthcheck:
@@ -91,7 +91,7 @@ services:
       - "5050:80"
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-'&xinkeji!@#'}
       PGADMIN_DISABLE_LOGIN: "False"
       PGADMIN_CONFIG_SERVER_MODE: "False"
     volumes:
